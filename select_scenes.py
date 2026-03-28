@@ -175,14 +175,16 @@ def prepare_clip(scene, scene_file, duration, take, camera):
         cmd += ["-t", f"{take:.3f}"]
         cmd += ["-map", "0:v", "-map", "1:a",
                 "-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
+                "-bf", "0",
                 "-c:a", "aac", "-ar", "48000", "-ac", "2"]
     else:
         if needs_trim:
             cmd += ["-t", f"{take:.3f}"]
         cmd += ["-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
+                "-bf", "0",
                 "-c:a", "copy"]
 
-    cmd += [out, "-y", "-loglevel", "quiet"]
+    cmd += ["-avoid_negative_ts", "make_zero", out, "-y", "-loglevel", "quiet"]
     subprocess.run(cmd)
     return out
 
