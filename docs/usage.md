@@ -30,7 +30,6 @@ source ~/highlight-env/bin/activate
 --no-music            Pomiń miks muzyczny
 --gpudetect           Detekcja scen GPU przez decord (domyślnie: CPU scenedetect)
 --about "TEXT"        Opis dnia — auto-generuje config.ini przez Claude API (Haiku)
---reframe             Wymuś reprojekcję 360° nawet bez auto-wykrytych plików .insv
 --help                Wyświetl pomoc
 ```
 
@@ -66,17 +65,13 @@ source ~/highlight-env/bin/activate
 ~/moto/2025/08-Rumunia/12/   ← CWD przy uruchomieniu
 ├── *.mp4                     ← pliki źródłowe (lub w podfolderach)
 ├── helmet/                   ← opcjonalnie: cam-a
-├── 360/                      ← opcjonalnie: cam-b
-│   ├── LRV_*.insv            ← proxy 360° (do detekcji i scoringu)
-│   └── VID_*.insv            ← high-res 360° (do finalnego renderu)
+├── mirror/                   ← opcjonalnie: cam-b
 ├── config.ini                ← opcjonalnie: nadpisania per event
 └── _autoframe/               ← katalog roboczy (tworzony automatycznie)
     ├── autocut/              ← podzielone sceny
     ├── frames/               ← klatki kluczowe dla CLIP
     ├── csv/                  ← pliki CSV detekcji scen
     ├── trimmed/              ← przycięte/wyciszone klipy
-    ├── reframed/             ← klipy LRV po reprojekcji v360
-    ├── vid_trimmed/          ← klipy VID_ high-res (proxy reframe)
     └── scene_scores.csv
 ```
 
@@ -106,12 +101,6 @@ rm _autoframe/selected_scenes.txt highlight.mp4 highlight_final.mp4 highlight_fi
 
 # Wymuś pełne przeliczenie scoringu (zmiana promptów lub neg_weight)
 rm _autoframe/scene_scores.csv
-
-# Re-reframe LRV 360° (zmiana kąta w config.ini)
-rm -rf _autoframe/reframed/
-
-# Re-render proxy VID_ (zmiana kąta lub vid_input_format)
-rm -rf _autoframe/vid_trimmed/
 ```
 
 ### Wykluczanie scen
@@ -162,7 +151,6 @@ source ~/highlight-env/bin/activate
 --no-music            Skip music mixing
 --gpudetect           GPU scene detection via decord (default: CPU scenedetect)
 --about "TEXT"        Describe the day's ride — auto-generates config.ini via Claude API
---reframe             Force 360° reframe even without auto-detected .insv files
 --help                Show help
 ```
 
@@ -184,8 +172,6 @@ source ~/highlight-env/bin/activate
 rm highlight_final_music.mp4                          # re-mix music only
 rm _autoframe/scene_scores.csv                        # force full re-score
 rm _autoframe/selected_scenes.txt highlight*.mp4      # re-run from selection
-rm -rf _autoframe/reframed/                           # re-reframe LRV
-rm -rf _autoframe/vid_trimmed/                        # re-render VID_ proxy
 ```
 
 ### Excluding scenes

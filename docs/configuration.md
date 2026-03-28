@@ -83,10 +83,6 @@ Każdy prompt w osobnej linii (wcięcie = kontynuacja wartości INI). Im bardzie
 | `original_volume` | `0.3` | Głośność oryginalnego audio. `0` = całkowite wyciszenie. |
 | `fade_out_duration` | `3` | Czas wygaszania muzyki na końcu (sekundy). |
 
-### `[reframe]`
-
-Patrz [Kamera 360° i reframe](reframe-360.md).
-
 ### `[paths]`
 
 | Klucz | Domyślnie | Opis |
@@ -191,10 +187,6 @@ Each prompt on its own line (indentation = INI value continuation). More specifi
 | `music_volume` | `0.7` | Music volume in final mix (0–1). |
 | `original_volume` | `0.3` | Original audio volume. `0` = silence. |
 | `fade_out_duration` | `3` | Music fade-out duration (seconds). |
-
-### `[reframe]`
-
-See [360° camera and reframe](reframe-360.md).
 
 ### `[paths]`
 

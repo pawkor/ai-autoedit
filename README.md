@@ -16,7 +16,6 @@ Pipeline obsługuje kamerę kaskową (helmet cam) i kamerę 360° Insta360 X2 mo
 - [Instalacja](docs/installation.md)
 - [Użycie](docs/usage.md)
 - [Konfiguracja](docs/configuration.md)
-- [Kamera 360° i reframe](docs/reframe-360.md)
 - [Biblioteka muzyczna](docs/music.md)
 
 ---
@@ -37,5 +36,4 @@ The pipeline handles a helmet camera and an Insta360 X2 360° camera mounted on 
 - [Installation](docs/installation.md)
 - [Usage](docs/usage.md)
 - [Configuration reference](docs/configuration.md)
-- [360° camera and reframe](docs/reframe-360.md)
 - [Music library](docs/music.md)

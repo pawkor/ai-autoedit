@@ -4,10 +4,6 @@
 
 Pipeline zamienia surowy materiał z całego dnia w highlight reel bez ręcznego montażu.
 
-**0. Reframe 360° — proxy LRV** (`ffmpeg v360`)
-
-Jeśli `--cam-b` wskazuje na katalog z plikami `LRV_*.insv` (Insta360 X2), pipeline automatycznie reprojekcjonuje je do widoku rectilinear przez filtr `v360` ffmpeg. LRV to low-res proxy (ok. 736×368) już wstępnie złożony do equirectangular przez kamerę — wystarcza jedno przejście reprojekcji. Wynikowe MP4 trafiają do `_autoframe/reframed/` i są traktowane jak zwykłe pliki kamery B w dalszych krokach.
-
 **1. Detekcja scen** (`scenedetect` lub `gpu_detect.py`)
 
 Domyślnie: każdy plik MP4 przechodzi przez algorytm `detect-content` PySceneDetect — różnice histogramów kolorów między klatkami. Gdy różnica przekracza `threshold` (domyślnie 20) przez minimum `min_scene_len` (domyślnie 8s), zapisywana jest granica sceny.
@@ -48,10 +44,6 @@ Sceny filtrowane i wybierane osobno dla każdego pliku źródłowego:
 
 W trybie dual-camera sceny z kamery A i B przeplatane chronologicznie. Kamera A jest źródłem audio; kamera B jest wyciszona. Wynik: `_autoframe/selected_scenes.txt`.
 
-**5.5. Proxy reframe VID_ (opcjonalnie)** (`proxy_reframe.py`)
-
-Jeśli `vid_input_format` jest ustawiony w sekcji `[reframe]` config.ini, pipeline zastępuje wybrane klipy LRV odpowiadającymi plikami `VID_` w wysokiej rozdzielczości (2880×2880 dual fisheye). Mapowanie: `LRV_TIMESTAMP_11_NNN` → `VID_TIMESTAMP_10_NNN.insv`. Bez `vid_input_format` krok jest pomijany.
-
 **6. Składanie highlightu** (`ffmpeg`)
 
 Wybrane sceny łączone w `highlight.mp4`. Skalowanie do 4K (Lanczos), normalizacja do 60 fps (CFR), kodowanie NVENC jeśli dostępny, inaczej libx264. 4K jest celowe — YouTube przydziela znacznie więcej bitrate do uploadów 4K.
@@ -78,27 +70,21 @@ Flaga `--about "opis dnia"` wywołuje Claude Haiku API przed uruchomieniem pipel
 
 | Krok | Opis |
 |------|------|
-| 0 | Reframe 360° — reprojekcja `LRV_*.insv` → flat MP4 (auto gdy cam-b zawiera .insv) |
 | 1 | Znalezienie plików MP4 |
 | 2 | Detekcja scen — `scenedetect` (CPU) lub `gpu_detect.py` (GPU) |
 | 3 | Podział — każda scena jako osobny plik w `autocut/` |
 | 4 | Ekstrakcja klatek kluczowych |
 | 5 | Scoring CLIP — `ViT-L-14` na GPU |
 | 6 | Selekcja scen |
-| 6.5 | Proxy reframe VID_ (opcjonalnie) |
 | 7 | Concat → `highlight.mp4` |
 | 8 | Intro + outro → `highlight_final.mp4` |
 | 9 | Miks muzyczny → `highlight_final_music.mp4` |
 
-Wyniki kroków 0–5 są cache'owane.
+Wyniki kroków 1–5 są cache'owane.
 
 ---
 
 ## EN
-
-**0. 360° reframe — LRV proxy** (`ffmpeg v360`)
-
-If `--cam-b` points to a directory containing `LRV_*.insv` files (Insta360 X2), the pipeline automatically reprojects them to a rectilinear view using ffmpeg's `v360` filter. Output MP4s land in `_autoframe/reframed/`.
 
 **1. Scene detection** (`scenedetect` or `gpu_detect.py`)
 
@@ -115,8 +101,6 @@ final_score = pos_score - neg_score × neg_weight
 
 **5. Scene selection** (`select_scenes.py`) — threshold filter, tier limits, per-file cap, trim to midpoint. Dual-camera mode interleaves A and B chronologically.
 
-**5.5. VID_ proxy reframe (optional)** — replaces LRV clips with high-res `VID_` files when `vid_input_format` is set in config.ini.
-
 **6. Highlight assembly** — 4K upscale (Lanczos), 60fps CFR, NVENC or libx264.
 
 **7. Intro/outro** — best-scoring frame as background, Caveat Bold title text, fade in/out.
@@ -125,16 +109,14 @@ final_score = pos_score - neg_score × neg_weight
 
 | Step | Description |
 |------|-------------|
-| 0 | 360° reframe — `LRV_*.insv` → flat MP4 (auto-detected) |
 | 1 | Find MP4 files |
 | 2 | Scene detection — `scenedetect` (CPU) or `gpu_detect.py` (GPU) |
 | 3 | Split scenes → `autocut/` |
 | 4 | Key frame extraction |
 | 5 | CLIP scoring — `ViT-L-14` on GPU |
 | 6 | Scene selection |
-| 6.5 | VID_ proxy reframe (optional) |
 | 7 | Concat → `highlight.mp4` |
 | 8 | Intro + outro → `highlight_final.mp4` |
 | 9 | Music mix → `highlight_final_music.mp4` |
 
-Steps 0–5 results are cached.
+Steps 1–5 results are cached.

@@ -20,7 +20,6 @@
 #   --no-music           Skip music mixing
 #   --gpudetect          GPU scene detection via decord (default: scenedetect CPU)
 #   --about "TEXT"       Describe the day's ride — auto-generates config.ini via Claude API
-#   --reframe            Reframe 360° .insv files in --cam-b dir (auto if LRV_*.insv found)
 #   --help
 
 set -uo pipefail
@@ -89,16 +88,6 @@ SD_MIN_SCENE=$(cfg scene_detection min_scene_len "8s")
 GPU_SD_THRESHOLD=$(cfg scene_detection gpu_threshold "30")
 GPU_DETECT=0
 ABOUT=""
-REFRAME=0
-
-# Reframe settings (config.ini [reframe] section)
-REFRAME_YAW=$(cfg reframe yaw "0")
-REFRAME_PITCH=$(cfg reframe pitch "0")
-REFRAME_ROLL=$(cfg reframe roll "0")
-REFRAME_HFOV=$(cfg reframe h_fov "100")
-REFRAME_VFOV=$(cfg reframe v_fov "75")
-VID_INPUT_FORMAT=$(cfg reframe vid_input_format "")
-VID_IH_FOV=$(cfg reframe vid_ih_fov "190")
 
 # Intro/outro
 INTRO_DURATION=$(cfg intro_outro duration "3")
@@ -135,7 +124,6 @@ while [[ $# -gt 0 ]]; do
         --no-music)       NO_MUSIC=1;        shift ;;
         --gpudetect)      GPU_DETECT=1;      shift ;;
         --about)          ABOUT="$2";        shift 2 ;;
-        --reframe)        REFRAME=1;         shift ;;
         --help)
             grep '^#' "$0" | head -15 | sed 's/^# \{0,2\}//'
             exit 0 ;;
@@ -186,42 +174,8 @@ echo "║ Title:     $(echo -e "$TITLE")"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
-# ── Reframe 360° .insv files ──────────────────────────────────────────────────
-CAM_B_PATH="${CAM_B:+$WORKDIR/$CAM_B}"
-
-if [ -n "$CAM_B" ]; then
-    INSV_COUNT=$(find "$WORKDIR/$CAM_B" -maxdepth 1 -name "LRV_*.insv" 2>/dev/null | wc -l)
-    if [ "$INSV_COUNT" -gt 0 ] || [ "$REFRAME" -eq 1 ]; then
-        REFRAME_OUTDIR="$AUTODIR/reframed"
-        mkdir -p "$REFRAME_OUTDIR"
-        echo "Reframing 360° footage (yaw=$REFRAME_YAW pitch=$REFRAME_PITCH hfov=$REFRAME_HFOV)..."
-        mapfile -t INSV_FILES < <(
-            find "$WORKDIR/$CAM_B" -maxdepth 1 -name "LRV_*.insv" 2>/dev/null | sort
-        )
-        _insv_total=${#INSV_FILES[@]}
-        _insv_i=0
-        for f in "${INSV_FILES[@]}"; do
-            _insv_i=$((_insv_i + 1))
-            base=$(basename "${f%.insv}")
-            out="$REFRAME_OUTDIR/${base}.mp4"
-            if [ -f "$out" ]; then
-                echo "  [${_insv_i}/${_insv_total}] ✓ $base (cached)"
-                continue
-            fi
-            echo "  [${_insv_i}/${_insv_total}] → $base"
-            $FFMPEG $HWACCEL -i "$f" \
-                -vf "v360=equirect:rectilinear:yaw=${REFRAME_YAW}:pitch=${REFRAME_PITCH}:roll=${REFRAME_ROLL}:h_fov=${REFRAME_HFOV}:v_fov=${REFRAME_VFOV}" \
-                -c:v "$VID_CODEC" $VID_QUALITY -pix_fmt yuv420p \
-                -c:a aac -b:a "$AUDIO_BITRATE" \
-                "$out" -y -loglevel quiet
-        done
-        echo "  Reframed: $(ls "$REFRAME_OUTDIR"/*.mp4 2>/dev/null | wc -l) files"
-        CAM_B_PATH="$REFRAME_OUTDIR"
-        echo ""
-    fi
-fi
-
 # ── Find source files ─────────────────────────────────────────────────────────
+CAM_B_PATH="${CAM_B:+$WORKDIR/$CAM_B}"
 if [ -n "$CAM_A" ] && [ -n "$CAM_B" ]; then
     mapfile -t SOURCE_FILES < <(
         find "$WORKDIR/$CAM_A" "${CAM_B_PATH:-$WORKDIR/$CAM_B}" \
@@ -247,7 +201,7 @@ if [ -n "$CAM_A" ] && [ -n "$CAM_B" ]; then
         base=$(basename "${f%.mp4}")
         if [[ "$f" == *"/$CAM_A/"* ]]; then
             echo "${base},${CAM_A}" >> "$AUTODIR/camera_sources.csv"
-        elif [[ "$f" == *"/$CAM_B/"* ]] || [[ "$f" == *"/reframed/"* ]]; then
+        elif [[ "$f" == *"/$CAM_B/"* ]]; then
             echo "${base},${CAM_B}" >> "$AUTODIR/camera_sources.csv"
         fi
     done
@@ -404,28 +358,12 @@ TRIMMED_DIR="$AUTODIR/trimmed/" \
 OUTPUT_CSV="$AUTODIR/scene_scores.csv" \
 OUTPUT_LIST="$AUTODIR/selected_scenes.txt" \
 CAM_SOURCES="$AUTODIR/camera_sources.csv" \
+AUDIO_CAM="$CAM_A" \
     python3 "$SCRIPT_DIR"/select_scenes.py "$THRESHOLD" "$MAX_SCENE" "$PER_FILE"
 
 if [ ! -s "$AUTODIR/selected_scenes.txt" ]; then
     echo "ERROR: No scenes selected. Try lowering --threshold (current: $THRESHOLD)."
     exit 1
-fi
-
-# ── Proxy reframe: replace LRV clips with VID_ high-res ───────────────────────
-if [ -n "$VID_INPUT_FORMAT" ] && [ -n "$CAM_B" ]; then
-    VID_TRIMMED_DIR="$AUTODIR/vid_trimmed"
-    mkdir -p "$VID_TRIMMED_DIR"
-    echo "  Proxy reframe: replacing LRV clips with VID_ ($VID_INPUT_FORMAT)..."
-    python3 "$SCRIPT_DIR"/proxy_reframe.py \
-        "$AUTODIR/selected_scenes.txt" \
-        "$AUTODIR/csv" \
-        "$WORKDIR/$CAM_B" \
-        "$VID_TRIMMED_DIR" \
-        --yaw "$REFRAME_YAW" --pitch "$REFRAME_PITCH" --roll "$REFRAME_ROLL" \
-        --h-fov "$REFRAME_HFOV" --v-fov "$REFRAME_VFOV" \
-        --input-format "$VID_INPUT_FORMAT" --ih-fov "$VID_IH_FOV" \
-        --ffmpeg "$FFMPEG" --ffprobe "$FFPROBE" \
-        --codec "$VID_CODEC" --quality "$VID_QUALITY"
 fi
 
 HIGHLIGHT="$WORKDIR/highlight.mp4"

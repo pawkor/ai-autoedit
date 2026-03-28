@@ -20,12 +20,15 @@ TIER2_CUTOFF     = _cfg.getfloat("scene_selection", "tier2_cutoff", fallback=0.1
 TIER2_LIMIT      = _cfg.getfloat("scene_selection", "tier2_limit",  fallback=20)
 MIN_TAKE_SEC     = _cfg.getfloat("scene_selection", "min_take_sec", fallback=0.5)
 WORKERS          = _cfg.getint("scene_selection",   "workers",      fallback=min(os.cpu_count() or 1, 12))
+X264_CRF         = str(_cfg.getint("video", "x264_crf",    fallback=15))
+X264_PRESET      = _cfg.get("video",        "x264_preset", fallback="fast")
 
 SCENES_DIR  = os.environ.get("SCENES_DIR",  "autocut/")
 TRIMMED_DIR = os.environ.get("TRIMMED_DIR", "trimmed/")
 SCORES_CSV  = os.environ.get("OUTPUT_CSV",  "scene_scores.csv")
 OUTPUT_LIST = os.environ.get("OUTPUT_LIST", "selected_scenes.txt")
 CAM_SOURCES = os.environ.get("CAM_SOURCES", "")
+AUDIO_CAM   = os.environ.get("AUDIO_CAM",   "")
 
 os.makedirs(TRIMMED_DIR, exist_ok=True)
 
@@ -108,8 +111,12 @@ cam_b_name = None
 
 if dual_cam:
     cameras = df['camera'].unique().tolist()
-    cam_a_name = cameras[0]
-    cam_b_name = cameras[1]
+    if AUDIO_CAM and AUDIO_CAM in cameras:
+        cam_a_name = AUDIO_CAM
+        cam_b_name = next(c for c in cameras if c != AUDIO_CAM)
+    else:
+        cam_a_name = cameras[0]
+        cam_b_name = cameras[1]
 
     cam_a = sorted([s for s in all_selected if s[5] == cam_a_name], key=lambda x: x[0])
     cam_b = sorted([s for s in all_selected if s[5] == cam_b_name], key=lambda x: x[0])
@@ -142,6 +149,11 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     if os.path.exists(out):
         return out
 
+    ops = []
+    if needs_trim: ops.append("trim")
+    if needs_mute: ops.append("mute")
+    print(f"  {scene} ({', '.join(ops)})", flush=True)
+
     cmd = ["ffmpeg"]
     if needs_trim:
         start = duration / 2 - take / 2
@@ -150,14 +162,15 @@ def prepare_clip(scene, scene_file, duration, take, camera):
 
     if needs_mute:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-        if needs_trim:
-            cmd += ["-t", f"{take:.3f}"]
+        cmd += ["-t", f"{take:.3f}"]
         cmd += ["-map", "0:v", "-map", "1:a",
-                "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2"]
+                "-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
+                "-c:a", "aac", "-ar", "48000", "-ac", "2"]
     else:
         if needs_trim:
             cmd += ["-t", f"{take:.3f}"]
-        cmd += ["-c", "copy"]
+        cmd += ["-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
+                "-c:a", "copy"]
 
     cmd += [out, "-y", "-loglevel", "quiet"]
     subprocess.run(cmd)
