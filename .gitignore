@@ -1,0 +1,16 @@
+# Per-event configs (personal prompts/paths)
+config.ini.bak
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Virtual env (if accidentally placed here)
+highlight-env/
+ai-autoedit-env/
+
+# OS
+.DS_Store
+Thumbs.db
