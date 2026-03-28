@@ -6,6 +6,10 @@ autoframe powstał żeby rozwiązać ten problem. Uruchamiasz skrypt w katalogu 
 
 Pipeline obsługuje kamerę kaskową (helmet cam) i kamerę 360° Insta360 X2 montowaną na lusterku — łącznie potrafi przetworzyć ponad 700 GB materiału z jednego dnia jazdy.
 
+## Przykładowy film
+
+[![Przykładowy highlight](https://img.youtube.com/vi/kR-plye7V2s/maxresdefault.jpg)](https://www.youtube.com/watch?v=kR-plye7V2s)
+
 ## Dokumentacja
 
 - [Jak to działa](docs/how-it-works.md)
