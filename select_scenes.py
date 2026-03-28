@@ -4,6 +4,7 @@ import subprocess
 import sys
 import os
 import configparser
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -135,15 +136,19 @@ else:
 audio_cam = cam_a_name if dual_cam else None
 
 
+_prep_counter = 0
+_prep_lock = threading.Lock()
+_prep_total = 0
+
+
 def prepare_clip(scene, scene_file, duration, take, camera):
     needs_trim = duration > take
     needs_mute = dual_cam and camera != audio_cam
 
-    if not needs_trim and not needs_mute:
-        return scene_file
-
     suffix  = "_trimmed" if needs_trim else ""
     suffix += "_muted"   if needs_mute else ""
+    if not suffix:
+        suffix = "_enc"
     out = f"{TRIMMED_DIR}{scene}{suffix}.mp4"
 
     if os.path.exists(out):
@@ -152,7 +157,12 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     ops = []
     if needs_trim: ops.append("trim")
     if needs_mute: ops.append("mute")
-    print(f"  {scene} ({', '.join(ops)})", flush=True)
+    if not ops:    ops.append("enc")
+    global _prep_counter
+    with _prep_lock:
+        _prep_counter += 1
+        n = _prep_counter
+    print(f"  [{n}/{_prep_total}] {scene} ({', '.join(ops)})", flush=True)
 
     cmd = ["ffmpeg"]
     if needs_trim:
@@ -178,6 +188,7 @@ def prepare_clip(scene, scene_file, duration, take, camera):
 
 
 # ── Prepare clips in parallel, preserve order ─────────────────────────────────
+_prep_total = len(selected)
 with ThreadPoolExecutor(max_workers=WORKERS) as ex:
     clip_futures = [
         ex.submit(prepare_clip, scene, scene_file, duration, take, camera)
