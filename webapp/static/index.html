@@ -487,6 +487,8 @@ a { color: var(--accent); text-decoration: none; }
         <div class="tab active" onclick="switchTab('log')">Log</div>
         <div class="tab" onclick="switchTab('gallery')">Gallery</div>
         <div class="tab" onclick="switchTab('results')">Results</div>
+        <div style="flex:1"></div>
+        <button id="btn-rerun-tab" onclick="rerunCurrentJob()" style="margin:4px 8px;background:var(--accent);color:#000;border:none;padding:4px 14px;cursor:pointer;font-family:var(--font);font-size:12px;font-weight:bold;border-radius:3px;">▶ Rerun</button>
       </div>
 
       <div id="tab-content">
@@ -775,11 +777,19 @@ async function loadFrames(jobId) {
   slider.min = (minScore - 0.005).toFixed(3);
   slider.max = (maxScore + 0.005).toFixed(3);
 
-  // Default to current threshold from job params
   const job = await api.get(`/api/jobs/${jobId}`);
-  if (job?.params?.threshold) {
-    slider.value = job.params.threshold;
-    document.getElementById('threshold-val').textContent = parseFloat(job.params.threshold).toFixed(3);
+  let threshold = job?.params?.threshold;
+  // If not explicit, parse from log: "Threshold: 0.141"
+  if (!threshold && job?.log) {
+    const m = job.log.find(l => /^Threshold:\s+[\d.]+/.test(l));
+    if (m) threshold = parseFloat(m.replace('Threshold:', '').trim());
+  }
+  if (threshold) {
+    slider.value = threshold;
+    document.getElementById('threshold-val').textContent = parseFloat(threshold).toFixed(3);
+  } else {
+    slider.value = slider.min;
+    document.getElementById('threshold-val').textContent = parseFloat(slider.min).toFixed(3);
   }
 
   renderGallery();
@@ -821,15 +831,22 @@ async function rerunWithThreshold() {
   if (!currentJobId) return;
   const job = await api.get(`/api/jobs/${currentJobId}`);
   if (!job) return;
-
   const threshold = parseFloat(document.getElementById('threshold-slider').value);
-  const params = { ...job.params, threshold };
+  const resp = await api.post('/api/jobs', { ...job.params, threshold });
+  if (resp.id) { refreshJobList(); openJob(resp.id); }
+}
 
-  const resp = await api.post('/api/jobs', params);
-  if (resp.id) {
-    refreshJobList();
-    openJob(resp.id);
+async function rerunCurrentJob() {
+  if (!currentJobId) return;
+  const job = await api.get(`/api/jobs/${currentJobId}`);
+  if (!job) return;
+  // Use gallery slider threshold if frames are loaded, else same params
+  const params = { ...job.params };
+  if (framesData.length > 0) {
+    params.threshold = parseFloat(document.getElementById('threshold-slider').value);
   }
+  const resp = await api.post('/api/jobs', params);
+  if (resp.id) { refreshJobList(); openJob(resp.id); }
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
@@ -850,9 +867,9 @@ async function loadResults(jobId) {
     container.appendChild(div);
   }
 
-  // Auto-play best file
+  // Highlight best file without auto-playing
   const best = order.find(n => data[n]);
-  if (best) playVideo(data[best].url, container.querySelector('.result-file'));
+  if (best) container.querySelector('.result-file')?.classList.add('playing');
 }
 
 function playVideo(url, card) {
@@ -862,7 +879,6 @@ function playVideo(url, card) {
   const video = document.getElementById('video-player');
   container.style.display = 'block';
   video.src = url;
-  video.play().catch(() => {});
 }
 
 // ── Directory browser ─────────────────────────────────────────────────────────
