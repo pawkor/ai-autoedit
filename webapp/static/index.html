@@ -1236,6 +1236,7 @@ function calculateGalleryStats() {
 function onThresholdSlide() {
   const v = parseFloat(document.getElementById('threshold-slider').value).toFixed(3);
   document.getElementById('threshold-val').textContent = v;
+  document.getElementById('js-threshold').value = v;
   renderGallery();
   calculateGalleryStats();
 }
