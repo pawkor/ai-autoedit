@@ -64,6 +64,7 @@ ORIG_VOL=$(cfg music original_volume "0.3")
 NO_MUSIC=0
 MUSIC_GENRE=""
 MUSIC_ARTIST=""
+MUSIC_FILES=""
 CAM_A=""
 CAM_B=""
 FONT=$(eval echo "$(cfg intro_outro font "$HOME/fonts/Caveat-Bold.ttf")")
@@ -117,6 +118,7 @@ while [[ $# -gt 0 ]]; do
         --cam-b)          CAM_B="$2";         shift 2 ;;
         --music-genre)    MUSIC_GENRE="$2";   shift 2 ;;
         --music-artist)   MUSIC_ARTIST="$2"; shift 2 ;;
+        --music-files)    MUSIC_FILES="$2";  shift 2 ;;
         --music-rebuild)
             source "$VENV/bin/activate"
             echo "Rebuilding music index: $MUSIC_DIR"
@@ -579,6 +581,15 @@ if artist_filter:
         print(f"Artist filter '{artist_filter}': {len(all_tracks)} tracks", file=sys.stderr)
     else:
         print(f"No tracks for artist '{artist_filter}', using previous selection", file=sys.stderr)
+
+# Explicit files filter (comma-separated full paths — overrides genre/artist)
+files_filter = "$MUSIC_FILES".strip()
+if files_filter:
+    file_set = set(f.strip() for f in files_filter.split(",") if f.strip())
+    filtered = [t for t in all_tracks if t.get("file", "") in file_set]
+    if filtered:
+        all_tracks = filtered
+        print(f"Files filter: {len(all_tracks)} tracks", file=sys.stderr)
 
 # Ideally: track longer than video (no cutoff), pick best energy among those
 long_enough = [t for t in all_tracks if t["duration"] >= duration]

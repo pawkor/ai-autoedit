@@ -24,9 +24,12 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #btn-new { background:var(--accent); color:#000; border:none; padding:4px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
 #btn-new:hover { opacity:.85; }
 #job-list { flex:1; overflow-y:auto; }
-.job-item { padding:9px 10px; border-bottom:1px solid var(--border); cursor:pointer; }
+.job-item { padding:9px 10px; border-bottom:1px solid var(--border); cursor:pointer; position:relative; }
 .job-item:hover { background:var(--bg3); }
 .job-item.active { background:var(--bg3); border-left:2px solid var(--accent); }
+.job-item .ji-del { display:none; position:absolute; top:50%; right:6px; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 4px; line-height:1; }
+.job-item:hover .ji-del { display:block; }
+.job-item .ji-del:hover { color:var(--red); }
 .ji-dir { font-size:11px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ji-meta { font-size:10px; color:var(--muted); margin-top:2px; }
 .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; }
@@ -145,23 +148,49 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #no-gpu { font-size:10px; color:var(--muted); font-style:italic; }
 
 /* ── Gallery tab ── */
-#gallery-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:10px; }
+#gallery-panel { flex:1; overflow:hidden; padding:0; display:none; flex-direction:column; }
 #gallery-panel.active { display:flex; }
-#threshold-bar { display:flex; align-items:center; gap:10px; padding:9px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; flex-shrink:0; }
+#gallery-header { flex-shrink:0; display:flex; flex-direction:column; gap:6px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--bg); }
+#threshold-bar { display:flex; align-items:center; gap:10px; padding:9px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; }
 #threshold-bar label { font-size:11px; color:var(--muted); }
 #threshold-slider { flex:1; accent-color:var(--accent); }
 #threshold-val { font-size:13px; color:var(--accent); min-width:38px; }
-#threshold-count { font-size:11px; color:var(--muted); }
-#btn-rerun-gallery { background:var(--accent); color:#000; border:none; padding:5px 12px; cursor:pointer; font-family:var(--font); font-size:11px; font-weight:bold; border-radius:3px; }
-#btn-rerun-gallery:hover { opacity:.85; }
-#frames-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(175px,1fr)); gap:7px; }
+#gallery-status { display:flex; align-items:center; gap:10px; padding:6px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; font-size:11px; }
+#gallery-stats-text { flex:1; color:var(--muted); }
+#btn-calculate { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:3px 9px; cursor:pointer; font-family:var(--font); font-size:11px; border-radius:3px; }
+#btn-calculate:hover { border-color:var(--accent); color:var(--accent); }
+#sidebar-sort { font-size:10px; color:var(--muted); padding:2px 6px; background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; }
+#sidebar-sort:hover { border-color:var(--accent); color:var(--accent); }
+#frames-scroll { flex:1; overflow-y:scroll; padding:14px; }
+#frames-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .fc { border:1px solid var(--border); border-radius:3px; overflow:hidden; transition:border-color .15s, opacity .15s; }
 .fc.excluded { opacity:.25; }
 .fc.included { border-color:var(--green); }
+.fc.manual.included { border-color:#4af; border-style:dashed; }
+.fc.manual.excluded { opacity:.25; border:2px dashed #f64; }
 .fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#111; }
 .fc-info { padding:3px 6px; display:flex; justify-content:space-between; font-size:10px; }
 .fc-score { color:var(--accent); }
 .fc-name  { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }
+
+/* ── Music tab ── */
+#music-panel { flex:1; overflow:hidden; display:none; flex-direction:column; }
+#music-panel.active { display:flex; }
+#music-header { flex-shrink:0; display:flex; flex-direction:column; gap:6px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--bg); }
+#music-dir-row { display:flex; gap:6px; align-items:center; }
+#music-dir-row label { font-size:11px; color:var(--muted); white-space:nowrap; }
+#music-dir-input { flex:1; background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:5px 7px; font-family:var(--font); font-size:12px; border-radius:3px; outline:none; }
+#music-dir-input:focus { border-color:var(--accent); }
+#music-controls { display:flex; gap:6px; align-items:center; }
+#music-filter { flex:1; background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:4px 7px; font-family:var(--font); font-size:11px; border-radius:3px; outline:none; }
+#music-filter:focus { border-color:var(--accent); }
+#music-count { font-size:11px; color:var(--muted); margin-left:auto; white-space:nowrap; }
+#music-list-scroll { flex:1; overflow-y:scroll; }
+.mt { display:flex; align-items:center; gap:9px; padding:7px 14px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
+.mt:hover { background:var(--bg3); }
+.mt input[type=checkbox] { accent-color:var(--accent); cursor:pointer; flex-shrink:0; width:13px; height:13px; }
+.mt-title { flex:1; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mt-meta { font-size:10px; color:var(--muted); white-space:nowrap; }
 
 /* ── Results tab ── */
 #results-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:14px; }
@@ -182,6 +211,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 <div id="sidebar">
   <div id="sidebar-header">
     <h1>autoframe</h1>
+    <button id="sidebar-sort" onclick="toggleSortOrder()" title="Toggle sort order">newest</button>
     <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
     <button id="btn-new" onclick="showForm()">+ New</button>
   </div>
@@ -208,7 +238,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           <label>Working directory</label>
           <div class="dir-pick">
             <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/..." onblur="loadDirConfig(this.value)">
-            <button class="btn-sm" onclick="openDirBrowser()">Browse</button>
+            <button class="btn-sm" onclick="openFormDirBrowser()">Browse</button>
           </div>
         </div>
       </div>
@@ -230,11 +260,16 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
     <div class="fsec">
       <h3>Intro / music</h3>
       <div class="frow">
-        <div class="ff wide"><label>Title (use \n for two lines)</label><input type="text" id="f-title" placeholder="auto"></div>
+        <div class="ff"><label>Title (each line = one text line on intro card)</label><textarea id="f-title" rows="5" placeholder="auto" style="resize:none;width:64ch;font-size:12px"></textarea></div>
       </div>
       <div class="frow">
-        <div class="ff"><label>Music genre</label><input type="text" id="f-music-genre" placeholder="house / rock"></div>
-        <div class="ff"><label>Music artist</label><input type="text" id="f-music-artist" placeholder="tobu,alan,..."></div>
+        <div class="ff wide">
+          <label>Music directory</label>
+          <div class="dir-pick">
+            <input type="text" id="f-music-dir" placeholder="~/moto/music">
+            <button class="btn-sm" onclick="openFormMusicDirBrowser()">Browse</button>
+          </div>
+        </div>
       </div>
       <div class="frow">
         <div class="chk-row">
@@ -280,12 +315,49 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <span class="step" data-step="6">6 Select+Encode</span>
     </div>
     <div id="job-tabs">
-      <div class="tab active" onclick="switchTab('log')">Log</div>
+      <div class="tab" onclick="switchTab('settings')">Settings</div>
       <div class="tab" onclick="switchTab('gallery')">Gallery</div>
+      <div class="tab" onclick="switchTab('music')">Music</div>
+      <div class="tab active" onclick="switchTab('log')">Log</div>
       <div class="tab" onclick="switchTab('results')">Results</div>
       <button id="btn-rerun-tab" onclick="rerunCurrentJob()">▶ Rerun</button>
     </div>
     <div id="tab-content">
+
+      <!-- Settings tab -->
+      <div id="job-settings-panel" style="display:none;flex:1;overflow-y:auto;padding:20px;flex-direction:column;gap:0">
+        <div class="fsec">
+          <h3>Source</h3>
+          <div class="frow">
+            <div class="ff wide"><label>Working directory</label><input type="text" id="js-workdir" readonly style="color:var(--muted)"></div>
+          </div>
+          <div class="frow">
+            <div class="ff"><label>Cam A</label><input type="text" id="js-cam-a"></div>
+            <div class="ff"><label>Cam B</label><input type="text" id="js-cam-b"></div>
+          </div>
+        </div>
+        <div class="fsec">
+          <h3>Scene selection</h3>
+          <div class="frow">
+            <div class="ff"><label>Threshold</label><input type="number" id="js-threshold" step="0.001"></div>
+            <div class="ff"><label>Max scene sec</label><input type="number" id="js-max-scene"></div>
+            <div class="ff"><label>Max per file sec</label><input type="number" id="js-per-file"></div>
+          </div>
+        </div>
+        <div class="fsec">
+          <h3>Intro / music</h3>
+          <div class="frow">
+            <div class="ff"><label>Title</label><textarea id="js-title" rows="5" style="resize:none;width:64ch;font-size:12px"></textarea></div>
+          </div>
+          <div class="frow">
+            <div class="chk-row">
+              <label class="chk"><input type="checkbox" id="js-no-intro"> No intro/outro</label>
+              <label class="chk"><input type="checkbox" id="js-no-music"> No music</label>
+            </div>
+          </div>
+        </div>
+        <button class="btn-primary" onclick="rerunFromSettings()">▶ Rerun with these settings</button>
+      </div>
 
       <!-- Log tab: split log + stats -->
       <div id="log-split">
@@ -325,14 +397,42 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 
       <!-- Gallery tab -->
       <div id="gallery-panel">
-        <div id="threshold-bar">
-          <label>Threshold</label>
-          <input type="range" id="threshold-slider" min="0.10" max="0.25" step="0.001" value="0.148" oninput="onThresholdSlide()">
-          <span id="threshold-val">0.148</span>
-          <span id="threshold-count"></span>
-          <button id="btn-rerun-gallery" onclick="rerunWithThreshold()">▶ Re-run</button>
+        <div id="gallery-header">
+          <div id="threshold-bar">
+            <label>Threshold</label>
+            <input type="range" id="threshold-slider" min="0.10" max="0.25" step="0.001" value="0.148" oninput="onThresholdSlide()">
+            <span id="threshold-val">0.148</span>
+          </div>
+          <div id="gallery-status">
+            <span id="gallery-stats-text">—</span>
+            <button id="btn-calculate" onclick="calculateGalleryStats()">Calculate</button>
+          </div>
         </div>
-        <div id="frames-grid"></div>
+        <div id="frames-scroll">
+          <div id="frames-grid"></div>
+        </div>
+      </div>
+
+      <!-- Music tab -->
+      <div id="music-panel">
+        <div id="music-header">
+          <div id="music-dir-row">
+            <label>Music dir</label>
+            <input type="text" id="music-dir-input" placeholder="~/moto/music">
+            <button class="btn-sm" onclick="openMusicDirBrowser()">Browse</button>
+            <button class="btn-sm" onclick="loadMusicTracks()">Load</button>
+            <button class="btn-sm" id="btn-music-rebuild" onclick="rebuildMusicIndex()">↺ Update index</button>
+          </div>
+          <div id="music-controls">
+            <input type="text" id="music-filter" placeholder="Filter tracks..." oninput="renderMusicList()">
+            <button class="btn-sm" onclick="setAllMusic(true)">All</button>
+            <button class="btn-sm" onclick="setAllMusic(false)">None</button>
+            <span id="music-count">—</span>
+          </div>
+        </div>
+        <div id="music-list-scroll">
+          <div id="music-list"></div>
+        </div>
       </div>
 
       <!-- Results tab -->
@@ -389,7 +489,13 @@ const api = {
 };
 
 let currentJobId=null, jobWs=null, statsWs=null, elapsedTimer=null;
-let browsePath=null, framesData=[];
+let browsePath=null, framesData=[], manualOverrides={};
+let jobSortNewest=true, currentJobMaxScene=null;
+let _refreshing=false;
+let musicTracks=[], musicSelected=new Set();
+
+// Strip /home/<user>/ prefix so paths show as  moto/2025/...  not  /home/pawkor/moto/2025/...
+function trimPath(p) { return p ? p.replace(/^\/home\/[^/]+\//, '') : (p || ''); }
 
 // ── Views ──────────────────────────────────────────────────────────────────────
 function showView(id) { document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.getElementById(id).classList.add('active'); }
@@ -397,20 +503,33 @@ function showForm()    { showView('form-view'); }
 function showWelcome() { showView('welcome'); }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
+function toggleSortOrder() {
+  jobSortNewest = !jobSortNewest;
+  document.getElementById('sidebar-sort').textContent = jobSortNewest ? 'newest' : 'oldest';
+  refreshJobList();
+}
+
 async function refreshJobList() {
-  const jobs = await api.get('/api/jobs') || [];
-  const list = document.getElementById('job-list');
-  list.innerHTML = '';
-  for (const j of jobs) {
-    const parts = j.work_dir.split('/');
-    const dir = parts.slice(-2).join('/');
-    const dur = j.ended_at ? formatDur(j.ended_at - j.started_at) : '';
-    const div = document.createElement('div');
-    div.className = 'job-item' + (j.id===currentJobId?' active':'');
-    div.innerHTML = `<div class="ji-dir"><span class="dot s-${j.status}"></span>${dir}</div>
-      <div class="ji-meta">${j.status}${dur?' · '+dur:''}</div>`;
-    div.onclick = ()=>openJob(j.id);
-    list.appendChild(div);
+  if (_refreshing) return;
+  _refreshing = true;
+  try {
+    let jobs = await api.get('/api/jobs') || [];
+    if (!jobSortNewest) jobs = [...jobs].reverse();
+    const list = document.getElementById('job-list');
+    list.innerHTML = '';
+    for (const j of jobs) {
+      const dir = trimPath(j.work_dir);
+      const dur = j.ended_at ? formatDur(j.ended_at - j.started_at) : '';
+      const div = document.createElement('div');
+      div.className = 'job-item' + (j.id===currentJobId?' active':'');
+      div.innerHTML = `<div class="ji-dir"><span class="dot s-${j.status}"></span>${dir}</div>
+        <div class="ji-meta">${j.status}${dur?' · '+dur:''}</div>
+        <button class="ji-del" title="Remove job" onclick="event.stopPropagation();removeJob('${j.id}')">×</button>`;
+      div.onclick = ()=>openJob(j.id);
+      list.appendChild(div);
+    }
+  } finally {
+    _refreshing = false;
   }
 }
 setInterval(refreshJobList, 3000);
@@ -465,8 +584,7 @@ async function startJob() {
   const ti = document.getElementById('f-title').value.trim(); if (ti) p.title = ti;
   const ca = document.getElementById('f-cam-a').value.trim(); if (ca) p.cam_a = ca;
   const cb = document.getElementById('f-cam-b').value.trim(); if (cb) p.cam_b = cb;
-  const mg = document.getElementById('f-music-genre').value.trim();  if (mg) p.music_genre  = mg;
-  const ma = document.getElementById('f-music-artist').value.trim(); if (ma) p.music_artist = ma;
+  const md = document.getElementById('f-music-dir').value.trim(); if (md) p.music_dir = md;
   p.no_intro = document.getElementById('f-no-intro').checked;
   p.no_music = document.getElementById('f-no-music').checked;
   const resp = await api.post('/api/jobs', p);
@@ -495,6 +613,13 @@ async function openJob(jobId) {
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
   currentJobId = jobId;
   framesData = [];
+  manualOverrides = {};
+  currentJobMaxScene = null;
+  musicTracks = [];
+  musicSelected = new Set();
+  document.getElementById('music-list').innerHTML = '';
+  document.getElementById('music-count').textContent = '—';
+  document.getElementById('gallery-stats-text').textContent = '—';
   showView('job-view');
   document.getElementById('log-panel').innerHTML = '';
   document.getElementById('frames-grid').innerHTML = '';
@@ -510,8 +635,10 @@ async function openJob(jobId) {
   const job = await api.get(`/api/jobs/${jobId}`);
   if (!job) return;
 
-  document.getElementById('jh-path').textContent = job.params.work_dir;
+  document.getElementById('jh-path').textContent = trimPath(job.params.work_dir);
   setStatusDot(job.status);
+  currentJobMaxScene = job.params.max_scene ?? null;
+  await populateJobSettings(job.params);
 
   if (job.status === 'running') {
     document.getElementById('btn-kill').style.display = '';
@@ -556,15 +683,33 @@ function connectJobWs(jobId, startedAt) {
 }
 
 // ── Log ───────────────────────────────────────────────────────────────────────
+const PROGRESS_RE = /^\s+\[[\u2588\u2591 ]+\]\s+\d+%/;
+
 function appendLog(line) {
   const panel = document.getElementById('log-panel');
+  const isProgress = PROGRESS_RE.test(line);
+
+  if (isProgress) {
+    // Update existing progress line in place, or create one
+    const last = panel.lastElementChild;
+    if (last && last.classList.contains('log-progress')) {
+      last.textContent = line;
+      return;
+    }
+    const div = document.createElement('div');
+    div.className = 'log-line log-progress';
+    div.style.color = 'var(--muted)';
+    div.textContent = line;
+    panel.appendChild(div);
+    return;
+  }
+
   const div = document.createElement('div');
   div.className = 'log-line';
   const stepM = line.match(/^\[(\d+)\/6\]/);
   if (stepM)                            { div.classList.add('log-step'); activateStep(parseInt(stepM[1])); }
   else if (/✓|cached/i.test(line))      { div.classList.add('log-ok'); }
   else if (/error|failed/i.test(line))  { div.classList.add('log-err'); }
-  else if (/^\s+\[.*\]/.test(line))     { div.classList.add('log-info'); }
   div.textContent = line;
   panel.appendChild(div);
   const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
@@ -594,34 +739,54 @@ function startElapsedTimer(startedAt) {
   }, 1000);
 }
 
-// ── Kill ──────────────────────────────────────────────────────────────────────
+// ── Kill / Remove ──────────────────────────────────────────────────────────────
 async function killJob() {
   if (!currentJobId || !confirm('Kill running job?')) return;
   await api.del(`/api/jobs/${currentJobId}`);
   document.getElementById('btn-kill').style.display = 'none';
 }
 
+async function removeJob(jobId) {
+  await api.post(`/api/jobs/${jobId}/remove`, {});
+  if (jobId === currentJobId) { currentJobId = null; showWelcome(); }
+  refreshJobList();
+}
+
 // ── Tabs ──────────────────────────────────────────────────────────────────────
+const TAB_NAMES = ['settings', 'gallery', 'music', 'log', 'results'];
+
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['log','gallery','results'][i]===name));
-  document.getElementById('log-split').style.display    = name==='log'      ? 'flex' : 'none';
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', TAB_NAMES[i] === name));
+  document.getElementById('job-settings-panel').style.display = name==='settings' ? 'flex' : 'none';
+  document.getElementById('log-split').style.display          = name==='log'      ? 'flex' : 'none';
   document.getElementById('gallery-panel').classList.toggle('active', name==='gallery');
+  document.getElementById('music-panel').classList.toggle('active', name==='music');
   document.getElementById('results-panel').classList.toggle('active', name==='results');
-  if (name==='gallery' && currentJobId) loadFrames(currentJobId);
+  if (name==='gallery' && currentJobId) {
+    if (framesData.length) { renderGallery(); calculateGalleryStats(); }
+    else loadFrames(currentJobId);
+  }
+  if (name==='music' && currentJobId && !musicTracks.length) loadMusicTracks();
   if (name==='results' && currentJobId) loadResults(currentJobId);
 }
 
 // ── Gallery ───────────────────────────────────────────────────────────────────
 async function loadFrames(jobId) {
-  const data = await api.get(`/api/jobs/${jobId}/frames`);
+  const [data, job] = await Promise.all([
+    api.get(`/api/jobs/${jobId}/frames`),
+    api.get(`/api/jobs/${jobId}`),
+  ]);
   if (!data?.length) return;
+  // Guard: ignore stale response if user switched to another job
+  if (currentJobId !== jobId) return;
   framesData = data;
+  loadOverrides();
+  document.getElementById('gallery-stats-text').textContent = '—';
   const scores = data.map(f=>f.score);
   const slider = document.getElementById('threshold-slider');
   slider.min = (Math.min(...scores)-0.005).toFixed(3);
   slider.max = (Math.max(...scores)+0.005).toFixed(3);
 
-  const job = await api.get(`/api/jobs/${jobId}`);
   let threshold = job?.params?.threshold;
   if (!threshold && job?.log) {
     const m = job.log.find(l=>/^Threshold:\s+[\d.]+/.test(l));
@@ -630,18 +795,67 @@ async function loadFrames(jobId) {
   if (threshold) { slider.value=threshold; document.getElementById('threshold-val').textContent=parseFloat(threshold).toFixed(3); }
   else { slider.value=slider.min; document.getElementById('threshold-val').textContent=parseFloat(slider.min).toFixed(3); }
   renderGallery();
+  calculateGalleryStats();
+}
+
+function isIncluded(f) {
+  const ov = manualOverrides[f.scene];
+  if (ov === 'include') return true;
+  if (ov === 'exclude') return false;
+  const threshold = parseFloat(document.getElementById('threshold-slider').value);
+  return f.score >= threshold;
+}
+
+function saveOverrides() {
+  if (!currentJobId) return;
+  if (Object.keys(manualOverrides).length)
+    localStorage.setItem('overrides_' + currentJobId, JSON.stringify(manualOverrides));
+  else
+    localStorage.removeItem('overrides_' + currentJobId);
+}
+
+function loadOverrides() {
+  if (!currentJobId) return;
+  try {
+    const raw = localStorage.getItem('overrides_' + currentJobId);
+    manualOverrides = raw ? JSON.parse(raw) : {};
+  } catch { manualOverrides = {}; }
+}
+
+function toggleFrame(scene) {
+  const f = framesData.find(x=>x.scene===scene);
+  if (!f) return;
+  const threshold = parseFloat(document.getElementById('threshold-slider').value);
+  const ov = manualOverrides[scene];
+  const byThreshold = f.score >= threshold;
+  if (ov === undefined) {
+    manualOverrides[scene] = byThreshold ? 'exclude' : 'include';
+  } else {
+    delete manualOverrides[scene];
+  }
+  saveOverrides();
+  // Update only this card in-place — no full grid re-render
+  const card = document.querySelector(`[data-scene="${CSS.escape(scene)}"]`);
+  if (card) {
+    const newOv = manualOverrides[scene];
+    const included = isIncluded(f);
+    card.className = 'fc ' + (included?'included':'excluded') + (newOv?' manual':'');
+    card.title = newOv ? `Score: ${f.score.toFixed(3)} (manual — click to reset)` : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+  }
 }
 
 function renderGallery() {
-  const threshold = parseFloat(document.getElementById('threshold-slider').value);
   const grid = document.getElementById('frames-grid');
   grid.innerHTML = '';
-  const inc = framesData.filter(f=>f.score>=threshold);
-  document.getElementById('threshold-count').textContent = `${inc.length} / ${framesData.length} scenes`;
-  for (const f of [...framesData].sort((a,b)=>b.score-a.score)) {
-    const included = f.score >= threshold;
+  for (const f of [...framesData].sort((a,b)=>a.scene.localeCompare(b.scene))) {
+    const included = isIncluded(f);
+    const ov = manualOverrides[f.scene];
     const card = document.createElement('div');
-    card.className = 'fc ' + (included?'included':'excluded');
+    card.className = 'fc ' + (included?'included':'excluded') + (ov?' manual':'');
+    card.style.cursor = 'pointer';
+    card.dataset.scene = f.scene;
+    card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)` : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+    card.onclick = ()=>toggleFrame(f.scene);
     const name = f.scene.replace(/-scene-\d+$/,'').split('/').pop().slice(-22);
     card.innerHTML = `<img src="${f.frame_url||''}" loading="lazy" onerror="this.style.display='none'">
       <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span><span class="fc-name">${name}</span></div>`;
@@ -649,18 +863,161 @@ function renderGallery() {
   }
 }
 
+function calculateGalleryStats() {
+  const included = framesData.filter(f=>isIncluded(f));
+  const maxSec = currentJobMaxScene ? parseFloat(currentJobMaxScene) : null;
+  let totalSec = 0;
+  let hasDur = false;
+  for (const f of included) {
+    if (f.duration != null) {
+      hasDur = true;
+      totalSec += maxSec ? Math.min(f.duration, maxSec) : f.duration;
+    }
+  }
+  const countTxt = `${included.length} / ${framesData.length} scenes`;
+  let durTxt = '';
+  if (hasDur) {
+    const m = Math.floor(totalSec/60), s = Math.round(totalSec%60);
+    durTxt = ` · ~${m}:${String(s).padStart(2,'0')} est.`;
+  }
+  document.getElementById('gallery-stats-text').textContent = countTxt + durTxt;
+}
+
 function onThresholdSlide() {
   const v = parseFloat(document.getElementById('threshold-slider').value).toFixed(3);
   document.getElementById('threshold-val').textContent = v;
   renderGallery();
+  calculateGalleryStats();
 }
 
-async function rerunWithThreshold() {
-  if (!currentJobId) return;
-  const job = await api.get(`/api/jobs/${currentJobId}`);
-  if (!job) return;
-  const threshold = parseFloat(document.getElementById('threshold-slider').value);
-  const resp = await api.post('/api/jobs', {...job.params, threshold});
+
+// ── Music tab ─────────────────────────────────────────────────────────────────
+async function loadMusicTracks() {
+  const dir = document.getElementById('music-dir-input').value.trim();
+  if (!dir) return;
+  const data = await api.get(`/api/music-files?dir=${encodeURIComponent(dir)}`);
+  if (!data) return;
+  musicTracks = data;
+  renderMusicList();
+}
+
+function renderMusicList() {
+  const list = document.getElementById('music-list');
+  list.innerHTML = '';
+  const filter = document.getElementById('music-filter').value.toLowerCase();
+  let shown = 0;
+  for (const t of musicTracks) {
+    if (filter && !t.title.toLowerCase().includes(filter)) continue;
+    shown++;
+    const row = document.createElement('div');
+    row.className = 'mt';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = musicSelected.has(t.file);
+    cb.addEventListener('change', e => {
+      if (e.target.checked) musicSelected.add(t.file);
+      else musicSelected.delete(t.file);
+      updateMusicCount(shown);
+    });
+    const title = document.createElement('span');
+    title.className = 'mt-title';
+    title.textContent = t.title;
+    const dur = t.duration ? `${Math.floor(t.duration/60)}:${String(Math.round(t.duration%60)).padStart(2,'0')}` : '?';
+    const meta = document.createElement('span');
+    meta.className = 'mt-meta';
+    meta.textContent = `${t.genre||'?'} · ${dur}`;
+    row.appendChild(cb);
+    row.appendChild(title);
+    row.appendChild(meta);
+    row.onclick = e => { if (e.target !== cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); } };
+    list.appendChild(row);
+  }
+  updateMusicCount(shown);
+}
+
+function updateMusicCount(shown) {
+  const s = musicSelected.size, t = musicTracks.length;
+  const shownTxt = (shown != null && shown !== t) ? ` · ${shown} shown` : '';
+  const allTxt = s === 0 && t > 0 ? ' (no filter = all)' : '';
+  document.getElementById('music-count').textContent = `${s} / ${t} selected${shownTxt}${allTxt}`;
+}
+
+async function rebuildMusicIndex() {
+  const dir = document.getElementById('music-dir-input').value.trim();
+  if (!dir) return;
+  const btn = document.getElementById('btn-music-rebuild');
+  btn.textContent = '↺ Updating…';
+  btn.disabled = true;
+  const res = await api.post('/api/music-rebuild', { dir });
+  btn.textContent = '↺ Update index';
+  btn.disabled = false;
+  if (res?.ok) await loadMusicTracks();
+  else alert('Index update failed:\n' + (res?.output || 'unknown error'));
+}
+
+function setAllMusic(checked) {
+  const filter = document.getElementById('music-filter').value.toLowerCase();
+  for (const t of musicTracks) {
+    if (filter && !t.title.toLowerCase().includes(filter)) continue;
+    if (checked) musicSelected.add(t.file);
+    else musicSelected.delete(t.file);
+  }
+  renderMusicList();
+}
+
+async function populateJobSettings(params) {
+  const sv = (id, v) => { if (v != null && v !== '') document.getElementById(id).value = v; };
+  const sc = (id, v) => { if (v != null) document.getElementById(id).checked = !!v; };
+
+  sv('js-workdir',  params.work_dir);
+  sv('js-cam-a',    params.cam_a);
+  sv('js-cam-b',    params.cam_b);
+  sv('js-title',    params.title);
+  sc('js-no-intro', params.no_intro);
+  sc('js-no-music', params.no_music);
+  // Music tab state
+  if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
+  if (params.music_files?.length) musicSelected = new Set(params.music_files);
+  else musicSelected = new Set();
+
+  // For numeric scene-selection fields, fall back to config.ini defaults when null
+  let th = params.threshold, ms = params.max_scene, pf = params.per_file;
+  if (th == null || ms == null || pf == null) {
+    const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(params.work_dir)}`);
+    if (cfg) {
+      if (th == null) th = cfg.threshold;
+      if (ms == null) ms = cfg.max_scene;
+      if (pf == null) pf = cfg.per_file;
+    }
+  }
+  sv('js-threshold', th);
+  sv('js-max-scene', ms);
+  sv('js-per-file',  pf);
+  if (ms != null) currentJobMaxScene = parseFloat(ms);
+}
+
+function readJobSettings() {
+  const gv = id => document.getElementById(id).value.trim();
+  const gc = id => document.getElementById(id).checked;
+  const p = { work_dir: gv('js-workdir') };
+  const th = gv('js-threshold'); if (th) p.threshold = parseFloat(th);
+  const ms = gv('js-max-scene'); if (ms) p.max_scene = parseFloat(ms);
+  const pf = gv('js-per-file');  if (pf) p.per_file  = parseFloat(pf);
+  const ca = gv('js-cam-a');     if (ca) p.cam_a = ca;
+  const cb = gv('js-cam-b');     if (cb) p.cam_b = cb;
+  const ti = gv('js-title');     if (ti) p.title = ti;
+  p.no_intro = gc('js-no-intro');
+  p.no_music  = gc('js-no-music');
+  const md = document.getElementById('music-dir-input').value.trim();
+  if (md) p.music_dir = md;
+  if (musicSelected.size) p.music_files = [...musicSelected];
+  return p;
+}
+
+async function rerunFromSettings() {
+  const params = readJobSettings();
+  if (!params.work_dir || !currentJobId) return;
+  const resp = await api.post(`/api/jobs/${currentJobId}/rerun`, params);
   if (resp?.id) { refreshJobList(); openJob(resp.id); }
 }
 
@@ -668,9 +1025,10 @@ async function rerunCurrentJob() {
   if (!currentJobId) return;
   const job = await api.get(`/api/jobs/${currentJobId}`);
   if (!job) return;
-  const params = {...job.params};
+  const settingsWorkdir = document.getElementById('js-workdir').value.trim();
+  const params = settingsWorkdir === job.params.work_dir ? readJobSettings() : {...job.params};
   if (framesData.length > 0) params.threshold = parseFloat(document.getElementById('threshold-slider').value);
-  const resp = await api.post('/api/jobs', params);
+  const resp = await api.post(`/api/jobs/${currentJobId}/rerun`, params);
   if (resp?.id) { refreshJobList(); openJob(resp.id); }
 }
 
@@ -701,16 +1059,23 @@ function playVideo(url, card) {
 }
 
 // ── Dir browser ───────────────────────────────────────────────────────────────
-async function openDirBrowser() {
+let _dirSelectCb = null;
+async function openDirBrowser(startPath, callback) {
+  _dirSelectCb = callback || null;
   document.getElementById('dir-modal').classList.add('open');
-  await browseTo(document.getElementById('f-workdir').value.trim() || null);
+  await browseTo((startPath || '').trim() || null);
 }
-function closeDirBrowser() { document.getElementById('dir-modal').classList.remove('open'); }
+function closeDirBrowser() { document.getElementById('dir-modal').classList.remove('open'); _dirSelectCb = null; }
 function selectCurrentDir() {
-  document.getElementById('f-workdir').value = browsePath;
+  if (_dirSelectCb) _dirSelectCb(browsePath);
   closeDirBrowser();
-  loadDirConfig(browsePath);
 }
+// Project working dir
+function openFormDirBrowser()      { openDirBrowser(document.getElementById('f-workdir').value, p => { document.getElementById('f-workdir').value = p; loadDirConfig(p); }); }
+// Music dir (form)
+function openFormMusicDirBrowser() { openDirBrowser(document.getElementById('f-music-dir').value, p => { document.getElementById('f-music-dir').value = p; }); }
+// Music dir (job Music tab)
+function openMusicDirBrowser()     { openDirBrowser(document.getElementById('music-dir-input').value, p => { document.getElementById('music-dir-input').value = p; loadMusicTracks(); }); }
 
 async function loadDirConfig(dir) {
   if (!dir || !dir.trim()) return;
@@ -723,10 +1088,9 @@ async function loadDirConfig(dir) {
   set('f-per-file',     data.per_file);
   set('f-cam-a',        data.cam_a);
   set('f-cam-b',        data.cam_b);
-  set('f-title',        data.title);
-  set('f-music-genre',  data.music_genre);
-  set('f-music-artist', data.music_artist);
-  chk('f-no-intro', data.no_intro);
+  set('f-title',     data.title);
+  set('f-music-dir', data.music_dir);
+  chk('f-no-intro',  data.no_intro);
   chk('f-no-music',  data.no_music);
 }
 async function dirUp() {

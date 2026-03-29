@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -202,18 +203,26 @@ async def _stats_broadcaster():
                 await ws.send_text(data)
             except Exception:
                 dead.add(ws)
-        _stats_subscribers -= dead
+        for ws in dead:
+            _stats_subscribers.discard(ws)
 
 
 # ── Job runner ─────────────────────────────────────────────────────────────────
 
 def _build_cmd(params: dict) -> list[str]:
     cmd = ["/bin/bash", str(SCRIPT_DIR / "autoframe.sh")]
+
+    # Always pass --threshold explicitly so THRESHOLD_EXPLICIT=1 in bash,
+    # which skips the interactive read prompt entirely.
+    threshold = params.get("threshold")
+    if threshold is None:
+        cfg = read_job_config(Path(params.get("work_dir", ".")))
+        threshold = cfg.get("threshold", 0.148)
+    cmd += ["--threshold", str(threshold)]
+
     mapping = [
-        ("threshold",     "--threshold"),
         ("max_scene",     "--max-scene"),
         ("per_file",      "--per-file"),
-        ("title",         "--title"),
         ("cam_a",         "--cam-a"),
         ("cam_b",         "--cam-b"),
         ("music_genre",   "--music-genre"),
@@ -223,6 +232,15 @@ def _build_cmd(params: dict) -> list[str]:
         v = params.get(key)
         if v is not None and v != "" and v is not False:
             cmd += [flag, str(v)]
+    title = params.get("title")
+    if title:
+        # autoframe.sh uses echo -e "$TITLE" to expand \n; pass literal \n escape
+        cmd += ["--title", str(title).replace("\n", "\\n")]
+    if params.get("music_dir"):
+        cmd += ["--music", str(params["music_dir"])]
+    music_files = params.get("music_files")
+    if music_files:
+        cmd += ["--music-files", ",".join(music_files)]
     if params.get("no_intro"):  cmd.append("--no-intro")
     if params.get("no_music"):  cmd.append("--no-music")
     return cmd
@@ -241,13 +259,18 @@ async def _run_job(job: Job):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(job.work_dir()),
+                start_new_session=True,
             )
             job.process = proc
 
             async for raw in proc.stdout:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                job.log.append(line)
-                await job.broadcast({"type": "log", "line": line})
+                text = raw.decode("utf-8", errors="replace")
+                # \r-separated chunks = ffmpeg progress bar updates; send each separately
+                for part in text.split('\r'):
+                    line = part.rstrip('\n').rstrip()
+                    if line:
+                        job.log.append(line)
+                        await job.broadcast({"type": "log", "line": line})
 
             await proc.wait()
             job.status = "done" if proc.returncode == 0 else "failed"
@@ -290,7 +313,6 @@ async def generate_about(data: dict):
     if work_dir and not Path(work_dir).is_dir():
         raise HTTPException(400, f"work_dir not found: {work_dir}")
 
-    import sys
     proc = await asyncio.create_subprocess_exec(
         sys.executable, str(SCRIPT_DIR / "generate_config.py"), description,
         stdout=asyncio.subprocess.PIPE,
@@ -302,6 +324,38 @@ async def generate_about(data: dict):
         "ok":     proc.returncode == 0,
         "output": out.decode("utf-8", errors="replace"),
     }
+
+
+@app.post("/api/music-rebuild")
+async def music_rebuild(payload: dict):
+    music_dir = payload.get("dir", "")
+    if not music_dir:
+        raise HTTPException(400, "dir required")
+    d = Path(music_dir).expanduser().resolve()
+    if not d.is_dir():
+        raise HTTPException(404, "Directory not found")
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(SCRIPT_DIR / "music_index.py"), str(d),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    return {"ok": proc.returncode == 0, "output": out.decode("utf-8", errors="replace")}
+
+
+@app.get("/api/music-files")
+async def music_files_endpoint(dir: str = Query(...)):
+    d = Path(dir).expanduser().resolve()
+    idx = d / "index.json"
+    if idx.exists():
+        tracks = json.loads(idx.read_text())
+        return sorted(tracks, key=lambda t: t.get("title", "").lower())
+    # Fallback: scan mp3s without index
+    return sorted(
+        [{"file": str(f), "title": f.stem, "genre": "", "duration": 0, "bpm": 0, "energy_norm": 0}
+         for f in d.glob("*.mp3")],
+        key=lambda t: t["title"].lower()
+    )
 
 
 @app.get("/api/browse")
@@ -362,25 +416,30 @@ _JOB_CONFIG_MAP = {
 
 
 def read_job_config(work_dir: Path) -> dict:
-    """Read job-relevant keys from work_dir/config.ini."""
-    cp = configparser.ConfigParser()
+    """Read job-relevant keys; work_dir/config.ini overrides global config.ini."""
+    global_cp = configparser.ConfigParser()
+    global_cp.read(str(SCRIPT_DIR / "config.ini"))
+
+    local_cp = configparser.ConfigParser()
     cfg_path = work_dir / "config.ini"
     if cfg_path.exists():
-        cp.read(str(cfg_path))
+        local_cp.read(str(cfg_path))
 
     result = {}
     for field, (section, key) in _JOB_CONFIG_MAP.items():
-        try:
-            raw = cp.get(section, key)
-            # Convert booleans
-            if field in ("no_intro", "no_music"):
-                result[field] = raw.strip().lower() in ("true", "1", "yes")
-            elif field in ("threshold", "max_scene", "per_file"):
-                result[field] = float(raw)
-            else:
-                result[field] = raw.strip()
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            pass
+        for cp in (local_cp, global_cp):   # local wins over global
+            try:
+                raw = cp.get(section, key)
+                if field in ("no_intro", "no_music"):
+                    result[field] = raw.strip().lower() in ("true", "1", "yes")
+                elif field in ("threshold", "max_scene", "per_file"):
+                    result[field] = float(raw)
+                else:
+                    # Restore \n escapes to actual newlines for display in textarea
+                    result[field] = raw.strip().replace("\\n", "\n")
+                break
+            except (configparser.NoSectionError, configparser.NoOptionError):
+                continue
     return result
 
 
@@ -440,7 +499,10 @@ def save_job_config(work_dir: Path, params: dict):
         v = params.get(field)
         if v is None or v == "":
             continue
-        updates.setdefault(section, {})[key] = str(v).lower() if isinstance(v, bool) else str(v)
+        sv = str(v).lower() if isinstance(v, bool) else str(v)
+        # INI files can't have literal newlines in values — store as \n escape
+        sv = sv.replace("\n", "\\n")
+        updates.setdefault(section, {})[key] = sv
 
     if updates:
         update_config_ini(work_dir / "config.ini", updates)
@@ -455,16 +517,37 @@ async def get_job_config(dir: str = Query(...)):
     return read_job_config(work_dir)
 
 
+def _resolve_params(d: dict, work_dir: Path) -> dict:
+    """Fill None scene-selection values from config.ini (work_dir then global), then hardcoded defaults."""
+    cfg_chain = [read_job_config(work_dir)]
+    global_cp = configparser.ConfigParser()
+    global_cp.read(str(SCRIPT_DIR / "config.ini"))
+    def _gf(section, key, fallback):
+        try:    return float(global_cp.get(section, key))
+        except: return fallback
+
+    if d.get("threshold") is None:
+        d["threshold"] = cfg_chain[0].get("threshold") or _gf("scene_selection", "threshold", 0.148)
+    if d.get("max_scene") is None:
+        d["max_scene"] = cfg_chain[0].get("max_scene") or _gf("scene_selection", "max_scene_sec", 10)
+    if d.get("per_file") is None:
+        d["per_file"]  = cfg_chain[0].get("per_file")  or _gf("scene_selection", "max_per_file_sec", 45)
+    return d
+
+
 @app.post("/api/jobs")
 async def create_job(params: JobParams):
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
 
-    save_job_config(work_dir, params.model_dump())
+    d = _resolve_params(params.model_dump(), work_dir)
+    d["work_dir"] = str(work_dir)
+
+    save_job_config(work_dir, d)
 
     job_id = str(uuid.uuid4())[:8]
-    job = Job(job_id, {**params.model_dump(), "work_dir": str(work_dir)})
+    job = Job(job_id, d)
     jobs[job_id] = job
     job.save()
 
@@ -484,6 +567,35 @@ async def list_jobs():
         }
         for j in sorted(jobs.values(), key=lambda j: -j.started_at)
     ]
+
+
+@app.post("/api/jobs/{job_id}/rerun")
+async def rerun_job(job_id: str, params: JobParams):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is already running or queued")
+
+    work_dir = Path(params.work_dir).resolve()
+    if not work_dir.is_dir():
+        raise HTTPException(400, f"Directory not found: {work_dir}")
+
+    d = _resolve_params(params.model_dump(), work_dir)
+    d["work_dir"] = str(work_dir)
+    save_job_config(work_dir, d)
+
+    # Reset job in-place
+    job.params    = d
+    job.log       = []
+    job.status    = "queued"
+    job.started_at = time.time()
+    job.ended_at  = None
+    job.process   = None
+    job.save()
+
+    asyncio.create_task(_run_job(job))
+    return {"id": job_id}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -511,6 +623,38 @@ async def kill_job(job_id: str):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{job_id}/remove")
+async def remove_job(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    # Kill first if still running
+    if job.process and job.status == "running":
+        try:
+            os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
+        except Exception:
+            job.process.terminate()
+    # Remove from memory
+    jobs.pop(job_id, None)
+    # Delete persisted file
+    p = JOBS_DIR / f"{job_id}.json"
+    if p.exists():
+        p.unlink()
+    return {"ok": True}
+
+
+@app.websocket("/ws/stats")   # must be declared before /ws/{job_id}
+async def stats_ws(websocket: WebSocket):
+    await websocket.accept()
+    _stats_subscribers.add(websocket)
+    try:
+        await websocket.send_text(json.dumps(_get_stats()))
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        _stats_subscribers.discard(websocket)
+
+
 @app.websocket("/ws/{job_id}")
 async def job_ws(websocket: WebSocket, job_id: str):
     job = jobs.get(job_id)
@@ -535,18 +679,6 @@ async def job_ws(websocket: WebSocket, job_id: str):
         job.subscribers.discard(websocket)
 
 
-@app.websocket("/ws/stats")
-async def stats_ws(websocket: WebSocket):
-    await websocket.accept()
-    _stats_subscribers.add(websocket)
-    try:
-        # Send immediately
-        await websocket.send_text(json.dumps(_get_stats()))
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        _stats_subscribers.discard(websocket)
-
 
 @app.get("/api/jobs/{job_id}/frames")
 async def job_frames(job_id: str):
@@ -556,14 +688,30 @@ async def job_frames(job_id: str):
 
     scores_csv = job.auto_dir() / "scene_scores.csv"
     frames_dir = job.auto_dir() / "frames"
+    csv_dir    = job.auto_dir() / "csv"
     if not scores_csv.exists():
         raise HTTPException(404, "No scores yet")
+
+    # Build scene-duration lookup from per-video Scenes CSVs
+    durations: dict[str, float] = {}
+    if csv_dir.exists():
+        for csv_path in csv_dir.glob("*-Scenes.csv"):
+            video_prefix = csv_path.stem[:-len("-Scenes")]
+            try:
+                sdf = pd.read_csv(csv_path, skiprows=1)
+                for _, srow in sdf.iterrows():
+                    snum = int(srow["Scene Number"])
+                    key  = f"{video_prefix}-scene-{snum:03d}"
+                    durations[key] = round(float(srow["Length (seconds)"]), 2)
+            except Exception:
+                pass
 
     df = pd.read_csv(scores_csv)
     return [
         {
             "scene":     row["scene"],
             "score":     round(float(row["score"]), 4),
+            "duration":  durations.get(row["scene"]),
             "frame_url": f"/api/file?path={frames_dir / (row['scene'] + '.jpg')}"
                          if (frames_dir / (row["scene"] + ".jpg")).exists() else None,
         }
@@ -598,15 +746,31 @@ async def serve_file(request: Request, path: str = Query(...)):
     if not p.exists():
         raise HTTPException(404)
 
-    file_size = p.stat().st_size
-    mime = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
-    range_header = request.headers.get("range")
+    stat      = p.stat()
+    file_size = stat.st_size
+    mime      = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
+    etag      = f'"{stat.st_mtime:.6f}-{file_size}"'
+    last_mod  = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(stat.st_mtime))
 
+    CHUNK = 2 * 1024 * 1024  # 2 MB — large enough for smooth video buffering
+
+    base_headers = {
+        "Accept-Ranges":  "bytes",
+        "ETag":           etag,
+        "Last-Modified":  last_mod,
+        "Cache-Control":  "public, max-age=86400",
+    }
+
+    # Conditional request — return 304 if client already has the file
+    if request.headers.get("if-none-match") == etag:
+        return JSONResponse(None, status_code=304, headers=base_headers)
+
+    range_header = request.headers.get("range")
     if range_header:
         try:
-            parts   = range_header.replace("bytes=", "").split("-")
-            start   = int(parts[0])
-            end     = int(parts[1]) if parts[1] else file_size - 1
+            parts = range_header.replace("bytes=", "").split("-")
+            start = int(parts[0])
+            end   = int(parts[1]) if parts[1] else min(start + CHUNK - 1, file_size - 1)
         except Exception:
             raise HTTPException(416)
         end        = min(end, file_size - 1)
@@ -617,24 +781,24 @@ async def serve_file(request: Request, path: str = Query(...)):
                 await f.seek(start)
                 remaining = chunk_size
                 while remaining > 0:
-                    data = await f.read(min(65536, remaining))
+                    data = await f.read(min(CHUNK, remaining))
                     if not data:
                         break
                     remaining -= len(data)
                     yield data
 
         return StreamingResponse(range_stream(), status_code=206, media_type=mime,
-            headers={"Content-Range": f"bytes {start}-{end}/{file_size}",
-                     "Accept-Ranges": "bytes",
+            headers={**base_headers,
+                     "Content-Range":  f"bytes {start}-{end}/{file_size}",
                      "Content-Length": str(chunk_size)})
 
     async def full_stream():
         async with aiofiles.open(str(p), "rb") as f:
             while True:
-                data = await f.read(65536)
+                data = await f.read(CHUNK)
                 if not data:
                     break
                 yield data
 
     return StreamingResponse(full_stream(), media_type=mime,
-        headers={"Accept-Ranges": "bytes", "Content-Length": str(file_size)})
+        headers={**base_headers, "Content-Length": str(file_size)})
