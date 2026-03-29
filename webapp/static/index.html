@@ -16,12 +16,13 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 
 /* ── Layout ── */
 #app { display:flex; height:100vh; }
-#sidebar { width:230px; min-width:230px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+#sidebar { width:260px; min-width:260px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
 #sidebar-header { padding:12px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; }
 #sidebar-header h1 { flex:1; font-size:14px; color:var(--accent); letter-spacing:1px; line-height:1.2; }
 .icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:13px; }
 .icon-btn:hover { border-color:var(--accent); color:var(--accent); }
-#btn-new { background:var(--accent); color:#000; border:none; padding:4px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
+#sidebar-new-row { padding:8px 10px; border-bottom:1px solid var(--border); }
+#btn-new { width:100%; background:var(--accent); color:#000; border:none; padding:5px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
 #btn-new:hover { opacity:.85; }
 #job-list { flex:1; overflow-y:auto; }
 .job-item { padding:9px 10px; border-bottom:1px solid var(--border); cursor:pointer; position:relative; }
@@ -239,7 +240,9 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <span class="lang-btn" data-lang="pl" onclick="setLang('pl')">pl</span>
     </span>
     <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
-    <button id="btn-new" data-i18n="btn.new" onclick="showForm()">+ New</button>
+  </div>
+  <div id="sidebar-new-row">
+    <button id="btn-new" data-i18n="btn.new" onclick="showForm()">+ New project</button>
   </div>
   <div id="job-list"></div>
 </div>
