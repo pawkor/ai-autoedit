@@ -16,6 +16,7 @@ ai-autoedit-env/
 
 # Runtime state
 webapp/jobs/
+**/manual_overrides.json
 
 # OS
 .DS_Store

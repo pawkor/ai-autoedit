@@ -27,6 +27,9 @@ from pydantic import BaseModel
 import pandas as pd
 
 SCRIPT_DIR  = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(SCRIPT_DIR))
+import pipeline  # noqa: E402
 WEBAPP_DIR  = Path(__file__).resolve().parent
 STATIC_DIR  = WEBAPP_DIR / "static"
 JOBS_DIR    = WEBAPP_DIR / "jobs"
@@ -62,6 +65,7 @@ class Job:
         self.status      = "queued"   # queued | running | done | failed | killed
         self.log: list[str] = []
         self.process: Optional[asyncio.subprocess.Process] = None
+        self._task: Optional[asyncio.Task] = None
         self.started_at  = time.time()
         self.ended_at: Optional[float] = None
         self.subscribers: set[WebSocket] = set()
@@ -142,15 +146,62 @@ async def startup():
 
 _gpu_available: Optional[bool] = None
 
+def _proc_meminfo() -> tuple[int, int]:
+    """Read MemTotal/MemAvailable from /proc/meminfo — correct inside LXC containers."""
+    total = avail = 0
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                total = int(line.split()[1]) * 1024
+            elif line.startswith("MemAvailable:"):
+                avail = int(line.split()[1]) * 1024
+    except Exception:
+        pass
+    return total - avail, total
+
+
+def _container_memory() -> tuple[int, int]:
+    """Return (used_bytes, total_bytes) from cgroups (matches docker stats).
+    Falls back to /proc/meminfo if cgroups are unavailable."""
+    proc_total = _proc_meminfo()[1]
+
+    # cgroup v2
+    try:
+        used_total = int(Path("/sys/fs/cgroup/memory.current").read_text())
+        cache = 0
+        for line in Path("/sys/fs/cgroup/memory.stat").read_text().splitlines():
+            if line.startswith("inactive_file "):
+                cache = int(line.split()[1]); break
+        limit_text = Path("/sys/fs/cgroup/memory.max").read_text().strip()
+        total = proc_total if limit_text == "max" else int(limit_text)
+        return max(0, used_total - cache), total
+    except Exception:
+        pass
+    # cgroup v1
+    try:
+        used_total = int(Path("/sys/fs/cgroup/memory/memory.usage_in_bytes").read_text())
+        cache = 0
+        for line in Path("/sys/fs/cgroup/memory/memory.stat").read_text().splitlines():
+            if line.startswith("total_inactive_file "):
+                cache = int(line.split()[1]); break
+        limit = int(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes").read_text())
+        total = proc_total if limit > proc_total * 0.99 else limit
+        return max(0, used_total - cache), total
+    except Exception:
+        pass
+    used, total = _proc_meminfo()
+    return used, total
+
 def _get_stats() -> dict:
     global _gpu_available
-    cpu  = psutil.cpu_percent(interval=None)
-    mem  = psutil.virtual_memory()
+    cpu       = psutil.cpu_percent(interval=None)
+    ram_used, ram_total = _container_memory()
+    ram_pct   = round(ram_used / ram_total * 100, 1) if ram_total else 0
     stats = {
         "cpu_pct":       round(cpu, 1),
-        "ram_used_gb":   round(mem.used  / 1e9, 1),
-        "ram_total_gb":  round(mem.total / 1e9, 1),
-        "ram_pct":       mem.percent,
+        "ram_used_gb":   round(ram_used  / 1e9, 1),
+        "ram_total_gb":  round(ram_total / 1e9, 1),
+        "ram_pct":       ram_pct,
         "gpu":           None,
         "running_jobs":  sum(1 for j in jobs.values() if j.status == "running"),
         "queued_jobs":   sum(1 for j in jobs.values() if j.status == "queued"),
@@ -209,43 +260,6 @@ async def _stats_broadcaster():
 
 # ── Job runner ─────────────────────────────────────────────────────────────────
 
-def _build_cmd(params: dict) -> list[str]:
-    cmd = ["/bin/bash", str(SCRIPT_DIR / "autoframe.sh")]
-
-    # Always pass --threshold explicitly so THRESHOLD_EXPLICIT=1 in bash,
-    # which skips the interactive read prompt entirely.
-    threshold = params.get("threshold")
-    if threshold is None:
-        cfg = read_job_config(Path(params.get("work_dir", ".")))
-        threshold = cfg.get("threshold", 0.148)
-    cmd += ["--threshold", str(threshold)]
-
-    mapping = [
-        ("max_scene",     "--max-scene"),
-        ("per_file",      "--per-file"),
-        ("cam_a",         "--cam-a"),
-        ("cam_b",         "--cam-b"),
-        ("music_genre",   "--music-genre"),
-        ("music_artist",  "--music-artist"),
-    ]
-    for key, flag in mapping:
-        v = params.get(key)
-        if v is not None and v != "" and v is not False:
-            cmd += [flag, str(v)]
-    title = params.get("title")
-    if title:
-        # autoframe.sh uses echo -e "$TITLE" to expand \n; pass literal \n escape
-        cmd += ["--title", str(title).replace("\n", "\\n")]
-    if params.get("music_dir"):
-        cmd += ["--music", str(params["music_dir"])]
-    music_files = params.get("music_files")
-    if music_files:
-        cmd += ["--music-files", ",".join(music_files)]
-    if params.get("no_intro"):  cmd.append("--no-intro")
-    if params.get("no_music"):  cmd.append("--no-music")
-    return cmd
-
-
 async def _run_job(job: Job):
     async with job_semaphore:
         job.status = "running"
@@ -254,26 +268,20 @@ async def _run_job(job: Job):
         job.save()
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *_build_cmd(job.params),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(job.work_dir()),
-                start_new_session=True,
-            )
-            job.process = proc
-
-            async for raw in proc.stdout:
-                text = raw.decode("utf-8", errors="replace")
-                # \r-separated chunks = ffmpeg progress bar updates; send each separately
-                for part in text.split('\r'):
+            async for raw_line in pipeline.run(job.params, job.work_dir()):
+                # \r prefix = ffmpeg progress bar update (overwrite previous line)
+                for part in raw_line.split('\r'):
                     line = part.rstrip('\n').rstrip()
                     if line:
                         job.log.append(line)
                         await job.broadcast({"type": "log", "line": line})
-
-            await proc.wait()
-            job.status = "done" if proc.returncode == 0 else "failed"
+            job.status = "done"
+        except asyncio.CancelledError:
+            job.log.append("[job cancelled]")
+            job.status = "killed"
+        except RuntimeError as e:
+            job.log.append(f"ERROR: {e}")
+            job.status = "failed"
         except Exception as e:
             job.log.append(f"ERROR: {e}")
             job.status = "failed"
@@ -325,10 +333,31 @@ async def generate_about(data: dict):
         cwd=work_dir or str(SCRIPT_DIR),
     )
     out, _ = await proc.communicate()
-    return {
-        "ok":     proc.returncode == 0,
-        "output": out.decode("utf-8", errors="replace"),
-    }
+    output = out.decode("utf-8", errors="replace")
+    ini_start = output.find('[clip_prompts]')
+    result: dict = {"ok": proc.returncode == 0 and ini_start >= 0, "output": output}
+    if ini_start >= 0:
+        cp = configparser.ConfigParser()
+        cp.read_string(output[ini_start:])
+        result["positive"] = cp.get("clip_prompts", "positive", fallback="").strip()
+        result["negative"] = cp.get("clip_prompts", "negative", fallback="").strip()
+    return result
+
+
+@app.post("/api/jobs/{job_id}/save-prompts")
+async def save_job_prompts(job_id: str, data: dict):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    description = data.get("description", "").strip()
+    positive    = data.get("positive", "").strip()
+    negative    = data.get("negative", "").strip()
+    if description:
+        job.params["description"] = description
+        job.save()
+    if positive or negative:
+        save_prompts_to_config(Path(job.params["work_dir"]) / "config.ini", positive, negative)
+    return {"ok": True}
 
 
 @app.post("/api/music-rebuild")
@@ -355,7 +384,7 @@ async def music_files_endpoint(dir: str = Query(...)):
     if idx.exists():
         tracks = json.loads(idx.read_text())
         return sorted(tracks, key=lambda t: t.get("title", "").lower())
-    # Fallback: scan mp3s without index
+    # Fallback: scan mp3s without index (recursive)
     return sorted(
         [{"file": str(f), "title": f.stem, "genre": "", "duration": 0, "bpm": 0, "energy_norm": 0}
          for f in d.glob("*.mp3")],
@@ -402,6 +431,7 @@ class JobParams(BaseModel):
     music_genre:  Optional[str] = None
     music_artist: Optional[str] = None
     work_subdir:  str = "_autoframe"
+    description:  Optional[str] = None
 
 
 # ── Per-directory config.ini helpers ──────────────────────────────────────────
@@ -417,6 +447,9 @@ _JOB_CONFIG_MAP = {
     "no_music":     ("job", "no_music"),
     "music_genre":  ("job", "music_genre"),
     "music_artist": ("job", "music_artist"),
+    "music_dir":    ("music", "dir"),
+    "positive":     ("clip_prompts", "positive"),
+    "negative":     ("clip_prompts", "negative"),
 }
 
 
@@ -513,13 +546,85 @@ def save_job_config(work_dir: Path, params: dict):
         update_config_ini(work_dir / "config.ini", updates)
 
 
+def save_prompts_to_config(cfg_path: Path, positive: str, negative: str):
+    """Rewrite [clip_prompts] section in config.ini preserving all other content."""
+    def fmt_multiline(text: str) -> str:
+        lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+        return "\n" + "\n".join(f"    {l}" for l in lines)
+
+    new_section = (
+        "[clip_prompts]\n"
+        f"positive ={fmt_multiline(positive)}\n\n"
+        f"negative ={fmt_multiline(negative)}\n"
+    )
+
+    if not cfg_path.exists():
+        cfg_path.write_text(new_section)
+        return
+
+    content = cfg_path.read_text()
+    replaced = re.sub(r'\[clip_prompts\].*?(?=\n\[|\Z)', new_section.rstrip(),
+                      content, flags=re.DOTALL)
+    if replaced == content:  # section didn't exist — append
+        replaced = content.rstrip() + "\n\n" + new_section
+    cfg_path.write_text(replaced)
+
+
 @app.get("/api/job-config")
 async def get_job_config(dir: str = Query(...)):
     """Return job-relevant values from work_dir/config.ini to pre-fill the form."""
     work_dir = Path(dir).resolve()
     if not str(work_dir).startswith(str(BROWSE_ROOT)):
         raise HTTPException(403)
-    return read_job_config(work_dir)
+    result = read_job_config(work_dir)
+    result["_resolved"] = str(work_dir)
+    work_subdir = result.get("work_subdir") or "_autoframe"
+    result["_has_processed"] = (work_dir / work_subdir).is_dir() or any(work_dir.glob("highlight*.mp4"))
+    return result
+
+
+@app.post("/api/jobs/import")
+async def import_job(data: dict):
+    """Create a completed job entry for a directory processed outside the webapp."""
+    work_dir = Path(data.get("work_dir", "")).resolve()
+    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not work_dir.is_dir():
+        raise HTTPException(400, "work_dir not found")
+
+    # Check if job for this dir already exists
+    for job in jobs.values():
+        if Path(job.params.get("work_dir", "")).resolve() == work_dir:
+            return {"id": job.id}
+
+    params = read_job_config(work_dir)
+    params["work_dir"] = str(work_dir)
+    params.setdefault("work_subdir", "_autoframe")
+
+    job_id = str(uuid.uuid4())[:8]
+    job = Job(job_id, params)
+    job.status = "done"
+    job.log = ["[imported from existing files]"]
+    # Use mtime of the newest highlight file as timestamp
+    mp4s = list(work_dir.glob("highlight*.mp4"))
+    if mp4s:
+        job.started_at = min(p.stat().st_mtime for p in mp4s)
+        job.ended_at   = max(p.stat().st_mtime for p in mp4s)
+    jobs[job_id] = job
+    job.save()
+    return {"id": job_id}
+
+
+@app.put("/api/job-config")
+async def put_job_config(data: dict):
+    """Persist individual fields to work_dir/config.ini without starting a job."""
+    work_dir = Path(data.get("work_dir", "")).resolve()
+    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not work_dir.is_dir():
+        raise HTTPException(400, "work_dir not found")
+    save_job_config(work_dir, data)
+    return {"ok": True}
 
 
 def _resolve_params(d: dict, work_dir: Path) -> dict:
@@ -556,7 +661,7 @@ async def create_job(params: JobParams):
     jobs[job_id] = job
     job.save()
 
-    asyncio.create_task(_run_job(job))
+    job._task = asyncio.create_task(_run_job(job))
     return {"id": job_id}
 
 
@@ -597,9 +702,10 @@ async def rerun_job(job_id: str, params: JobParams):
     job.started_at = time.time()
     job.ended_at  = None
     job.process   = None
+    job._task     = None
     job.save()
 
-    asyncio.create_task(_run_job(job))
+    job._task = asyncio.create_task(_run_job(job))
     return {"id": job_id}
 
 
@@ -616,11 +722,14 @@ async def kill_job(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.process and job.status == "running":
-        try:
-            os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
-        except Exception:
-            job.process.terminate()
+    if job.status == "running":
+        if job._task and not job._task.done():
+            job._task.cancel()
+        elif job.process:
+            try:
+                os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
+            except Exception:
+                job.process.terminate()
         job.status = "killed"
         job.ended_at = time.time()
         job.save()
@@ -685,6 +794,26 @@ async def job_ws(websocket: WebSocket, job_id: str):
 
 
 
+@app.get("/api/jobs/{job_id}/overrides")
+async def get_overrides(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    p = job.auto_dir() / "manual_overrides.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+@app.put("/api/jobs/{job_id}/overrides")
+async def put_overrides(job_id: str, data: dict):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    p = job.auto_dir() / "manual_overrides.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data))
+    return {"ok": True}
+
+
 @app.get("/api/jobs/{job_id}/frames")
 async def job_frames(job_id: str):
     job = jobs.get(job_id)
@@ -732,14 +861,23 @@ async def job_result(job_id: str):
 
     work_dir = job.work_dir()
     files = {}
-    for name in ("highlight_final_music.mp4", "highlight_music.mp4",
-                 "highlight_final.mp4", "highlight.mp4"):
-        p = work_dir / name
+
+    def _add(p: Path):
         if p.exists():
-            files[name] = {
+            files[p.name] = {
                 "url":     f"/api/file?path={p}",
                 "size_mb": round(p.stat().st_size / 1_048_576, 1),
             }
+
+    # Versioned music mixes — newest version first
+    def _ver(p: Path) -> int:
+        m = re.search(r'_v(\d+)$', p.stem)
+        return int(m.group(1)) if m else 0
+
+    for pat in ("highlight_final_music_v*.mp4", "highlight_music_v*.mp4"):
+        for p in sorted(work_dir.glob(pat), key=_ver, reverse=True):
+            _add(p)
+
     return files
 
 
@@ -775,10 +913,14 @@ async def serve_file(request: Request, path: str = Query(...)):
         try:
             parts = range_header.replace("bytes=", "").split("-")
             start = int(parts[0])
-            end   = int(parts[1]) if parts[1] else min(start + CHUNK - 1, file_size - 1)
+            if parts[1]:
+                # Closed range (bytes=N-M) — honour exactly (Safari is strict)
+                end = min(int(parts[1]), file_size - 1)
+            else:
+                # Open-ended range (bytes=N-) — serve a full chunk
+                end = min(start + CHUNK - 1, file_size - 1)
         except Exception:
             raise HTTPException(416)
-        end        = min(end, file_size - 1)
         chunk_size = end - start + 1
 
         async def range_stream():

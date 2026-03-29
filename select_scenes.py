@@ -28,14 +28,23 @@ SCENES_DIR  = os.environ.get("SCENES_DIR",  "autocut/")
 TRIMMED_DIR = os.environ.get("TRIMMED_DIR", "trimmed/")
 SCORES_CSV  = os.environ.get("OUTPUT_CSV",  "scene_scores.csv")
 OUTPUT_LIST = os.environ.get("OUTPUT_LIST", "selected_scenes.txt")
-CAM_SOURCES = os.environ.get("CAM_SOURCES", "")
-AUDIO_CAM   = os.environ.get("AUDIO_CAM",   "")
+CAM_SOURCES      = os.environ.get("CAM_SOURCES",      "")
+AUDIO_CAM        = os.environ.get("AUDIO_CAM",        "")
+MANUAL_OVERRIDES = os.environ.get("MANUAL_OVERRIDES", "")
+
+import json as _json
+_ov = {}
+if MANUAL_OVERRIDES and os.path.exists(MANUAL_OVERRIDES):
+    _ov = _json.load(open(MANUAL_OVERRIDES))
+force_include = {k for k, v in _ov.items() if v == 'include'}
+force_exclude = {k for k, v in _ov.items() if v == 'exclude'}
+if force_include or force_exclude:
+    print(f"Manual overrides: +{len(force_include)} forced in, -{len(force_exclude)} forced out")
 
 os.makedirs(TRIMMED_DIR, exist_ok=True)
 
 df = pd.read_csv(SCORES_CSV)
 df['source'] = df['scene'].str.replace(r'-scene-\d+$', '', regex=True)
-
 cam_map = {}
 if CAM_SOURCES and os.path.exists(CAM_SOURCES):
     cdf = pd.read_csv(CAM_SOURCES)
@@ -43,6 +52,11 @@ if CAM_SOURCES and os.path.exists(CAM_SOURCES):
 
 df['camera'] = df['source'].map(cam_map).fillna('default')
 dual_cam = len(cam_map) > 0 and df['camera'].nunique() > 1
+df_all = df.copy()  # keep full df (with camera) for force-include lookups
+
+# Apply force-exclude before selection
+if force_exclude:
+    df = df[~df['scene'].isin(force_exclude)]
 
 
 def get_duration(scene_file):
@@ -106,6 +120,25 @@ all_selected = []
 for source, group in df.groupby('source'):
     all_selected.extend(select_from_group(group))
 
+# ── Apply force-includes (add scenes not already selected) ───────────────────
+if force_include:
+    selected_scenes = {s[0] for s in all_selected}
+    for scene in force_include:
+        if scene in selected_scenes:
+            continue
+        scene_file = f"{SCENES_DIR}{scene}.mp4"
+        if not os.path.exists(scene_file):
+            continue
+        dur = get_duration(scene_file)
+        if not dur:
+            continue
+        row = df_all[df_all['scene'] == scene]
+        score  = float(row['score'].iloc[0])  if len(row) else 0.0
+        camera = str(row['camera'].iloc[0])   if len(row) else 'default'
+        take   = min(dur, MAX_SCENE_SEC)
+        all_selected.append((scene, scene_file, dur, take, score, camera))
+        print(f"  Force-include: {scene} ({take:.0f}s, score {score:.3f})")
+
 # ── Interleave cameras if dual-cam mode ──────────────────────────────────────
 cam_a_name = None
 cam_b_name = None
@@ -145,8 +178,8 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     needs_trim = duration > take
     needs_mute = dual_cam and camera != audio_cam
 
-    suffix  = "_trimmed" if needs_trim else ""
-    suffix += "_muted"   if needs_mute else ""
+    suffix  = f"_t{take:.1f}" if needs_trim else ""
+    suffix += "_muted"       if needs_mute else ""
     if not suffix:
         suffix = "_enc"
     out = f"{TRIMMED_DIR}{scene}{suffix}.mp4"

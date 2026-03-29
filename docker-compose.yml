@@ -5,11 +5,15 @@ services:
     user: "${UID}:${GID}"
     ports:
       - "8000:8000"
+    security_opt:
+      - apparmor:unconfined
     volumes:
       - "${DATA_DIR}:/data"
-      - ./webapp/jobs:/app/webapp/jobs
+      - ./webapp:/app/webapp
+      - ./config.ini:/app/config.ini:ro
     environment:
       BROWSE_ROOT: /data
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     deploy:
       resources:
         reservations:

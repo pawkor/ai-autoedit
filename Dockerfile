@@ -25,7 +25,13 @@ ENV LD_LIBRARY_PATH="/usr/lib/jellyfin-ffmpeg/lib:${LD_LIBRARY_PATH:-}"
 
 WORKDIR /app
 
-# Install Python dependencies (torch from CUDA 12.8 wheel index)
+# Install heavy ML dependencies first — separate layer so it stays cached
+# when requirements.txt changes. Versions must match requirements.txt.
+RUN pip install --no-cache-dir --break-system-packages \
+        --extra-index-url https://download.pytorch.org/whl/cu128 \
+        torch==2.11.0+cu128 torchvision==0.26.0+cu128 open_clip_torch==3.3.0
+
+# Install remaining dependencies (torch already satisfied, skipped by pip)
 # Note: decord (gpu_detect.py) is NOT included — requires building from source
 # with two patches; --gpudetect is not exposed via the webapp UI anyway.
 COPY requirements.txt .

@@ -120,7 +120,7 @@ while [[ $# -gt 0 ]]; do
         --music-artist)   MUSIC_ARTIST="$2"; shift 2 ;;
         --music-files)    MUSIC_FILES="$2";  shift 2 ;;
         --music-rebuild)
-            source "$VENV/bin/activate"
+            [ -f "$VENV/bin/activate" ] && source "$VENV/bin/activate"
             echo "Rebuilding music index: $MUSIC_DIR"
             python3 "$SCRIPT_DIR"/music_index.py "$MUSIC_DIR" --force
             exit 0 ;;
@@ -153,7 +153,7 @@ fi
 AUTODIR="$WORKDIR/$WORK_SUBDIR"
 mkdir -p "$AUTODIR"/{autocut,frames,csv,trimmed}
 
-source "$VENV/bin/activate"
+[ -f "$VENV/bin/activate" ] && source "$VENV/bin/activate"
 
 # ── GPU / encoder detection ───────────────────────────────────────────────────
 if { $FFMPEG -encoders 2>/dev/null || true; } | grep -q h264_nvenc; then
@@ -414,6 +414,7 @@ $FFMPEG -f concat -safe 0 \
     -c:v "$VID_CODEC" $VID_QUALITY \
     -c:a aac -b:a "$AUDIO_BITRATE" \
     -pix_fmt yuv420p -r "$FRAMERATE" -vsync cfr \
+    -movflags +faststart \
     -progress pipe:1 -loglevel error \
     "$HIGHLIGHT" -y | \
 python3 -c "
@@ -461,7 +462,7 @@ print('$AUTODIR/frames/' + df.iloc[0]['scene'] + '.jpg')
     LINE1=$(echo -e "$TITLE" | head -1)
     LINE2=$(echo -e "$TITLE" | tail -n +2 | tr '\n' ' ' | xargs)
 
-    FADE_OUT_ST=$(echo "$INTRO_DURATION - $FADE_DUR" | bc)
+    FADE_OUT_ST=$(echo "$INTRO_DURATION - $FADE_DUR" | awk '{printf "%.3f", $1 - $3}')
 
     # Intro
     $FFMPEG -loop 1 -i "$BEST_FRAME" \
@@ -482,7 +483,7 @@ print('$AUTODIR/frames/' + df.iloc[0]['scene'] + '.jpg')
         "$INTRO" -y -loglevel quiet
 
     # Highlight with fade in/out
-    FADE_OUT=$(echo "$HL_DURATION - $FADE_DUR" | bc)
+    FADE_OUT=$(echo "$HL_DURATION - $FADE_DUR" | awk '{printf "%.3f", $1 - $3}')
     $FFMPEG -i "$HIGHLIGHT" \
         -vf "fade=t=in:st=0:d=${FADE_DUR},fade=t=out:st=${FADE_OUT}:d=${FADE_DUR}" \
         -c:v "$VID_CODEC" $VID_QUALITY -pix_fmt yuv420p -c:a copy \
@@ -511,7 +512,7 @@ CONCATEOF
 
     $FFMPEG -f concat -safe 0 \
         -i "$AUTODIR/final_concat.txt" \
-        -c copy \
+        -c copy -movflags +faststart \
         "$FINAL" -y -loglevel quiet
 
     FINAL_DURATION=$($FFPROBE -v quiet -show_entries format=duration \
@@ -534,6 +535,9 @@ if [ "$NO_MUSIC" -eq 0 ] && [ -d "$MUSIC_DIR" ]; then
     INDEXED_COUNT=0
     [ -f "$MUSIC_INDEX" ] && INDEXED_COUNT=$(python3 -c "import json; print(len(json.load(open('$MUSIC_INDEX'))))" 2>/dev/null || echo 0)
 
+    if [ "$MP3_COUNT" -eq 0 ]; then
+        echo "  No MP3 files in $MUSIC_DIR, skipping music"
+    else
     if [ ! -f "$MUSIC_INDEX" ] || [ "$MP3_COUNT" -gt "$INDEXED_COUNT" ]; then
         echo "  Building music index ($MP3_COUNT tracks)..."
         python3 "$SCRIPT_DIR"/music_index.py "$MUSIC_DIR" --output "$MUSIC_INDEX"
@@ -547,19 +551,23 @@ if [ "$NO_MUSIC" -eq 0 ] && [ -d "$MUSIC_DIR" ]; then
         -of csv=p=0 "$VIDEO_TO_MIX")
 
     SELECTED_TRACK=$(python3 - <<PYEOF
-import json, pandas as pd, sys
+import json, pandas as pd, sys, os
 
 scores_csv = "$AUTODIR/scene_scores.csv"
 index_path = "$MUSIC_INDEX"
 duration   = float("$VIDEO_DURATION")
+
+if not os.path.exists(index_path):
+    sys.exit(0)
 
 df = pd.read_csv(scores_csv)
 avg_score = df["score"].mean()
 # Map avg CLIP score to energy_norm target (0.148 low → 0.3, 0.18+ high → 0.9)
 energy_target = min(0.9, max(0.2, (avg_score - 0.14) * 10))
 
-import sys
 all_tracks = json.load(open(index_path))
+if not all_tracks:
+    sys.exit(0)
 
 # Genre filter
 genre_filter = "$MUSIC_GENRE".strip().lower()
@@ -615,7 +623,7 @@ PYEOF
 
         OUTPUT_MUSIC="${VIDEO_TO_MIX%.mp4}_music.mp4"
 
-        FADE_START=$(echo "$VIDEO_DURATION - $MUSIC_FADE_DUR" | bc)
+        FADE_START=$(echo "$VIDEO_DURATION - $MUSIC_FADE_DUR" | awk '{printf "%.3f", $1 - $3}')
 
         $FFMPEG -i "$VIDEO_TO_MIX" -i "$SELECTED_TRACK" \
             -filter_complex "
@@ -625,10 +633,12 @@ PYEOF
             " \
             -map 0:v -map "[aout]" \
             -c:v copy -c:a aac -b:a 192k \
+            -movflags +faststart \
             "$OUTPUT_MUSIC" -y -loglevel quiet
 
         echo "  → $(basename "$OUTPUT_MUSIC")"
     fi
+    fi  # MP3_COUNT -gt 0
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

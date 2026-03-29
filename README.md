@@ -1,39 +1,210 @@
-# autoframe — AI Highlight Reel Pipeline
+# AI-autoedit — AI Highlight Reel Pipeline
 
-Każdy dzień na motocyklu to kilkaset gigabajtów surowego materiału z jednej lub dwóch kamer. Ręczny montaż takiej ilości nagrań — przeglądanie, wycinanie, składanie — zajmuje wielokrotnie więcej czasu niż sam wyjazd. Po powrocie z dłuższej trasy czeka kilkanaście dni do obrobienia.
+Każdy dzień na motocyklu to kilkaset gigabajtów surowego materiału z jednej lub dwóch kamer. Ręczny montaż zajmuje wielokrotnie więcej czasu niż sam wyjazd. AI-autoedit rozwiązuje ten problem — uruchamiasz pipeline przez przeglądarkę, highlight gotowy.
 
-autoframe powstał żeby rozwiązać ten problem. Uruchamiasz skrypt w katalogu dnia — highlight gotowy. Model CLIP ocenia każdą scenę semantycznie (rozumie co jest w kadrze, nie tylko ruch czy jasność), wybiera najlepsze ujęcia, przeplata materiał z dwóch kamer i miesza z muzyką dobraną do charakteru nagrania. Bez ręcznego montażu, bez przeglądania godzin materiału.
+Model CLIP ocenia każdą scenę semantycznie (rozumie co jest w kadrze, nie tylko ruch czy jasność), wybiera najlepsze ujęcia i miesza z muzyką dobraną do charakteru nagrania. Możesz ręcznie oznaczyć sceny do włączenia lub wykluczenia w przeglądarce klatek — pipeline uwzględni je przy ponownym przetwarzaniu.
 
-Pipeline obsługuje kamerę kaskową (helmet cam) i kamerę 360° Insta360 X2 montowaną na lusterku — łącznie potrafi przetworzyć ponad 700 GB materiału z jednego dnia jazdy.
+Every day on a motorcycle produces hundreds of gigabytes of raw footage. AI-autoedit processes it automatically: CLIP scores each scene semantically, selects the best shots, and mixes in music matched to the ride's character. You can manually override frame selection through the browser — the pipeline applies overrides on rerun.
 
-## Przykładowy film
+## Przykładowy film / Sample output
 
 [![Przykładowy highlight](https://img.youtube.com/vi/kR-plye7V2s/maxresdefault.jpg)](https://www.youtube.com/watch?v=kR-plye7V2s)
 
-## Dokumentacja
+---
 
-- [Jak to działa](docs/how-it-works.md)
-- [Instalacja](docs/installation.md)
-- [Użycie](docs/usage.md)
-- [Konfiguracja](docs/configuration.md)
-- [Biblioteka muzyczna](docs/music.md)
+## Web UI
+
+AI-autoedit działa jako aplikacja webowa — pipeline uruchamiany przez przeglądarkę, logi w czasie rzeczywistym, podgląd wyników bez kopiowania plików.
+
+AI-autoedit runs as a web app — pipeline launched from the browser, real-time logs, results preview without copying files.
+
+### Lista projektów / Project list
+
+![Ekran główny](docs/img/AI-autoedit-main.png)
+
+Lewy pasek wyświetla historię zadań z ich statusem (done / running / failed) i czasem trwania. Przełącznik **en / pl** zmienia język interfejsu bez przeładowania strony.
+
+The left sidebar shows job history with status and elapsed time. The **en / pl** switcher changes the interface language without page reload.
+
+### Ustawienia projektu / Project settings
+
+![Ustawienia z promptami CLIP](docs/img/AI-autoedit-open-project.png)
+
+Zakładka **Settings** pozwala zmieniać próg CLIP, czas sceny, czas na plik, prompty CLIP i ustawienia muzyki bez wychodzenia z przeglądarki. **Rerun with these settings** zapisuje konfigurację do `config.ini` projektu i uruchamia pipeline ponownie.
+
+The **Settings** tab lets you adjust the CLIP threshold, scene duration, per-file cap, CLIP prompts and music settings. **Rerun with these settings** saves the config to the project's `config.ini` and reruns the pipeline.
+
+### Galeria scen / Scene gallery
+
+![Galeria z przeglądem klatek](docs/img/AI-autoedit-gallery.png)
+
+Galeria pokazuje klatkę środkową każdej wykrytej sceny z jej wynikiem CLIP. Suwakiem **Threshold** filtrujesz które sceny byłyby wybrane przy bieżącym progu. Kliknięcie klatki dodaje ją do wymuszenia (force include) lub wyklucza ją (force exclude) — ta decyzja jest zapisywana po stronie serwera i stosowana przy **Rerun**.
+
+The gallery shows the midpoint frame of each detected scene with its CLIP score. The **Threshold** slider filters which scenes would be selected. Clicking a frame toggles force-include or force-exclude — saved server-side and applied on **Rerun**.
+
+### Biblioteka muzyczna / Music library
+
+![Przeglądarka muzyki](docs/img/AI-autoedit-music.png)
+
+Zakładka **Music** pokazuje zaindeksowane utwory z folderu muzycznego. Filtruj po nazwie, zaznacz konkretne ścieżki do użycia w następnym przebiegu, przebuduj indeks po dodaniu nowych plików.
+
+The **Music** tab shows indexed tracks from the music folder. Filter by name, select specific tracks to use in the next run, rebuild the index after adding new files.
+
+### Log i statystyki systemu / Log and system stats
+
+![Log z postępem pipeline](docs/img/AI-autoedit-log.png)
+
+Zakładka **Log** pokazuje pełny output pipeline w czasie rzeczywistym. Pasek postępu podczas enkodowania aktualizuje się na bieżąco. Po prawej wykresy CPU, RAM, GPU i VRAM oraz kolejka zadań.
+
+The **Log** tab shows full pipeline output in real time. The encoding progress bar updates continuously. On the right: CPU, RAM, GPU and VRAM bars plus the job queue.
+
+### Wyniki i odtwarzacz / Results and player
+
+![Wyniki z odtwarzaczem wideo](docs/img/AI-autoedit-results-player.png)
+
+Zakładka **Results** wyświetla gotowe pliki wideo. Kliknięcie otwiera wbudowany odtwarzacz. Kolejne rundy z nową muzyką tworzą pliki `highlight_final_music_v1.mp4`, `v2.mp4` itd. — poprzednie wersje nie są nadpisywane.
+
+The **Results** tab lists finished video files. Clicking opens the built-in player. Each music rerun creates `highlight_final_music_v1.mp4`, `v2.mp4` etc. — previous versions are preserved.
 
 ---
 
+## Pipeline — jak działa / How it works
+
+| Krok / Step | Opis / Description |
+|-------------|-------------------|
+| 1 | Znalezienie plików MP4 w katalogu / Find MP4 files in working directory |
+| 2 | Detekcja cięć — PySceneDetect `detect-content` / Scene cut detection |
+| 3 | Podział — każda scena jako osobny plik w `_autoframe/autocut/` / Scene split via stream copy |
+| 4 | Ekstrakcja klatki środkowej dla każdego klipu / Key frame extraction (midpoint JPEG) |
+| 5 | Scoring CLIP — `ViT-L-14` na GPU, `final = pos_score − neg_score × neg_weight` / CLIP scoring on GPU |
+| 6 | Selekcja + manualne overrides + przycinanie + enkodowanie highlight / Selection + overrides + trim + encode |
+| 7 | Intro (klatka z najwyższym score) + outro + fade / Intro (top-scoring frame) + outro + fade |
+| 8 | Dobór muzyki z biblioteki, miks, wersjonowanie / Music selection, mix, version output |
+
+Wyniki kroków 1–5 są cache'owane — ponowne uruchomienie (np. po zmianie threshold) pomija już przetworzone etapy.
+
+Steps 1–5 are cached — rerun after changing threshold or overrides skips already-processed stages.
+
+### Pliki wyjściowe / Output files
+
+```
+projekt/
+├── highlight_final_music_v1.mp4   ← główny wynik / main output
+├── highlight_final_music_v2.mp4   ← kolejna muzyka / next music run
+└── _autoframe/
+    ├── highlight.mp4              ← surowy highlight bez intro / raw highlight
+    ├── highlight_final.mp4        ← z intro/outro, bez muzyki / with intro/outro
+    ├── autocut/                   ← pocięte sceny / split scenes
+    ├── frames/                    ← klatki do scoringu / scoring frames
+    ├── scene_scores.csv           ← wyniki CLIP / CLIP scores
+    ├── selected_scenes.txt        ← lista do ffmpeg concat / concat list
+    └── manual_overrides.json      ← ręczne oznaczenia z galerii / gallery overrides
+```
+
 ---
 
-# autoframe — AI Highlight Reel Pipeline
+## Instalacja przez Docker / Docker installation
 
-Every day on a motorcycle produces hundreds of gigabytes of raw footage from one or two cameras. Manually editing that volume — reviewing, cutting, assembling — takes many times longer than the ride itself. After a longer trip there are weeks of footage waiting to be processed.
+Zalecana metoda. Środowisko z PyTorch, CLIP, ffmpeg z NVENC gotowe do uruchomienia.
 
-autoframe was built to solve this. Run the script in the day's directory — highlight done. A CLIP model scores each scene semantically (it understands what is in the frame, not just motion or brightness), picks the best shots, interleaves footage from two cameras, and mixes in music matched to the character of the ride. No manual editing, no scrubbing through hours of footage.
+Recommended method. PyTorch, CLIP, and ffmpeg with NVENC are pre-installed.
 
-The pipeline handles a helmet camera and an Insta360 X2 360° camera mounted on the mirror — capable of processing over 700 GB of footage from a single day of riding.
+### Wymagania / Requirements
 
-## Documentation
+- Docker z NVIDIA Container Toolkit
+- GPU NVIDIA z CUDA (testowane: RTX 3070 Ti, driver 550)
+- ~5 GB VRAM (model ViT-L-14)
 
-- [How it works](docs/how-it-works.md)
-- [Installation](docs/installation.md)
-- [Usage](docs/usage.md)
-- [Configuration reference](docs/configuration.md)
-- [Music library](docs/music.md)
+### Uruchomienie / Start
+
+```bash
+git clone https://github.com/pawko/ai-autoedit ~/ai-autoedit
+cd ~/ai-autoedit
+
+# Skopiuj .env.example i ustaw ścieżki / Copy .env.example and set paths
+cp .env.example .env
+# edytuj .env: DATA_DIR=/home/user/moto, ANTHROPIC_API_KEY=sk-...
+
+docker compose up -d
+```
+
+Webapp dostępna pod / Available at: **http://0.0.0.0:8000**
+
+### .env
+
+```env
+DATA_DIR=/home/user/moto       # katalog z materiałem / footage root
+ANTHROPIC_API_KEY=sk-ant-...   # opcjonalne, do generowania promptów CLIP
+```
+
+### Aktualizacja skryptów pipeline / Updating pipeline scripts
+
+Webapp (`webapp/`) jest montowana na żywo — zmiany w HTML/JS/server.py działają od razu.
+
+Skrypty pipeline (`pipeline.py`, `select_scenes.py`, itp.) wymagają skopiowania do kontenera:
+
+```bash
+docker compose cp pipeline.py autoframe:/app/pipeline.py
+docker compose cp select_scenes.py autoframe:/app/select_scenes.py
+```
+
+The webapp (`webapp/`) is live-mounted — HTML/JS/server.py changes take effect immediately.
+
+Pipeline scripts need copying to the container:
+
+```bash
+docker compose cp pipeline.py autoframe:/app/pipeline.py
+```
+
+---
+
+## Konfiguracja / Configuration
+
+Konfiguracja dwupoziomowa: globalny `config.ini` w repozytorium + opcjonalny `config.ini` w katalogu projektu (ma pierwszeństwo).
+
+Two-level configuration: global `config.ini` in the repo + optional per-project `config.ini` (takes precedence).
+
+Przez web UI: zakładka **Settings** → **Rerun** zapisuje zmiany do `config.ini` projektu automatycznie.
+
+Via web UI: **Settings** tab → **Rerun** saves changes to the project's `config.ini` automatically.
+
+### Kluczowe parametry / Key parameters
+
+| Parametr | Domyślnie | Opis / Description |
+|----------|-----------|-------------------|
+| `scene_selection.threshold` | `0.148` | Minimalny score CLIP. Typowy zakres 0.13–0.16 / Minimum CLIP score |
+| `scene_selection.max_scene_sec` | `10` | Max sekund z jednej sceny / Max seconds per scene |
+| `scene_selection.max_per_file_sec` | `45` | Max łącznych sekund z pliku / Max seconds per source file |
+| `scene_detection.threshold` | `20` | Czułość detekcji cięć / Scene cut sensitivity |
+| `video.resolution` | `3840:2160` | Rozdzielczość wyjściowa / Output resolution |
+| `video.framerate` | `60` | Klatkaż / Framerate |
+| `music.music_volume` | `0.7` | Głośność muzyki / Music volume (0–1) |
+| `music.original_volume` | `0.3` | Głośność oryginału / Original audio volume |
+
+Pełna dokumentacja: [docs/configuration.md](docs/configuration.md)
+
+### Prompty CLIP / CLIP prompts
+
+```ini
+[clip_prompts]
+positive =
+    scenic motorcycle road trip through mountains
+    winding mountain pass with beautiful surroundings
+
+negative =
+    boring flat highway with no scenery
+    parking lot or gas station
+```
+
+Prompty generowane automatycznie przez Claude — opisz dzień jazdy w polu **Settings → Describe this ride**, kliknij **Generate prompts**.
+
+Prompts can be auto-generated by Claude — describe the ride in **Settings → Describe this ride**, click **Generate prompts**.
+
+---
+
+## Dokumentacja / Documentation
+
+- [Jak to działa / How it works](docs/how-it-works.md)
+- [Instalacja / Installation](docs/installation.md)
+- [Konfiguracja / Configuration reference](docs/configuration.md)
+- [Biblioteka muzyczna / Music library](docs/music.md)

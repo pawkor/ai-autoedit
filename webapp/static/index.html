@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>autoframe</title>
+<title>AI-autoedit</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -18,7 +18,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #app { display:flex; height:100vh; }
 #sidebar { width:230px; min-width:230px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
 #sidebar-header { padding:12px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; }
-#sidebar-header h1 { flex:1; font-size:14px; color:var(--accent); letter-spacing:1px; }
+#sidebar-header h1 { flex:1; font-size:14px; color:var(--accent); letter-spacing:1px; line-height:1.2; }
 .icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:13px; }
 .icon-btn:hover { border-color:var(--accent); color:var(--accent); }
 #btn-new { background:var(--accent); color:#000; border:none; padding:4px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
@@ -57,7 +57,17 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .frow { display:flex; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
 .ff { display:flex; flex-direction:column; gap:3px; min-width:110px; }
 .ff.wide { flex:1; }
-.ff label { font-size:10px; color:var(--muted); }
+.ff label { font-size:10px; color:var(--muted); position:relative; cursor:default; }
+.ff label[data-tip]::after {
+  content: attr(data-tip);
+  position:absolute; left:0; top:calc(100% + 4px);
+  background:#1a1a1a; border:1px solid var(--border);
+  color:var(--text); padding:7px 9px; font-size:11px; line-height:1.5;
+  white-space:pre-line; width:240px; border-radius:3px; z-index:200;
+  opacity:0; pointer-events:none;
+  transition:opacity 0.15s; transition-delay:0s;
+}
+.ff label[data-tip]:hover::after { opacity:1; transition-delay:0.5s; }
 .ff input, .ff select, .ff textarea {
   background:var(--bg3); border:1px solid var(--border); color:var(--text);
   padding:5px 7px; font-family:var(--font); font-size:12px; border-radius:3px; outline:none;
@@ -101,7 +111,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #settings-note { font-size:10px; color:var(--muted); margin-top:-6px; }
 
 /* ── Job view ── */
-#job-view { display:flex; flex-direction:column; overflow:hidden; }
+#job-view { flex-direction:column; overflow:hidden; }
 #job-header { padding:10px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; background:var(--bg2); flex-shrink:0; }
 #jh-path { flex:1; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #jh-elapsed { font-size:11px; color:var(--muted); }
@@ -115,8 +125,6 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .tab { padding:7px 13px; cursor:pointer; font-size:12px; color:var(--muted); border-bottom:2px solid transparent; }
 .tab:hover { color:var(--text); }
 .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
-#btn-rerun-tab { margin-left:auto; margin-right:0; background:var(--accent); color:#000; border:none; padding:4px 13px; cursor:pointer; font-family:var(--font); font-size:11px; font-weight:bold; border-radius:3px; }
-#btn-rerun-tab:hover { opacity:.85; }
 #tab-content { flex:1; overflow:hidden; display:flex; }
 
 /* ── Log tab (split) ── */
@@ -202,6 +210,10 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .rf-size { font-size:11px; color:var(--muted); margin-top:2px; }
 #video-wrap { background:#000; border-radius:4px; overflow:hidden; display:none; }
 #video-wrap video { width:100%; max-height:58vh; display:block; }
+#lang-switcher { font-size:11px; color:var(--muted); white-space:nowrap; }
+.lang-btn { cursor:pointer; padding:0 2px; }
+.lang-btn:hover { color:var(--text); }
+.lang-btn.lang-active { color:var(--accent); font-weight:bold; }
 </style>
 </head>
 <body>
@@ -210,10 +222,15 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 <!-- Sidebar -->
 <div id="sidebar">
   <div id="sidebar-header">
-    <h1>autoframe</h1>
-    <button id="sidebar-sort" onclick="toggleSortOrder()" title="Toggle sort order">newest</button>
+    <h1>AI<br>autoedit</h1>
+    <button id="sidebar-sort" onclick="toggleSortOrder()" data-i18n="misc.newest">newest</button>
+    <span id="lang-switcher">
+      <span class="lang-btn" data-lang="en" onclick="setLang('en')">en</span>
+      <span style="color:var(--border)">/</span>
+      <span class="lang-btn" data-lang="pl" onclick="setLang('pl')">pl</span>
+    </span>
     <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
-    <button id="btn-new" onclick="showForm()">+ New</button>
+    <button id="btn-new" data-i18n="btn.new" onclick="showForm()">+ New</button>
   </div>
   <div id="job-list"></div>
 </div>
@@ -222,79 +239,79 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 <div id="main">
 
   <div id="welcome" class="view active">
-    <div class="wt"><h2>autoframe</h2><p>AI highlight reel pipeline</p>
-      <p style="margin-top:14px;font-size:11px;">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</p>
+    <div class="wt"><h2>AI-autoedit</h2><p data-i18n="misc.welcome_sub">AI highlight reel pipeline</p>
+      <p style="margin-top:14px;font-size:11px;"><span data-i18n="misc.welcome_hint">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</span></p>
     </div>
   </div>
 
   <!-- Form -->
   <div id="form-view" class="view">
-    <h2>NEW JOB</h2>
+    <h2 data-i18n="misc.new_job">NEW JOB</h2>
 
     <div class="fsec">
-      <h3>Source</h3>
+      <h3 data-i18n="sec.source">Source</h3>
       <div class="frow">
         <div class="ff wide">
-          <label>Working directory</label>
+          <label data-i18n="lbl.working_dir">Working directory</label>
           <div class="dir-pick">
             <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/..." onblur="loadDirConfig(this.value)">
-            <button class="btn-sm" onclick="openFormDirBrowser()">Browse</button>
+            <button class="btn-sm" data-i18n="btn.browse" onclick="openFormDirBrowser()">Browse</button>
           </div>
         </div>
       </div>
       <div class="frow">
-        <div class="ff"><label>Cam A subfolder</label><input type="text" id="f-cam-a" placeholder="helmet"></div>
-        <div class="ff"><label>Cam B subfolder</label><input type="text" id="f-cam-b" placeholder="mirror"></div>
+        <div class="ff"><label data-i18n="lbl.cam_a">Cam A subfolder</label><input type="text" id="f-cam-a" placeholder="helmet"></div>
+        <div class="ff"><label data-i18n="lbl.cam_b">Cam B subfolder</label><input type="text" id="f-cam-b" placeholder="mirror"></div>
       </div>
     </div>
 
     <div class="fsec">
-      <h3>Scene selection</h3>
+      <h3 data-i18n="sec.scene_sel">Scene selection</h3>
       <div class="frow">
-        <div class="ff"><label>Threshold (default: 0.148)</label><input type="number" id="f-threshold" placeholder="0.148" step="0.001" min="0.01" max="1"></div>
-        <div class="ff"><label>Max scene sec</label><input type="number" id="f-max-scene" placeholder="10" min="1" max="120"></div>
-        <div class="ff"><label>Max per file sec</label><input type="number" id="f-per-file" placeholder="45" min="5" max="300"></div>
+        <div class="ff"><label data-i18n-tip="threshold" data-i18n="lbl.threshold">Threshold (default: 0.148)</label><input type="number" id="f-threshold" placeholder="0.148" step="0.001" min="0.01" max="1"></div>
+        <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="f-max-scene" placeholder="10" min="1" max="120"></div>
+        <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="f-per-file" placeholder="45" min="5" max="300"></div>
       </div>
     </div>
 
     <div class="fsec">
-      <h3>Intro / music</h3>
+      <h3 data-i18n="sec.intro_music">Intro / music</h3>
       <div class="frow">
-        <div class="ff"><label>Title (each line = one text line on intro card)</label><textarea id="f-title" rows="5" placeholder="auto" style="resize:none;width:64ch;font-size:12px"></textarea></div>
+        <div class="ff"><label data-i18n="lbl.title_long">Title (each line = one text line on intro card)</label><textarea id="f-title" rows="5" placeholder="auto" style="resize:none;width:64ch;font-size:12px"></textarea></div>
       </div>
       <div class="frow">
         <div class="ff wide">
-          <label>Music directory</label>
+          <label data-i18n="lbl.music_dir_label">Music directory</label>
           <div class="dir-pick">
             <input type="text" id="f-music-dir" placeholder="~/moto/music">
-            <button class="btn-sm" onclick="openFormMusicDirBrowser()">Browse</button>
+            <button class="btn-sm" data-i18n="btn.browse" onclick="openFormMusicDirBrowser()">Browse</button>
           </div>
         </div>
       </div>
       <div class="frow">
         <div class="chk-row">
-          <label class="chk"><input type="checkbox" id="f-no-intro"> No intro/outro</label>
-          <label class="chk"><input type="checkbox" id="f-no-music"> No music</label>
+          <label class="chk"><input type="checkbox" id="f-no-intro"><span data-i18n="lbl.no_intro"> No intro/outro</span></label>
+          <label class="chk"><input type="checkbox" id="f-no-music"><span data-i18n="lbl.no_music"> No music</span></label>
         </div>
       </div>
     </div>
 
     <div class="fsec">
-      <h3>About this ride <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(optional — generates CLIP prompts via Claude)</span></h3>
+      <h3><span data-i18n="sec.about_ride">About this ride</span> <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0" data-i18n="sec.about_ride_sub">(optional — generates CLIP prompts via Claude)</span></h3>
       <div class="frow">
         <div class="ff wide">
-          <label>Describe today's ride, location, conditions...</label>
-          <textarea id="f-about" placeholder="Rode the Transfăgărășan in Romania, sunny, dry road, amazing curves through the mountains..."></textarea>
+          <label data-i18n="lbl.describe_ride">Describe today's ride, location, conditions...</label>
+          <textarea id="f-about">Motorcycle ride on winding mountain roads, scenic landscapes, sweeping curves and technical sections. Sunny weather, good visibility, beautiful surroundings.</textarea>
         </div>
       </div>
       <div class="frow">
-        <button class="btn-sm" onclick="generateAbout()">✦ Generate CLIP prompts</button>
+        <button class="btn-sm" data-i18n="btn.gen_prompts_form" onclick="generateAbout()">✦ Generate CLIP prompts</button>
         <span id="about-status" style="font-size:11px;color:var(--muted);align-self:center"></span>
       </div>
       <div id="about-output"></div>
     </div>
 
-    <button id="btn-start" onclick="startJob()">▶ Start pipeline</button>
+    <button id="btn-start" data-i18n="btn.start" onclick="startJob()">▶ Start pipeline</button>
   </div>
 
   <!-- Job view -->
@@ -304,59 +321,82 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <span id="jh-path"></span>
       <span id="jh-status" style="font-size:11px;color:var(--muted)"></span>
       <span id="jh-elapsed" style="font-size:11px;color:var(--muted)"></span>
-      <button id="btn-kill" onclick="killJob()">■ Kill</button>
+      <button id="btn-kill" data-i18n="btn.kill" onclick="killJob()">■ Kill</button>
     </div>
     <div id="steps">
-      <span class="step" data-step="1">1 Sources</span>
-      <span class="step" data-step="2">2 Detection</span>
-      <span class="step" data-step="3">3 Split</span>
-      <span class="step" data-step="4">4 Frames</span>
-      <span class="step" data-step="5">5 CLIP</span>
-      <span class="step" data-step="6">6 Select+Encode</span>
+      <span class="step" data-step="1" data-i18n="step.1">1 Sources</span>
+      <span class="step" data-step="2" data-i18n="step.2">2 Detection</span>
+      <span class="step" data-step="3" data-i18n="step.3">3 Split</span>
+      <span class="step" data-step="4" data-i18n="step.4">4 Frames</span>
+      <span class="step" data-step="5" data-i18n="step.5">5 CLIP</span>
+      <span class="step" data-step="6" data-i18n="step.6">6 Select+Encode</span>
     </div>
     <div id="job-tabs">
-      <div class="tab" onclick="switchTab('settings')">Settings</div>
-      <div class="tab" onclick="switchTab('gallery')">Gallery</div>
-      <div class="tab" onclick="switchTab('music')">Music</div>
-      <div class="tab active" onclick="switchTab('log')">Log</div>
-      <div class="tab" onclick="switchTab('results')">Results</div>
-      <button id="btn-rerun-tab" onclick="rerunCurrentJob()">▶ Rerun</button>
+      <div class="tab" data-i18n="tab.settings" onclick="switchTab('settings')">Settings</div>
+      <div class="tab" data-i18n="tab.gallery" onclick="switchTab('gallery')">Gallery</div>
+      <div class="tab" data-i18n="tab.music" onclick="switchTab('music')">Music</div>
+      <div class="tab" data-i18n="tab.log" onclick="switchTab('log')">Log</div>
+      <div class="tab" data-i18n="tab.results" onclick="switchTab('results')">Results</div>
     </div>
     <div id="tab-content">
 
       <!-- Settings tab -->
       <div id="job-settings-panel" style="display:none;flex:1;overflow-y:auto;padding:20px;flex-direction:column;gap:0">
         <div class="fsec">
-          <h3>Source</h3>
+          <h3 data-i18n="sec.source">Source</h3>
           <div class="frow">
-            <div class="ff wide"><label>Working directory</label><input type="text" id="js-workdir" readonly style="color:var(--muted)"></div>
+            <div class="ff wide"><label data-i18n="lbl.working_dir">Working directory</label><input type="text" id="js-workdir" readonly style="color:var(--muted)"></div>
           </div>
           <div class="frow">
-            <div class="ff"><label>Cam A</label><input type="text" id="js-cam-a"></div>
-            <div class="ff"><label>Cam B</label><input type="text" id="js-cam-b"></div>
-          </div>
-        </div>
-        <div class="fsec">
-          <h3>Scene selection</h3>
-          <div class="frow">
-            <div class="ff"><label>Threshold</label><input type="number" id="js-threshold" step="0.001"></div>
-            <div class="ff"><label>Max scene sec</label><input type="number" id="js-max-scene"></div>
-            <div class="ff"><label>Max per file sec</label><input type="number" id="js-per-file"></div>
+            <div class="ff"><label data-i18n="lbl.cam_a_short">Cam A</label><input type="text" id="js-cam-a"></div>
+            <div class="ff"><label data-i18n="lbl.cam_b_short">Cam B</label><input type="text" id="js-cam-b"></div>
           </div>
         </div>
         <div class="fsec">
-          <h3>Intro / music</h3>
+          <h3 data-i18n="sec.scene_sel">Scene selection</h3>
           <div class="frow">
-            <div class="ff"><label>Title</label><textarea id="js-title" rows="5" style="resize:none;width:64ch;font-size:12px"></textarea></div>
+            <div class="ff"><label data-i18n-tip="threshold" data-i18n="lbl.threshold">Threshold</label><input type="number" id="js-threshold" step="0.001"></div>
+            <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="js-max-scene"></div>
+            <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="js-per-file"></div>
+          </div>
+        </div>
+        <div class="fsec">
+          <h3 data-i18n="sec.intro_music">Intro / music</h3>
+          <div class="frow">
+            <div class="ff"><label data-i18n="lbl.title_short">Title</label><textarea id="js-title" rows="5" style="resize:none;width:64ch;font-size:12px"></textarea></div>
           </div>
           <div class="frow">
             <div class="chk-row">
-              <label class="chk"><input type="checkbox" id="js-no-intro"> No intro/outro</label>
-              <label class="chk"><input type="checkbox" id="js-no-music"> No music</label>
+              <label class="chk"><input type="checkbox" id="js-no-intro"><span data-i18n="lbl.no_intro"> No intro/outro</span></label>
+              <label class="chk"><input type="checkbox" id="js-no-music"><span data-i18n="lbl.no_music"> No music</span></label>
             </div>
           </div>
         </div>
-        <button class="btn-primary" onclick="rerunFromSettings()">▶ Rerun with these settings</button>
+        <div class="fsec">
+          <h3><span data-i18n="sec.clip_prompts">CLIP prompts</span> <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0" data-i18n="sec.clip_prompts_sub">(optional — generate via Claude or edit directly)</span></h3>
+          <div class="frow">
+            <div class="ff wide">
+              <label data-i18n="lbl.describe_ride_short">Describe this ride (used to generate prompts)</label>
+              <textarea id="js-description" rows="3" placeholder="Motorcycle ride on winding mountain roads, scenic landscapes..."></textarea>
+            </div>
+          </div>
+          <div class="frow" style="align-items:center">
+            <button class="btn-sm" id="btn-gen-prompts" data-i18n="btn.gen_prompts" onclick="generateJobPrompts()">✦ Generate prompts</button>
+            <span id="gen-prompts-status" style="font-size:11px;color:var(--muted);margin-left:8px"></span>
+            <button class="btn-sm" data-i18n="btn.save_prompts" style="margin-left:auto" onclick="saveJobPrompts()">Save prompts</button>
+          </div>
+          <div class="frow" style="gap:12px;align-items:flex-start">
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <label data-i18n="lbl.positive">POSITIVE</label>
+              <textarea id="js-positive" rows="14" style="resize:vertical;width:100%;font-size:11px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none"></textarea>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <label data-i18n="lbl.negative">NEGATIVE</label>
+              <textarea id="js-negative" rows="14" style="resize:vertical;width:100%;font-size:11px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none"></textarea>
+            </div>
+          </div>
+        </div>
+        <button class="btn-primary" data-i18n="btn.rerun" onclick="rerunFromSettings()">▶ Rerun with these settings</button>
       </div>
 
       <!-- Log tab: split log + stats -->
@@ -386,11 +426,11 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               <div class="stat-val" id="val-vram">—</div>
             </div>
           </div>
-          <div id="no-gpu" style="display:none">GPU not detected</div>
+          <div id="no-gpu" style="display:none" data-i18n="misc.no_gpu">GPU not detected</div>
           <hr class="stat-divider">
           <div>
-            <div class="queue-row"><span class="ql">Running</span><span class="qv running" id="q-running">0</span></div>
-            <div class="queue-row" style="margin-top:4px"><span class="ql">Queued</span><span class="qv queued" id="q-queued">0</span></div>
+            <div class="queue-row"><span class="ql" data-i18n="misc.running">Running</span><span class="qv running" id="q-running">0</span></div>
+            <div class="queue-row" style="margin-top:4px"><span class="ql" data-i18n="misc.queued">Queued</span><span class="qv queued" id="q-queued">0</span></div>
           </div>
         </div>
       </div>
@@ -399,13 +439,13 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <div id="gallery-panel">
         <div id="gallery-header">
           <div id="threshold-bar">
-            <label>Threshold</label>
+            <label data-i18n="lbl.threshold_gallery">Threshold</label>
             <input type="range" id="threshold-slider" min="0.10" max="0.25" step="0.001" value="0.148" oninput="onThresholdSlide()">
             <span id="threshold-val">0.148</span>
           </div>
           <div id="gallery-status">
             <span id="gallery-stats-text">—</span>
-            <button id="btn-calculate" onclick="calculateGalleryStats()">Calculate</button>
+            <button id="btn-calculate" data-i18n="btn.calculate" onclick="calculateGalleryStats()">Calculate</button>
           </div>
         </div>
         <div id="frames-scroll">
@@ -417,16 +457,16 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <div id="music-panel">
         <div id="music-header">
           <div id="music-dir-row">
-            <label>Music dir</label>
+            <label data-i18n="lbl.music_dir_header">Music dir</label>
             <input type="text" id="music-dir-input" placeholder="~/moto/music">
-            <button class="btn-sm" onclick="openMusicDirBrowser()">Browse</button>
-            <button class="btn-sm" onclick="loadMusicTracks()">Load</button>
-            <button class="btn-sm" id="btn-music-rebuild" onclick="rebuildMusicIndex()">↺ Update index</button>
+            <button class="btn-sm" data-i18n="btn.browse" onclick="openMusicDirBrowser()">Browse</button>
+            <button class="btn-sm" data-i18n="btn.load" onclick="loadMusicTracks()">Load</button>
+            <button class="btn-sm" id="btn-music-rebuild" data-i18n="btn.rebuild_index" onclick="rebuildMusicIndex()">↺ Update index</button>
           </div>
           <div id="music-controls">
-            <input type="text" id="music-filter" placeholder="Filter tracks..." oninput="renderMusicList()">
-            <button class="btn-sm" onclick="setAllMusic(true)">All</button>
-            <button class="btn-sm" onclick="setAllMusic(false)">None</button>
+            <input type="text" id="music-filter" data-i18n-ph="ph.filter_tracks" placeholder="Filter tracks..." oninput="renderMusicList()">
+            <button class="btn-sm" data-i18n="btn.all" onclick="setAllMusic(true)">All</button>
+            <button class="btn-sm" data-i18n="btn.none" onclick="setAllMusic(false)">None</button>
             <span id="music-count">—</span>
           </div>
         </div>
@@ -450,11 +490,11 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 <!-- Dir browser modal -->
 <div id="dir-modal">
   <div id="dir-box">
-    <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" onclick="dirUp()">↑ Up</button></div>
+    <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" data-i18n="btn.dir_up" onclick="dirUp()">↑ Up</button></div>
     <div id="dir-list"></div>
     <div id="dir-footer">
-      <button class="btn-sm" onclick="closeDirBrowser()">Cancel</button>
-      <button class="btn-sm" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
+      <button class="btn-sm" data-i18n="btn.cancel" onclick="closeDirBrowser()">Cancel</button>
+      <button class="btn-sm" data-i18n="btn.select_folder" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
     </div>
   </div>
 </div>
@@ -463,24 +503,225 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 <div id="settings-modal">
   <div id="settings-box">
     <div class="modal-header">
-      SETTINGS
+      <span data-i18n="misc.settings_title">SETTINGS</span>
       <button class="icon-btn" onclick="closeSettings()">✕</button>
     </div>
     <div class="modal-body">
       <div class="ff">
-        <label>Max concurrent jobs</label>
+        <label data-i18n="lbl.max_concurrent">Max concurrent jobs</label>
         <input type="number" id="s-max-jobs" value="1" min="1" max="8">
       </div>
-      <div id="settings-note">Changes to max concurrent jobs require server restart.</div>
+      <div id="settings-note" data-i18n="misc.settings_note">Changes to max concurrent jobs require server restart.</div>
     </div>
     <div class="modal-footer">
-      <button class="btn-sm" onclick="closeSettings()">Cancel</button>
-      <button class="btn-primary" onclick="saveSettings()">Save</button>
+      <button class="btn-sm" data-i18n="btn.cancel" onclick="closeSettings()">Cancel</button>
+      <button class="btn-primary" data-i18n="btn.save" onclick="saveSettings()">Save</button>
     </div>
   </div>
 </div>
 
 <script>
+// ── i18n ──────────────────────────────────────────────────────────────────────
+const TRANS = {
+  en: {
+    tips: {
+      threshold: 'CLIP similarity cutoff (0–1).\nLower = more scenes included. Default 0.148.\nSteps of ±0.005 make a noticeable difference.',
+      max_scene: 'Max seconds taken from a single scene.\nLonger scenes are trimmed to their middle N seconds.',
+      per_file:  'Max total seconds selected from one source file.\nPrevents one recording from dominating the highlight.',
+    },
+    labels: {
+      // tabs
+      'tab.settings':        'Settings',
+      'tab.gallery':         'Gallery',
+      'tab.music':           'Music',
+      'tab.log':             'Log',
+      'tab.results':         'Results',
+      // sections
+      'sec.source':          'Source',
+      'sec.scene_sel':       'Scene selection',
+      'sec.intro_music':     'Intro / music',
+      'sec.about_ride':      'About this ride',
+      'sec.about_ride_sub':  '(optional — generates CLIP prompts via Claude)',
+      'sec.clip_prompts':    'CLIP prompts',
+      'sec.clip_prompts_sub':'(optional — generate via Claude or edit directly)',
+      // labels
+      'lbl.working_dir':     'Working directory',
+      'lbl.cam_a':           'Cam A subfolder',
+      'lbl.cam_b':           'Cam B subfolder',
+      'lbl.cam_a_short':     'Cam A',
+      'lbl.cam_b_short':     'Cam B',
+      'lbl.threshold':       'Threshold (default: 0.148)',
+      'lbl.max_scene':       'Max scene sec',
+      'lbl.per_file':        'Max per file sec',
+      'lbl.threshold_gallery':'Threshold',
+      'lbl.title_long':      'Title (each line = one text line on intro card)',
+      'lbl.title_short':     'Title',
+      'lbl.music_dir_label': 'Music directory',
+      'lbl.music_dir_header':'Music dir',
+      'lbl.no_intro':        ' No intro/outro',
+      'lbl.no_music':        ' No music',
+      'lbl.describe_ride':   "Describe today's ride, location, conditions...",
+      'lbl.describe_ride_short': 'Describe this ride (used to generate prompts)',
+      'lbl.positive':        'POSITIVE',
+      'lbl.negative':        'NEGATIVE',
+      'lbl.max_concurrent':  'Max concurrent jobs',
+      // buttons
+      'btn.new':             '+ New',
+      'btn.browse':          'Browse',
+      'btn.start':           '▶ Start pipeline',
+      'btn.rerun':           '▶ Rerun with these settings',
+      'btn.kill':            '■ Kill',
+      'btn.gen_prompts_form':'✦ Generate CLIP prompts',
+      'btn.gen_prompts':     '✦ Generate prompts',
+      'btn.save_prompts':    'Save prompts',
+      'btn.calculate':       'Calculate',
+      'btn.load':            'Load',
+      'btn.rebuild_index':   '↺ Update index',
+      'btn.all':             'All',
+      'btn.none':            'None',
+      'btn.cancel':          'Cancel',
+      'btn.select_folder':   'Select this folder',
+      'btn.save':            'Save',
+      'btn.dir_up':          '↑ Up',
+      // steps
+      'step.1': '1 Sources',
+      'step.2': '2 Detection',
+      'step.3': '3 Split',
+      'step.4': '4 Frames',
+      'step.5': '5 CLIP',
+      'step.6': '6 Select+Encode',
+      // misc
+      'misc.newest':         'newest',
+      'misc.oldest':         'oldest',
+      'misc.no_gpu':         'GPU not detected',
+      'misc.running':        'Running',
+      'misc.queued':         'Queued',
+      'misc.settings_title': 'SETTINGS',
+      'misc.settings_note':  'Changes to max concurrent jobs require server restart.',
+      'misc.new_job':        'NEW JOB',
+      'misc.welcome_sub':    'AI highlight reel pipeline',
+      'misc.welcome_hint':   '← Click <strong style="color:var(--accent)">+ New</strong> to start a job',
+    },
+    placeholders: {
+      'ph.filter_tracks': 'Filter tracks...',
+    },
+  },
+  pl: {
+    tips: {
+      threshold: 'Próg podobieństwa CLIP (0–1).\nNiżej = więcej scen. Domyślnie 0.148.\nKrok ±0.005 daje odczuwalną różnicę.',
+      max_scene: 'Max sekundy pobrane z jednej sceny.\nDłuższe sceny są przycinane do środkowych N sekund.',
+      per_file:  'Max łączny czas z jednego pliku źródłowego.\nZapobiega dominacji jednego nagrania w highlight.',
+    },
+    labels: {
+      // tabs
+      'tab.settings':        'Ustawienia',
+      'tab.gallery':         'Galeria',
+      'tab.music':           'Muzyka',
+      'tab.log':             'Log',
+      'tab.results':         'Wyniki',
+      // sections
+      'sec.source':          'Źródło',
+      'sec.scene_sel':       'Dobór scen',
+      'sec.intro_music':     'Intro / muzyka',
+      'sec.about_ride':      'O tej jeździe',
+      'sec.about_ride_sub':  '(opcjonalne — generuje prompty CLIP przez Claude)',
+      'sec.clip_prompts':    'Prompty CLIP',
+      'sec.clip_prompts_sub':'(opcjonalne — generuj przez Claude lub edytuj ręcznie)',
+      // labels
+      'lbl.working_dir':     'Katalog roboczy',
+      'lbl.cam_a':           'Podfolder kamery A',
+      'lbl.cam_b':           'Podfolder kamery B',
+      'lbl.cam_a_short':     'Kamera A',
+      'lbl.cam_b_short':     'Kamera B',
+      'lbl.threshold':       'Próg (domyślnie: 0.148)',
+      'lbl.max_scene':       'Max czas sceny (s)',
+      'lbl.per_file':        'Max czas z pliku (s)',
+      'lbl.threshold_gallery':'Próg',
+      'lbl.title_long':      'Tytuł (każda linia = osobna linia na planszy intro)',
+      'lbl.title_short':     'Tytuł',
+      'lbl.music_dir_label': 'Folder z muzyką',
+      'lbl.music_dir_header':'Muzyka',
+      'lbl.no_intro':        ' Bez intro/outro',
+      'lbl.no_music':        ' Bez muzyki',
+      'lbl.describe_ride':   'Opisz dzisiejszą jazdę, lokalizację, warunki...',
+      'lbl.describe_ride_short': 'Opis jazdy (do generowania promptów)',
+      'lbl.positive':        'POZYTYWNE',
+      'lbl.negative':        'NEGATYWNE',
+      'lbl.max_concurrent':  'Maks. równoległych zadań',
+      // buttons
+      'btn.new':             '+ Nowe',
+      'btn.browse':          'Przeglądaj',
+      'btn.start':           '▶ Uruchom',
+      'btn.rerun':           '▶ Przetwórz ponownie',
+      'btn.kill':            '■ Zatrzymaj',
+      'btn.gen_prompts_form':'✦ Generuj prompty CLIP',
+      'btn.gen_prompts':     '✦ Generuj prompty',
+      'btn.save_prompts':    'Zapisz prompty',
+      'btn.calculate':       'Oblicz',
+      'btn.load':            'Wczytaj',
+      'btn.rebuild_index':   '↺ Aktualizuj indeks',
+      'btn.all':             'Wszystkie',
+      'btn.none':            'Żadne',
+      'btn.cancel':          'Anuluj',
+      'btn.select_folder':   'Wybierz ten folder',
+      'btn.save':            'Zapisz',
+      'btn.dir_up':          '↑ Wyżej',
+      // steps
+      'step.1': '1 Źródła',
+      'step.2': '2 Detekcja',
+      'step.3': '3 Podział',
+      'step.4': '4 Klatki',
+      'step.5': '5 CLIP',
+      'step.6': '6 Selekcja+Enkod',
+      // misc
+      'misc.newest':         'najnowsze',
+      'misc.oldest':         'najstarsze',
+      'misc.no_gpu':         'Brak GPU',
+      'misc.running':        'W trakcie',
+      'misc.queued':         'W kolejce',
+      'misc.settings_title': 'USTAWIENIA',
+      'misc.settings_note':  'Zmiana maks. zadań wymaga restartu serwera.',
+      'misc.new_job':        'NOWE ZADANIE',
+      'misc.welcome_sub':    'Pipeline do highlight reel z AI',
+      'misc.welcome_hint':   '← Kliknij <strong style="color:var(--accent)">+ Nowe</strong>, aby zacząć',
+    },
+    placeholders: {
+      'ph.filter_tracks': 'Filtruj ścieżki...',
+    },
+  },
+};
+
+let currentLang = localStorage.getItem('lang') || 'en';
+
+function setLang(lang) {
+  if (!TRANS[lang]) return;
+  currentLang = lang;
+  localStorage.setItem('lang', lang);
+  const t = TRANS[lang];
+  // Tooltips
+  document.querySelectorAll('[data-i18n-tip]').forEach(el => {
+    el.dataset.tip = t.tips[el.dataset.i18nTip] || '';
+  });
+  // Text labels (innerHTML for keys that contain HTML like welcome_hint)
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const txt = t.labels[el.dataset.i18n];
+    if (txt === undefined) return;
+    if (txt.includes('<')) el.innerHTML = txt; else el.textContent = txt;
+  });
+  // Placeholders
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+    const txt = t.placeholders?.[el.dataset.i18nPh];
+    if (txt !== undefined) el.placeholder = txt;
+  });
+  // Sort button (dynamic state)
+  const sortBtn = document.getElementById('sidebar-sort');
+  if (sortBtn) sortBtn.textContent = t.labels[jobSortNewest ? 'misc.newest' : 'misc.oldest'];
+  // Lang switcher active state
+  document.querySelectorAll('.lang-btn').forEach(b =>
+    b.classList.toggle('lang-active', b.dataset.lang === lang)
+  );
+}
+
 const api = {
   async get(u)    { try { const r=await fetch(u); return r.ok?r.json():null; } catch{return null;} },
   async post(u,b) { const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
@@ -493,6 +734,8 @@ let browsePath=null, framesData=[], manualOverrides={};
 let jobSortNewest=true, currentJobMaxScene=null;
 let _refreshing=false;
 let musicTracks=[], musicSelected=new Set();
+const _frameCache = new Map(); // original url → blob URL
+let _galleryDirty = true;
 
 // Strip BROWSE_ROOT prefix so paths show as  moto/2025/...  not  /data/moto/2025/...
 let _browseRoot = '';
@@ -511,7 +754,8 @@ function showWelcome() { showView('welcome'); }
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function toggleSortOrder() {
   jobSortNewest = !jobSortNewest;
-  document.getElementById('sidebar-sort').textContent = jobSortNewest ? 'newest' : 'oldest';
+  const t = TRANS[currentLang]?.labels;
+  document.getElementById('sidebar-sort').textContent = t?.[jobSortNewest ? 'misc.newest' : 'misc.oldest'] || (jobSortNewest ? 'newest' : 'oldest');
   refreshJobList();
 }
 
@@ -540,6 +784,7 @@ async function refreshJobList() {
 }
 setInterval(refreshJobList, 3000);
 refreshJobList();
+setLang(currentLang);
 
 // ── Stats WebSocket ───────────────────────────────────────────────────────────
 function connectStats() {
@@ -613,6 +858,43 @@ async function generateAbout() {
   output.textContent = resp?.output || 'Error';
 }
 
+async function generateJobPrompts() {
+  if (!currentJobId) return;
+  const desc = document.getElementById('js-description').value.trim();
+  if (!desc) { alert('Enter a description first'); return; }
+  const job = await api.get(`/api/jobs/${currentJobId}`);
+  if (!job) return;
+  const btn = document.getElementById('btn-gen-prompts');
+  const status = document.getElementById('gen-prompts-status');
+  btn.disabled = true;
+  status.textContent = 'Generating…';
+  const resp = await api.post('/api/about', { description: desc, work_dir: job.params.work_dir });
+  btn.disabled = false;
+  if (resp?.ok) {
+    if (resp.positive) document.getElementById('js-positive').value = resp.positive;
+    if (resp.negative) document.getElementById('js-negative').value = resp.negative;
+    status.textContent = 'Done — review and Save';
+    status.style.color = 'var(--green)';
+  } else {
+    status.textContent = 'Error: ' + (resp?.output || 'unknown');
+    status.style.color = 'var(--red)';
+  }
+  setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 5000);
+}
+
+async function saveJobPrompts() {
+  if (!currentJobId) return;
+  const description = document.getElementById('js-description').value.trim();
+  const positive    = document.getElementById('js-positive').value.trim();
+  const negative    = document.getElementById('js-negative').value.trim();
+  const resp = await api.post(`/api/jobs/${currentJobId}/save-prompts`,
+                               { description, positive, negative });
+  const status = document.getElementById('gen-prompts-status');
+  status.textContent = resp?.ok ? 'Saved' : 'Save failed';
+  status.style.color = resp?.ok ? 'var(--green)' : 'var(--red)';
+  setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 3000);
+}
+
 // ── Open job ──────────────────────────────────────────────────────────────────
 async function openJob(jobId) {
   if (jobWs) { jobWs.close(); jobWs=null; }
@@ -620,23 +902,26 @@ async function openJob(jobId) {
   currentJobId = jobId;
   framesData = [];
   manualOverrides = {};
+  _galleryDirty = true;
   currentJobMaxScene = null;
   musicTracks = [];
   musicSelected = new Set();
   document.getElementById('music-list').innerHTML = '';
   document.getElementById('music-count').textContent = '—';
   document.getElementById('gallery-stats-text').textContent = '—';
+  document.getElementById('js-description').value = '';
+  document.getElementById('js-positive').value = '';
+  document.getElementById('js-negative').value = '';
   showView('job-view');
+  stopVideo();
   document.getElementById('log-panel').innerHTML = '';
   document.getElementById('frames-grid').innerHTML = '';
   document.getElementById('rf-files').innerHTML = '';
-  document.getElementById('video-wrap').style.display = 'none';
   document.getElementById('btn-kill').style.display = 'none';
   document.getElementById('jh-path').textContent = '…';
   document.getElementById('jh-status').textContent = '';
   document.getElementById('jh-elapsed').textContent = '';
   resetSteps();
-  switchTab('log');
 
   const job = await api.get(`/api/jobs/${jobId}`);
   if (!job) return;
@@ -645,6 +930,7 @@ async function openJob(jobId) {
   setStatusDot(job.status);
   currentJobMaxScene = job.params.max_scene ?? null;
   await populateJobSettings(job.params);
+  switchTab(job.status === 'running' || job.status === 'queued' ? 'log' : 'settings');
 
   if (job.status === 'running') {
     document.getElementById('btn-kill').style.display = '';
@@ -655,7 +941,26 @@ async function openJob(jobId) {
     document.getElementById('jh-elapsed').textContent = formatDur(job.ended_at - job.started_at);
   }
 
-  for (const line of job.log) appendLog(line);
+  if (job.log.length) {
+    const panel = document.getElementById('log-panel');
+    const frag = document.createDocumentFragment();
+    for (const line of job.log) {
+      const isProgress = PROGRESS_RE.test(line);
+      const div = document.createElement('div');
+      div.className = isProgress ? 'log-line log-progress' : 'log-line';
+      if (isProgress) { div.style.color = 'var(--muted)'; }
+      else {
+        const stepM = line.match(/^\[(\d+)\/6\]/);
+        if (stepM)                           { div.classList.add('log-step'); activateStep(parseInt(stepM[1])); }
+        else if (/✓|cached/i.test(line))     { div.classList.add('log-ok'); }
+        else if (/error|failed/i.test(line)) { div.classList.add('log-err'); }
+      }
+      div.textContent = line;
+      frag.appendChild(div);
+    }
+    panel.appendChild(frag);
+    panel.scrollTop = panel.scrollHeight;
+  }
   connectJobWs(jobId, job.started_at);
 
   if (job.status === 'done' || job.status === 'failed') {
@@ -700,13 +1005,14 @@ function appendLog(line) {
     const last = panel.lastElementChild;
     if (last && last.classList.contains('log-progress')) {
       last.textContent = line;
-      return;
+    } else {
+      const div = document.createElement('div');
+      div.className = 'log-line log-progress';
+      div.style.color = 'var(--muted)';
+      div.textContent = line;
+      panel.appendChild(div);
     }
-    const div = document.createElement('div');
-    div.className = 'log-line log-progress';
-    div.style.color = 'var(--muted)';
-    div.textContent = line;
-    panel.appendChild(div);
+    panel.scrollTop = panel.scrollHeight;
     return;
   }
 
@@ -761,7 +1067,15 @@ async function removeJob(jobId) {
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 const TAB_NAMES = ['settings', 'gallery', 'music', 'log', 'results'];
 
+function stopVideo() {
+  const v = document.getElementById('video-player');
+  v.pause(); v.src = '';
+  document.getElementById('video-wrap').style.display = 'none';
+  document.querySelectorAll('.rf').forEach(c=>c.classList.remove('playing'));
+}
+
 function switchTab(name) {
+  if (name !== 'results') stopVideo();
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', TAB_NAMES[i] === name));
   document.getElementById('job-settings-panel').style.display = name==='settings' ? 'flex' : 'none';
   document.getElementById('log-split').style.display          = name==='log'      ? 'flex' : 'none';
@@ -769,7 +1083,7 @@ function switchTab(name) {
   document.getElementById('music-panel').classList.toggle('active', name==='music');
   document.getElementById('results-panel').classList.toggle('active', name==='results');
   if (name==='gallery' && currentJobId) {
-    if (framesData.length) { renderGallery(); calculateGalleryStats(); }
+    if (framesData.length) { if (_galleryDirty) { renderGallery(); calculateGalleryStats(); } }
     else loadFrames(currentJobId);
   }
   if (name==='music' && currentJobId && !musicTracks.length) loadMusicTracks();
@@ -786,7 +1100,7 @@ async function loadFrames(jobId) {
   // Guard: ignore stale response if user switched to another job
   if (currentJobId !== jobId) return;
   framesData = data;
-  loadOverrides();
+  await loadOverrides();
   document.getElementById('gallery-stats-text').textContent = '—';
   const scores = data.map(f=>f.score);
   const slider = document.getElementById('threshold-slider');
@@ -814,18 +1128,12 @@ function isIncluded(f) {
 
 function saveOverrides() {
   if (!currentJobId) return;
-  if (Object.keys(manualOverrides).length)
-    localStorage.setItem('overrides_' + currentJobId, JSON.stringify(manualOverrides));
-  else
-    localStorage.removeItem('overrides_' + currentJobId);
+  api.put(`/api/jobs/${currentJobId}/overrides`, manualOverrides); // fire-and-forget
 }
 
-function loadOverrides() {
+async function loadOverrides() {
   if (!currentJobId) return;
-  try {
-    const raw = localStorage.getItem('overrides_' + currentJobId);
-    manualOverrides = raw ? JSON.parse(raw) : {};
-  } catch { manualOverrides = {}; }
+  manualOverrides = await api.get(`/api/jobs/${currentJobId}/overrides`) || {};
 }
 
 function toggleFrame(scene) {
@@ -850,9 +1158,19 @@ function toggleFrame(scene) {
   }
 }
 
+function _cachedSrc(url) {
+  if (!url) return '';
+  if (_frameCache.has(url)) return _frameCache.get(url);
+  // Start background fetch into blob cache
+  fetch(url).then(r=>r.blob()).then(b=>{
+    if (!_frameCache.has(url)) _frameCache.set(url, URL.createObjectURL(b));
+  }).catch(()=>{});
+  return url; // use original URL on first load
+}
+
 function renderGallery() {
   const grid = document.getElementById('frames-grid');
-  grid.innerHTML = '';
+  const frag = document.createDocumentFragment();
   for (const f of [...framesData].sort((a,b)=>a.scene.localeCompare(b.scene))) {
     const included = isIncluded(f);
     const ov = manualOverrides[f.scene];
@@ -863,10 +1181,13 @@ function renderGallery() {
     card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)` : `Score: ${f.score.toFixed(3)} (click to toggle)`;
     card.onclick = ()=>toggleFrame(f.scene);
     const name = f.scene.replace(/-scene-\d+$/,'').split('/').pop().slice(-22);
-    card.innerHTML = `<img src="${f.frame_url||''}" loading="lazy" onerror="this.style.display='none'">
+    card.innerHTML = `<img src="${_cachedSrc(f.frame_url)}" loading="lazy" onerror="this.style.display='none'">
       <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span><span class="fc-name">${name}</span></div>`;
-    grid.appendChild(card);
+    frag.appendChild(card);
   }
+  grid.innerHTML = '';
+  grid.appendChild(frag);
+  _galleryDirty = false;
 }
 
 function calculateGalleryStats() {
@@ -986,16 +1307,19 @@ async function populateJobSettings(params) {
   if (params.music_files?.length) musicSelected = new Set(params.music_files);
   else musicSelected = new Set();
 
-  // For numeric scene-selection fields, fall back to config.ini defaults when null
+  // Load config.ini defaults and prompts
   let th = params.threshold, ms = params.max_scene, pf = params.per_file;
-  if (th == null || ms == null || pf == null) {
-    const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(params.work_dir)}`);
-    if (cfg) {
-      if (th == null) th = cfg.threshold;
-      if (ms == null) ms = cfg.max_scene;
-      if (pf == null) pf = cfg.per_file;
-    }
+  const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(params.work_dir)}`);
+  if (cfg) {
+    if (th == null) th = cfg.threshold;
+    if (ms == null) ms = cfg.max_scene;
+    if (pf == null) pf = cfg.per_file;
+    if (!params.music_dir && cfg.music_dir) document.getElementById('music-dir-input').value = cfg.music_dir;
+    if (cfg.positive) document.getElementById('js-positive').value = cfg.positive;
+    if (cfg.negative) document.getElementById('js-negative').value = cfg.negative;
   }
+  document.getElementById('js-description').value = params.description ||
+    'Motorcycle ride on winding mountain roads, scenic landscapes, sweeping curves and technical sections. Sunny weather, good visibility, beautiful surroundings.';
   sv('js-threshold', th);
   sv('js-max-scene', ms);
   sv('js-per-file',  pf);
@@ -1017,6 +1341,7 @@ function readJobSettings() {
   const md = document.getElementById('music-dir-input').value.trim();
   if (md) p.music_dir = md;
   if (musicSelected.size) p.music_files = [...musicSelected];
+  const desc = gv('js-description'); if (desc) p.description = desc;
   return p;
 }
 
@@ -1044,12 +1369,11 @@ async function loadResults(jobId) {
   if (!data) return;
   const container = document.getElementById('rf-files');
   container.innerHTML = '';
-  for (const name of ['highlight_final_music.mp4','highlight_music.mp4','highlight_final.mp4','highlight.mp4']) {
-    if (!data[name]) continue;
+  for (const [name, info] of Object.entries(data)) {
     const div = document.createElement('div');
     div.className = 'rf';
-    div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${data[name].size_mb} MB</div>`;
-    div.onclick = ()=>playVideo(data[name].url, div);
+    div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${info.size_mb} MB</div>`;
+    div.onclick = () => playVideo(info.url, div);
     container.appendChild(div);
   }
   container.querySelector('.rf')?.classList.add('playing');
@@ -1062,6 +1386,7 @@ function playVideo(url, card) {
   const video = document.getElementById('video-player');
   wrap.style.display = 'block';
   video.src = url;
+  video.load();
 }
 
 // ── Dir browser ───────────────────────────────────────────────────────────────
@@ -1079,14 +1404,40 @@ function selectCurrentDir() {
 // Project working dir
 function openFormDirBrowser()      { openDirBrowser(document.getElementById('f-workdir').value, p => { document.getElementById('f-workdir').value = p; loadDirConfig(p); }); }
 // Music dir (form)
-function openFormMusicDirBrowser() { openDirBrowser(document.getElementById('f-music-dir').value, p => { document.getElementById('f-music-dir').value = p; }); }
+function openFormMusicDirBrowser() {
+  openDirBrowser(document.getElementById('f-music-dir').value, p => {
+    document.getElementById('f-music-dir').value = p;
+    const wd = document.getElementById('f-workdir').value.trim();
+    if (wd) api.put('/api/job-config', { work_dir: wd, music_dir: p });
+  });
+}
 // Music dir (job Music tab)
-function openMusicDirBrowser()     { openDirBrowser(document.getElementById('music-dir-input').value, p => { document.getElementById('music-dir-input').value = p; loadMusicTracks(); }); }
+function openMusicDirBrowser() {
+  openDirBrowser(document.getElementById('music-dir-input').value, p => {
+    document.getElementById('music-dir-input').value = p;
+    const wd = document.getElementById('js-workdir').value.trim();
+    if (wd) api.put('/api/job-config', { work_dir: wd, music_dir: p });
+    loadMusicTracks();
+  });
+}
 
 async function loadDirConfig(dir) {
   if (!dir || !dir.trim()) return;
   const data = await api.get(`/api/job-config?dir=${encodeURIComponent(dir.trim())}`);
   if (!data) return;
+
+  // If this directory already has a job, open it instead of the new-job form
+  if (data._resolved) {
+    const jobList = await api.get('/api/jobs') || [];
+    const existing = jobList.find(j => j.work_dir === data._resolved);
+    if (existing) { openJob(existing.id); return; }
+    // Directory was processed outside webapp — import it as a done job
+    if (data._has_processed) {
+      const imp = await api.post('/api/jobs/import', { work_dir: data._resolved });
+      if (imp?.id) { refreshJobList(); openJob(imp.id); return; }
+    }
+  }
+
   const set = (id, v) => { if (v !== undefined && v !== null && v !== '') document.getElementById(id).value = v; };
   const chk = (id, v) => { if (v !== undefined && v !== null) document.getElementById(id).checked = !!v; };
   set('f-threshold',    data.threshold);
@@ -1094,10 +1445,10 @@ async function loadDirConfig(dir) {
   set('f-per-file',     data.per_file);
   set('f-cam-a',        data.cam_a);
   set('f-cam-b',        data.cam_b);
-  set('f-title',     data.title);
-  set('f-music-dir', data.music_dir);
-  chk('f-no-intro',  data.no_intro);
-  chk('f-no-music',  data.no_music);
+  set('f-title',        data.title);
+  set('f-music-dir',    data.music_dir);
+  chk('f-no-intro',     data.no_intro);
+  chk('f-no-music',     data.no_music);
 }
 async function dirUp() {
   const data = await api.get(`/api/browse?path=${encodeURIComponent(browsePath)}`);
