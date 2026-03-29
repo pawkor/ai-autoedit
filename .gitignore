@@ -11,6 +11,9 @@ __pycache__/
 highlight-env/
 ai-autoedit-env/
 
+# Docker
+.env
+
 # OS
 .DS_Store
 Thumbs.db

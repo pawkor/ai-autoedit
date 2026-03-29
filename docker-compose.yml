@@ -1,0 +1,20 @@
+services:
+  autoframe:
+    build: .
+    image: autoframe:latest
+    user: "${UID}:${GID}"
+    ports:
+      - "8000:8000"
+    volumes:
+      - "${DATA_DIR}:/data"
+      - ./webapp/jobs:/app/webapp/jobs
+    environment:
+      BROWSE_ROOT: /data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video, compute, utility]
+    restart: unless-stopped

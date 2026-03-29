@@ -1,0 +1,21 @@
+# Web app
+fastapi==0.103.2
+uvicorn[standard]==0.23.2
+aiofiles==25.1.0
+python-multipart==0.0.22
+starlette==0.27.0
+websockets==14.2
+
+# AI pipeline
+# torch+cu128: installed via --extra-index-url in Dockerfile
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+open_clip_torch==3.3.0
+opencv-python-headless==4.13.0.92
+scenedetect==0.6.7.1
+pandas==3.0.1
+librosa==0.11.0
+numpy==2.4.3
+tqdm==4.67.3
+Pillow==12.1.1
+ffmpeg-python==0.2.0

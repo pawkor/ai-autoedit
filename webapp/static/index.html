@@ -494,8 +494,14 @@ let jobSortNewest=true, currentJobMaxScene=null;
 let _refreshing=false;
 let musicTracks=[], musicSelected=new Set();
 
-// Strip /home/<user>/ prefix so paths show as  moto/2025/...  not  /home/pawkor/moto/2025/...
-function trimPath(p) { return p ? p.replace(/^\/home\/[^/]+\//, '') : (p || ''); }
+// Strip BROWSE_ROOT prefix so paths show as  moto/2025/...  not  /data/moto/2025/...
+let _browseRoot = '';
+fetch('/api/config').then(r=>r.json()).then(cfg=>{ _browseRoot = cfg.browse_root || ''; }).catch(()=>{});
+function trimPath(p) {
+  if (!p) return p || '';
+  if (_browseRoot && p.startsWith(_browseRoot + '/')) return p.slice(_browseRoot.length + 1);
+  return p.replace(/^\/home\/[^/]+\//, '');
+}
 
 // ── Views ──────────────────────────────────────────────────────────────────────
 function showView(id) { document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.getElementById(id).classList.add('active'); }

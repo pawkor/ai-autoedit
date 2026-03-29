@@ -1,0 +1,7 @@
+.git
+.env
+webapp/jobs/
+*.pyc
+__pycache__
+docs/
+highlight-env/

@@ -30,7 +30,7 @@ SCRIPT_DIR  = Path(__file__).resolve().parent.parent
 WEBAPP_DIR  = Path(__file__).resolve().parent
 STATIC_DIR  = WEBAPP_DIR / "static"
 JOBS_DIR    = WEBAPP_DIR / "jobs"
-BROWSE_ROOT = Path.home()
+BROWSE_ROOT = Path(os.environ.get("BROWSE_ROOT", str(Path.home())))
 
 JOBS_DIR.mkdir(exist_ok=True)
 
@@ -288,6 +288,11 @@ async def _run_job(job: Job):
 @app.get("/")
 async def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/api/config")
+async def get_config():
+    return {"browse_root": str(BROWSE_ROOT)}
 
 
 @app.get("/api/settings")
