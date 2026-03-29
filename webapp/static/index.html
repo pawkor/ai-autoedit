@@ -207,7 +207,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
         <div class="ff wide">
           <label>Working directory</label>
           <div class="dir-pick">
-            <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/...">
+            <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/..." onblur="loadDirConfig(this.value)">
             <button class="btn-sm" onclick="openDirBrowser()">Browse</button>
           </div>
         </div>
@@ -706,7 +706,29 @@ async function openDirBrowser() {
   await browseTo(document.getElementById('f-workdir').value.trim() || null);
 }
 function closeDirBrowser() { document.getElementById('dir-modal').classList.remove('open'); }
-function selectCurrentDir() { document.getElementById('f-workdir').value = browsePath; closeDirBrowser(); }
+function selectCurrentDir() {
+  document.getElementById('f-workdir').value = browsePath;
+  closeDirBrowser();
+  loadDirConfig(browsePath);
+}
+
+async function loadDirConfig(dir) {
+  if (!dir || !dir.trim()) return;
+  const data = await api.get(`/api/job-config?dir=${encodeURIComponent(dir.trim())}`);
+  if (!data) return;
+  const set = (id, v) => { if (v !== undefined && v !== null && v !== '') document.getElementById(id).value = v; };
+  const chk = (id, v) => { if (v !== undefined && v !== null) document.getElementById(id).checked = !!v; };
+  set('f-threshold',    data.threshold);
+  set('f-max-scene',    data.max_scene);
+  set('f-per-file',     data.per_file);
+  set('f-cam-a',        data.cam_a);
+  set('f-cam-b',        data.cam_b);
+  set('f-title',        data.title);
+  set('f-music-genre',  data.music_genre);
+  set('f-music-artist', data.music_artist);
+  chk('f-no-intro', data.no_intro);
+  chk('f-no-music',  data.no_music);
+}
 async function dirUp() {
   const data = await api.get(`/api/browse?path=${encodeURIComponent(browsePath)}`);
   if (data?.parent) await browseTo(data.parent);

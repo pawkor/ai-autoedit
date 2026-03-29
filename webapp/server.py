@@ -9,6 +9,7 @@ import configparser
 import json
 import mimetypes
 import os
+import re
 import signal
 import subprocess
 import time
@@ -344,11 +345,123 @@ class JobParams(BaseModel):
     work_subdir:  str = "_autoframe"
 
 
+# ── Per-directory config.ini helpers ──────────────────────────────────────────
+# Maps JobParams fields → (section, key) in config.ini
+_JOB_CONFIG_MAP = {
+    "threshold":    ("scene_selection", "threshold"),
+    "max_scene":    ("scene_selection", "max_scene_sec"),
+    "per_file":     ("scene_selection", "max_per_file_sec"),
+    "cam_a":        ("job", "cam_a"),
+    "cam_b":        ("job", "cam_b"),
+    "title":        ("job", "title"),
+    "no_intro":     ("job", "no_intro"),
+    "no_music":     ("job", "no_music"),
+    "music_genre":  ("job", "music_genre"),
+    "music_artist": ("job", "music_artist"),
+}
+
+
+def read_job_config(work_dir: Path) -> dict:
+    """Read job-relevant keys from work_dir/config.ini."""
+    cp = configparser.ConfigParser()
+    cfg_path = work_dir / "config.ini"
+    if cfg_path.exists():
+        cp.read(str(cfg_path))
+
+    result = {}
+    for field, (section, key) in _JOB_CONFIG_MAP.items():
+        try:
+            raw = cp.get(section, key)
+            # Convert booleans
+            if field in ("no_intro", "no_music"):
+                result[field] = raw.strip().lower() in ("true", "1", "yes")
+            elif field in ("threshold", "max_scene", "per_file"):
+                result[field] = float(raw)
+            else:
+                result[field] = raw.strip()
+        except (configparser.NoSectionError, configparser.NoOptionError):
+            pass
+    return result
+
+
+def update_config_ini(cfg_path: Path, updates: dict[str, dict[str, str]]):
+    """Update specific section/key pairs in config.ini preserving all other content.
+
+    updates: {section: {key: value_str}}
+    Adds missing sections/keys at end of file; never removes existing lines.
+    """
+    content = cfg_path.read_text() if cfg_path.exists() else ""
+    lines = content.splitlines()
+
+    current_section = None
+    section_end: dict[str, int] = {}   # section → index of last non-blank line
+    key_line: dict[tuple, int] = {}    # (section, key) → line index
+
+    for i, line in enumerate(lines):
+        m = re.match(r'^\[(\w+)\]', line.strip())
+        if m:
+            current_section = m.group(1)
+        elif current_section:
+            km = re.match(r'^(\w+)\s*=', line.strip())
+            if km:
+                key_line[(current_section, km.group(1))] = i
+                section_end[current_section] = i
+
+    # Apply updates in-place where key already exists
+    result = list(lines)
+    appended: dict[str, list[str]] = {}   # section → lines to append
+
+    for section, kvs in updates.items():
+        for key, value in kvs.items():
+            if (section, key) in key_line:
+                result[key_line[(section, key)]] = f"{key} = {value}"
+            else:
+                appended.setdefault(section, []).append(f"{key} = {value}")
+
+    # Append missing keys after the last key of their section,
+    # or add a new section at the end
+    for section, new_lines in appended.items():
+        if section in section_end:
+            insert_at = section_end[section] + 1
+            for j, nl in enumerate(new_lines):
+                result.insert(insert_at + j, nl)
+        else:
+            result.append("")
+            result.append(f"[{section}]")
+            result.extend(new_lines)
+
+    cfg_path.write_text("\n".join(result) + "\n")
+
+
+def save_job_config(work_dir: Path, params: dict):
+    """Persist form params back to work_dir/config.ini."""
+    updates: dict[str, dict[str, str]] = {}
+    for field, (section, key) in _JOB_CONFIG_MAP.items():
+        v = params.get(field)
+        if v is None or v == "":
+            continue
+        updates.setdefault(section, {})[key] = str(v).lower() if isinstance(v, bool) else str(v)
+
+    if updates:
+        update_config_ini(work_dir / "config.ini", updates)
+
+
+@app.get("/api/job-config")
+async def get_job_config(dir: str = Query(...)):
+    """Return job-relevant values from work_dir/config.ini to pre-fill the form."""
+    work_dir = Path(dir).resolve()
+    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    return read_job_config(work_dir)
+
+
 @app.post("/api/jobs")
 async def create_job(params: JobParams):
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
+
+    save_job_config(work_dir, params.model_dump())
 
     job_id = str(uuid.uuid4())[:8]
     job = Job(job_id, {**params.model_dump(), "work_dir": str(work_dir)})
