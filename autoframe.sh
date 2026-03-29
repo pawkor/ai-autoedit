@@ -54,6 +54,7 @@ fi
 
 # ── Defaults (from config.ini, overridden by CLI flags) ───────────────────────
 THRESHOLD=$(cfg scene_selection threshold "0.148")
+THRESHOLD_EXPLICIT=0
 MAX_SCENE=$(cfg scene_selection max_scene_sec "10")
 PER_FILE=$(cfg scene_selection max_per_file_sec "45")
 TITLE=""
@@ -63,6 +64,7 @@ ORIG_VOL=$(cfg music original_volume "0.3")
 NO_MUSIC=0
 MUSIC_GENRE=""
 MUSIC_ARTIST=""
+MUSIC_FILES=""
 CAM_A=""
 CAM_B=""
 FONT=$(eval echo "$(cfg intro_outro font "$HOME/fonts/Caveat-Bold.ttf")")
@@ -103,7 +105,7 @@ MUSIC_FADE_DUR=$(cfg music fade_out_duration "3")
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --threshold) THRESHOLD="$2"; shift 2 ;;
+        --threshold) THRESHOLD="$2"; THRESHOLD_EXPLICIT=1; shift 2 ;;
         --max-scene) MAX_SCENE="$2";  shift 2 ;;
         --per-file)  PER_FILE="$2";   shift 2 ;;
         --title)     TITLE="$2";      shift 2 ;;
@@ -116,6 +118,7 @@ while [[ $# -gt 0 ]]; do
         --cam-b)          CAM_B="$2";         shift 2 ;;
         --music-genre)    MUSIC_GENRE="$2";   shift 2 ;;
         --music-artist)   MUSIC_ARTIST="$2"; shift 2 ;;
+        --music-files)    MUSIC_FILES="$2";  shift 2 ;;
         --music-rebuild)
             source "$VENV/bin/activate"
             echo "Rebuilding music index: $MUSIC_DIR"
@@ -168,7 +171,6 @@ PIPELINE_START=$SECONDS
 echo "╔══════════════════════════════════════╗"
 echo "║         autoframe.sh pipeline        ║"
 echo "╠══════════════════════════════════════╣"
-printf "║ %-36s ║\n" "Dir:       $WORKDIR"
 printf "║ %-36s ║\n" "Threshold: $THRESHOLD"
 printf "║ %-36s ║\n" "Max scene: ${MAX_SCENE}s"
 printf "║ %-36s ║\n" "Per file:  ${PER_FILE}s"
@@ -355,13 +357,34 @@ fi
 echo ""
 echo "[6/6] Selecting scenes and building highlight..."
 
-SCENES_DIR="$AUTODIR/autocut/" \
-TRIMMED_DIR="$AUTODIR/trimmed/" \
-OUTPUT_CSV="$AUTODIR/scene_scores.csv" \
-OUTPUT_LIST="$AUTODIR/selected_scenes.txt" \
-CAM_SOURCES="$AUTODIR/camera_sources.csv" \
-AUDIO_CAM="$CAM_A" \
-    python3 "$SCRIPT_DIR"/select_scenes.py "$THRESHOLD" "$MAX_SCENE" "$PER_FILE"
+run_select_scenes() {
+    SCENES_DIR="$AUTODIR/autocut/" \
+    TRIMMED_DIR="$AUTODIR/trimmed/" \
+    OUTPUT_CSV="$AUTODIR/scene_scores.csv" \
+    OUTPUT_LIST="$AUTODIR/selected_scenes.txt" \
+    CAM_SOURCES="$AUTODIR/camera_sources.csv" \
+    AUDIO_CAM="$CAM_A" \
+        python3 "$SCRIPT_DIR"/select_scenes.py "$THRESHOLD" "$MAX_SCENE" "$PER_FILE"
+}
+
+run_select_scenes
+
+if [ "$THRESHOLD_EXPLICIT" -eq 0 ] && { true </dev/tty; } 2>/dev/null; then
+    USER_THRESHOLD=""
+    while true; do
+        if [ ! -s "$AUTODIR/selected_scenes.txt" ]; then
+            echo ""
+            echo "  No scenes selected at threshold $THRESHOLD."
+        fi
+        printf "  Threshold: %s  — Enter to continue, or new value to redo: " "$THRESHOLD"
+        read -r USER_THRESHOLD </dev/tty
+        USER_THRESHOLD="${USER_THRESHOLD%$'\r'}"
+        [ -z "$USER_THRESHOLD" ] && break
+        THRESHOLD="$USER_THRESHOLD"
+        echo "  Re-running selection with threshold $THRESHOLD..."
+        run_select_scenes
+    done
+fi
 
 if [ ! -s "$AUTODIR/selected_scenes.txt" ]; then
     echo "ERROR: No scenes selected. Try lowering --threshold (current: $THRESHOLD)."
@@ -558,6 +581,15 @@ if artist_filter:
         print(f"Artist filter '{artist_filter}': {len(all_tracks)} tracks", file=sys.stderr)
     else:
         print(f"No tracks for artist '{artist_filter}', using previous selection", file=sys.stderr)
+
+# Explicit files filter (comma-separated full paths — overrides genre/artist)
+files_filter = "$MUSIC_FILES".strip()
+if files_filter:
+    file_set = set(f.strip() for f in files_filter.split(",") if f.strip())
+    filtered = [t for t in all_tracks if t.get("file", "") in file_set]
+    if filtered:
+        all_tracks = filtered
+        print(f"Files filter: {len(all_tracks)} tracks", file=sys.stderr)
 
 # Ideally: track longer than video (no cutoff), pick best energy among those
 long_enough = [t for t in all_tracks if t["duration"] >= duration]

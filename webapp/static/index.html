@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>autoframe</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#0e0e0e; --bg2:#161616; --bg3:#1e1e1e; --border:#2a2a2a;
+  --text:#d4d4d4; --muted:#6b6b6b; --accent:#e07b39;
+  --green:#4ec94e; --red:#e05555; --yellow:#d4a017; --blue:#4e9de0;
+  --font:'Consolas','Menlo',monospace;
+}
+html,body { height:100%; background:var(--bg); color:var(--text); font-family:var(--font); font-size:13px; }
+
+/* ── Layout ── */
+#app { display:flex; height:100vh; }
+#sidebar { width:230px; min-width:230px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+#sidebar-header { padding:12px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; }
+#sidebar-header h1 { flex:1; font-size:14px; color:var(--accent); letter-spacing:1px; }
+.icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:13px; }
+.icon-btn:hover { border-color:var(--accent); color:var(--accent); }
+#btn-new { background:var(--accent); color:#000; border:none; padding:4px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
+#btn-new:hover { opacity:.85; }
+#job-list { flex:1; overflow-y:auto; }
+.job-item { padding:9px 10px; border-bottom:1px solid var(--border); cursor:pointer; position:relative; }
+.job-item:hover { background:var(--bg3); }
+.job-item.active { background:var(--bg3); border-left:2px solid var(--accent); }
+.job-item .ji-del { display:none; position:absolute; top:50%; right:6px; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 4px; line-height:1; }
+.job-item:hover .ji-del { display:block; }
+.job-item .ji-del:hover { color:var(--red); }
+.ji-dir { font-size:11px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ji-meta { font-size:10px; color:var(--muted); margin-top:2px; }
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; }
+.s-running { background:var(--yellow); animation:pulse 1s infinite; }
+.s-done    { background:var(--green); }
+.s-failed  { background:var(--red); }
+.s-killed  { background:var(--muted); }
+.s-queued  { background:var(--blue); }
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+#main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.view { display:none; flex:1; overflow:hidden; flex-direction:column; }
+.view.active { display:flex; }
+
+/* ── Welcome ── */
+#welcome { align-items:center; justify-content:center; }
+#welcome .wt { text-align:center; color:var(--muted); }
+#welcome .wt h2 { font-size:18px; color:var(--accent); margin-bottom:8px; }
+
+/* ── Form ── */
+#form-view { padding:20px; overflow-y:auto; }
+#form-view h2 { font-size:13px; color:var(--accent); margin-bottom:16px; letter-spacing:1px; }
+.fsec { margin-bottom:20px; }
+.fsec h3 { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; }
+.frow { display:flex; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+.ff { display:flex; flex-direction:column; gap:3px; min-width:110px; }
+.ff.wide { flex:1; }
+.ff label { font-size:10px; color:var(--muted); }
+.ff input, .ff select, .ff textarea {
+  background:var(--bg3); border:1px solid var(--border); color:var(--text);
+  padding:5px 7px; font-family:var(--font); font-size:12px; border-radius:3px; outline:none;
+}
+.ff input:focus,.ff select:focus,.ff textarea:focus { border-color:var(--accent); }
+.ff textarea { resize:vertical; min-height:70px; }
+.dir-pick { display:flex; gap:5px; }
+.dir-pick input { flex:1; }
+.btn-sm { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:5px 9px; cursor:pointer; font-family:var(--font); font-size:12px; border-radius:3px; white-space:nowrap; }
+.btn-sm:hover { border-color:var(--accent); color:var(--accent); }
+.chk-row { display:flex; gap:14px; flex-wrap:wrap; }
+.chk { display:flex; align-items:center; gap:5px; cursor:pointer; font-size:12px; }
+.chk input { width:13px; height:13px; cursor:pointer; accent-color:var(--accent); }
+#btn-start { background:var(--accent); color:#000; border:none; padding:9px 24px; cursor:pointer; font-family:var(--font); font-size:13px; font-weight:bold; border-radius:3px; margin-top:6px; }
+#btn-start:hover { opacity:.85; }
+#about-output { margin-top:6px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:3px; font-size:11px; color:var(--green); white-space:pre-wrap; display:none; max-height:120px; overflow-y:auto; }
+
+/* ── Dir browser modal ── */
+#dir-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#dir-modal.open { display:flex; }
+#dir-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:500px; max-height:65vh; display:flex; flex-direction:column; }
+#dir-path { padding:9px 11px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); display:flex; gap:7px; align-items:center; }
+#dir-path span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#dir-list { flex:1; overflow-y:auto; }
+.de { padding:6px 11px; cursor:pointer; display:flex; align-items:center; gap:7px; border-bottom:1px solid var(--border); }
+.de:hover { background:var(--bg3); }
+.de .icon { color:var(--accent); width:13px; font-size:11px; }
+.de .name { flex:1; font-size:12px; }
+.de .badge { font-size:10px; color:var(--green); }
+#dir-footer { padding:9px 11px; border-top:1px solid var(--border); display:flex; gap:7px; justify-content:flex-end; }
+
+/* ── Settings modal ── */
+#settings-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#settings-modal.open { display:flex; }
+#settings-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:360px; }
+.modal-header { padding:12px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-size:13px; color:var(--accent); letter-spacing:1px; }
+.modal-body { padding:16px 14px; display:flex; flex-direction:column; gap:12px; }
+.modal-footer { padding:10px 14px; border-top:1px solid var(--border); display:flex; gap:7px; justify-content:flex-end; }
+.btn-primary { background:var(--accent); color:#000; border:none; padding:6px 16px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; border-radius:3px; }
+.btn-primary:hover { opacity:.85; }
+#settings-note { font-size:10px; color:var(--muted); margin-top:-6px; }
+
+/* ── Job view ── */
+#job-view { display:flex; flex-direction:column; overflow:hidden; }
+#job-header { padding:10px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; background:var(--bg2); flex-shrink:0; }
+#jh-path { flex:1; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#jh-elapsed { font-size:11px; color:var(--muted); }
+#btn-kill { background:transparent; border:1px solid var(--red); color:var(--red); padding:3px 9px; cursor:pointer; font-family:var(--font); font-size:11px; border-radius:3px; display:none; }
+#btn-kill:hover { background:var(--red); color:#000; }
+#steps { padding:8px 14px; border-bottom:1px solid var(--border); display:flex; gap:5px; flex-wrap:wrap; flex-shrink:0; background:var(--bg2); }
+.step { padding:2px 9px; border-radius:10px; font-size:10px; background:var(--bg3); border:1px solid var(--border); color:var(--muted); transition:all .2s; }
+.step.active { border-color:var(--yellow); color:var(--yellow); }
+.step.done   { border-color:var(--green); color:var(--green); }
+#job-tabs { padding:0 14px; border-bottom:1px solid var(--border); display:flex; gap:0; flex-shrink:0; align-items:center; }
+.tab { padding:7px 13px; cursor:pointer; font-size:12px; color:var(--muted); border-bottom:2px solid transparent; }
+.tab:hover { color:var(--text); }
+.tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+#btn-rerun-tab { margin-left:auto; margin-right:0; background:var(--accent); color:#000; border:none; padding:4px 13px; cursor:pointer; font-family:var(--font); font-size:11px; font-weight:bold; border-radius:3px; }
+#btn-rerun-tab:hover { opacity:.85; }
+#tab-content { flex:1; overflow:hidden; display:flex; }
+
+/* ── Log tab (split) ── */
+#log-split { flex:1; display:flex; overflow:hidden; }
+#log-panel { flex:1; overflow-y:auto; padding:10px 14px; font-size:12px; line-height:1.6; }
+.log-line { white-space:pre-wrap; word-break:break-all; }
+.log-step { color:var(--accent); font-weight:bold; }
+.log-ok   { color:var(--green); }
+.log-err  { color:var(--red); }
+.log-info { color:var(--blue); }
+
+/* ── Stats panel ── */
+#stats-panel { width:230px; min-width:230px; border-left:1px solid var(--border); padding:14px 12px; display:flex; flex-direction:column; gap:12px; background:var(--bg2); overflow-y:auto; flex-shrink:0; }
+.stat-label { font-size:10px; color:var(--muted); margin-bottom:3px; letter-spacing:.5px; text-transform:uppercase; }
+.stat-bar-wrap { background:var(--bg3); border-radius:2px; height:5px; overflow:hidden; margin-bottom:3px; }
+.stat-bar { height:5px; border-radius:2px; transition:width .5s ease; }
+.stat-bar.cpu  { background:var(--accent); }
+.stat-bar.ram  { background:var(--blue); }
+.stat-bar.gpu  { background:var(--green); }
+.stat-bar.vram { background:#9b59b6; }
+.stat-val { font-size:11px; color:var(--text); }
+.stat-val span { color:var(--muted); }
+.stat-divider { border:none; border-top:1px solid var(--border); }
+.queue-row { display:flex; justify-content:space-between; font-size:11px; }
+.queue-row .ql { color:var(--muted); }
+.queue-row .qv { }
+.qv.running { color:var(--yellow); }
+.qv.queued  { color:var(--blue); }
+#no-gpu { font-size:10px; color:var(--muted); font-style:italic; }
+
+/* ── Gallery tab ── */
+#gallery-panel { flex:1; overflow:hidden; padding:0; display:none; flex-direction:column; }
+#gallery-panel.active { display:flex; }
+#gallery-header { flex-shrink:0; display:flex; flex-direction:column; gap:6px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--bg); }
+#threshold-bar { display:flex; align-items:center; gap:10px; padding:9px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; }
+#threshold-bar label { font-size:11px; color:var(--muted); }
+#threshold-slider { flex:1; accent-color:var(--accent); }
+#threshold-val { font-size:13px; color:var(--accent); min-width:38px; }
+#gallery-status { display:flex; align-items:center; gap:10px; padding:6px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; font-size:11px; }
+#gallery-stats-text { flex:1; color:var(--muted); }
+#btn-calculate { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:3px 9px; cursor:pointer; font-family:var(--font); font-size:11px; border-radius:3px; }
+#btn-calculate:hover { border-color:var(--accent); color:var(--accent); }
+#sidebar-sort { font-size:10px; color:var(--muted); padding:2px 6px; background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; }
+#sidebar-sort:hover { border-color:var(--accent); color:var(--accent); }
+#frames-scroll { flex:1; overflow-y:scroll; padding:14px; }
+#frames-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.fc { border:1px solid var(--border); border-radius:3px; overflow:hidden; transition:border-color .15s, opacity .15s; }
+.fc.excluded { opacity:.25; }
+.fc.included { border-color:var(--green); }
+.fc.manual.included { border-color:#4af; border-style:dashed; }
+.fc.manual.excluded { opacity:.25; border:2px dashed #f64; }
+.fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#111; }
+.fc-info { padding:3px 6px; display:flex; justify-content:space-between; font-size:10px; }
+.fc-score { color:var(--accent); }
+.fc-name  { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }
+
+/* ── Music tab ── */
+#music-panel { flex:1; overflow:hidden; display:none; flex-direction:column; }
+#music-panel.active { display:flex; }
+#music-header { flex-shrink:0; display:flex; flex-direction:column; gap:6px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--bg); }
+#music-dir-row { display:flex; gap:6px; align-items:center; }
+#music-dir-row label { font-size:11px; color:var(--muted); white-space:nowrap; }
+#music-dir-input { flex:1; background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:5px 7px; font-family:var(--font); font-size:12px; border-radius:3px; outline:none; }
+#music-dir-input:focus { border-color:var(--accent); }
+#music-controls { display:flex; gap:6px; align-items:center; }
+#music-filter { flex:1; background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:4px 7px; font-family:var(--font); font-size:11px; border-radius:3px; outline:none; }
+#music-filter:focus { border-color:var(--accent); }
+#music-count { font-size:11px; color:var(--muted); margin-left:auto; white-space:nowrap; }
+#music-list-scroll { flex:1; overflow-y:scroll; }
+.mt { display:flex; align-items:center; gap:9px; padding:7px 14px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
+.mt:hover { background:var(--bg3); }
+.mt input[type=checkbox] { accent-color:var(--accent); cursor:pointer; flex-shrink:0; width:13px; height:13px; }
+.mt-title { flex:1; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mt-meta { font-size:10px; color:var(--muted); white-space:nowrap; }
+
+/* ── Results tab ── */
+#results-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:14px; }
+#results-panel.active { display:flex; }
+.rf-files { display:flex; gap:9px; flex-wrap:wrap; }
+.rf { background:var(--bg2); border:1px solid var(--border); border-radius:4px; padding:9px 13px; cursor:pointer; }
+.rf:hover, .rf.playing { border-color:var(--accent); }
+.rf-name { font-size:12px; }
+.rf-size { font-size:11px; color:var(--muted); margin-top:2px; }
+#video-wrap { background:#000; border-radius:4px; overflow:hidden; display:none; }
+#video-wrap video { width:100%; max-height:58vh; display:block; }
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>autoframe</h1>
+    <button id="sidebar-sort" onclick="toggleSortOrder()" title="Toggle sort order">newest</button>
+    <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+    <button id="btn-new" onclick="showForm()">+ New</button>
+  </div>
+  <div id="job-list"></div>
+</div>
+
+<!-- Main -->
+<div id="main">
+
+  <div id="welcome" class="view active">
+    <div class="wt"><h2>autoframe</h2><p>AI highlight reel pipeline</p>
+      <p style="margin-top:14px;font-size:11px;">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</p>
+    </div>
+  </div>
+
+  <!-- Form -->
+  <div id="form-view" class="view">
+    <h2>NEW JOB</h2>
+
+    <div class="fsec">
+      <h3>Source</h3>
+      <div class="frow">
+        <div class="ff wide">
+          <label>Working directory</label>
+          <div class="dir-pick">
+            <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/..." onblur="loadDirConfig(this.value)">
+            <button class="btn-sm" onclick="openFormDirBrowser()">Browse</button>
+          </div>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="ff"><label>Cam A subfolder</label><input type="text" id="f-cam-a" placeholder="helmet"></div>
+        <div class="ff"><label>Cam B subfolder</label><input type="text" id="f-cam-b" placeholder="mirror"></div>
+      </div>
+    </div>
+
+    <div class="fsec">
+      <h3>Scene selection</h3>
+      <div class="frow">
+        <div class="ff"><label>Threshold (default: 0.148)</label><input type="number" id="f-threshold" placeholder="0.148" step="0.001" min="0.01" max="1"></div>
+        <div class="ff"><label>Max scene sec</label><input type="number" id="f-max-scene" placeholder="10" min="1" max="120"></div>
+        <div class="ff"><label>Max per file sec</label><input type="number" id="f-per-file" placeholder="45" min="5" max="300"></div>
+      </div>
+    </div>
+
+    <div class="fsec">
+      <h3>Intro / music</h3>
+      <div class="frow">
+        <div class="ff"><label>Title (each line = one text line on intro card)</label><textarea id="f-title" rows="5" placeholder="auto" style="resize:none;width:64ch;font-size:12px"></textarea></div>
+      </div>
+      <div class="frow">
+        <div class="ff wide">
+          <label>Music directory</label>
+          <div class="dir-pick">
+            <input type="text" id="f-music-dir" placeholder="~/moto/music">
+            <button class="btn-sm" onclick="openFormMusicDirBrowser()">Browse</button>
+          </div>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="chk-row">
+          <label class="chk"><input type="checkbox" id="f-no-intro"> No intro/outro</label>
+          <label class="chk"><input type="checkbox" id="f-no-music"> No music</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="fsec">
+      <h3>About this ride <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(optional — generates CLIP prompts via Claude)</span></h3>
+      <div class="frow">
+        <div class="ff wide">
+          <label>Describe today's ride, location, conditions...</label>
+          <textarea id="f-about" placeholder="Rode the Transfăgărășan in Romania, sunny, dry road, amazing curves through the mountains..."></textarea>
+        </div>
+      </div>
+      <div class="frow">
+        <button class="btn-sm" onclick="generateAbout()">✦ Generate CLIP prompts</button>
+        <span id="about-status" style="font-size:11px;color:var(--muted);align-self:center"></span>
+      </div>
+      <div id="about-output"></div>
+    </div>
+
+    <button id="btn-start" onclick="startJob()">▶ Start pipeline</button>
+  </div>
+
+  <!-- Job view -->
+  <div id="job-view" class="view">
+    <div id="job-header">
+      <span class="dot s-pending" id="jh-dot"></span>
+      <span id="jh-path"></span>
+      <span id="jh-status" style="font-size:11px;color:var(--muted)"></span>
+      <span id="jh-elapsed" style="font-size:11px;color:var(--muted)"></span>
+      <button id="btn-kill" onclick="killJob()">■ Kill</button>
+    </div>
+    <div id="steps">
+      <span class="step" data-step="1">1 Sources</span>
+      <span class="step" data-step="2">2 Detection</span>
+      <span class="step" data-step="3">3 Split</span>
+      <span class="step" data-step="4">4 Frames</span>
+      <span class="step" data-step="5">5 CLIP</span>
+      <span class="step" data-step="6">6 Select+Encode</span>
+    </div>
+    <div id="job-tabs">
+      <div class="tab" onclick="switchTab('settings')">Settings</div>
+      <div class="tab" onclick="switchTab('gallery')">Gallery</div>
+      <div class="tab" onclick="switchTab('music')">Music</div>
+      <div class="tab active" onclick="switchTab('log')">Log</div>
+      <div class="tab" onclick="switchTab('results')">Results</div>
+      <button id="btn-rerun-tab" onclick="rerunCurrentJob()">▶ Rerun</button>
+    </div>
+    <div id="tab-content">
+
+      <!-- Settings tab -->
+      <div id="job-settings-panel" style="display:none;flex:1;overflow-y:auto;padding:20px;flex-direction:column;gap:0">
+        <div class="fsec">
+          <h3>Source</h3>
+          <div class="frow">
+            <div class="ff wide"><label>Working directory</label><input type="text" id="js-workdir" readonly style="color:var(--muted)"></div>
+          </div>
+          <div class="frow">
+            <div class="ff"><label>Cam A</label><input type="text" id="js-cam-a"></div>
+            <div class="ff"><label>Cam B</label><input type="text" id="js-cam-b"></div>
+          </div>
+        </div>
+        <div class="fsec">
+          <h3>Scene selection</h3>
+          <div class="frow">
+            <div class="ff"><label>Threshold</label><input type="number" id="js-threshold" step="0.001"></div>
+            <div class="ff"><label>Max scene sec</label><input type="number" id="js-max-scene"></div>
+            <div class="ff"><label>Max per file sec</label><input type="number" id="js-per-file"></div>
+          </div>
+        </div>
+        <div class="fsec">
+          <h3>Intro / music</h3>
+          <div class="frow">
+            <div class="ff"><label>Title</label><textarea id="js-title" rows="5" style="resize:none;width:64ch;font-size:12px"></textarea></div>
+          </div>
+          <div class="frow">
+            <div class="chk-row">
+              <label class="chk"><input type="checkbox" id="js-no-intro"> No intro/outro</label>
+              <label class="chk"><input type="checkbox" id="js-no-music"> No music</label>
+            </div>
+          </div>
+        </div>
+        <button class="btn-primary" onclick="rerunFromSettings()">▶ Rerun with these settings</button>
+      </div>
+
+      <!-- Log tab: split log + stats -->
+      <div id="log-split">
+        <div id="log-panel"></div>
+        <div id="stats-panel">
+          <div>
+            <div class="stat-label">CPU</div>
+            <div class="stat-bar-wrap"><div class="stat-bar cpu" id="bar-cpu" style="width:0%"></div></div>
+            <div class="stat-val" id="val-cpu">—</div>
+          </div>
+          <div>
+            <div class="stat-label">RAM</div>
+            <div class="stat-bar-wrap"><div class="stat-bar ram" id="bar-ram" style="width:0%"></div></div>
+            <div class="stat-val" id="val-ram">—</div>
+          </div>
+          <hr class="stat-divider">
+          <div id="gpu-section">
+            <div>
+              <div class="stat-label">GPU</div>
+              <div class="stat-bar-wrap"><div class="stat-bar gpu" id="bar-gpu" style="width:0%"></div></div>
+              <div class="stat-val" id="val-gpu">—</div>
+            </div>
+            <div>
+              <div class="stat-label">VRAM</div>
+              <div class="stat-bar-wrap"><div class="stat-bar vram" id="bar-vram" style="width:0%"></div></div>
+              <div class="stat-val" id="val-vram">—</div>
+            </div>
+          </div>
+          <div id="no-gpu" style="display:none">GPU not detected</div>
+          <hr class="stat-divider">
+          <div>
+            <div class="queue-row"><span class="ql">Running</span><span class="qv running" id="q-running">0</span></div>
+            <div class="queue-row" style="margin-top:4px"><span class="ql">Queued</span><span class="qv queued" id="q-queued">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Gallery tab -->
+      <div id="gallery-panel">
+        <div id="gallery-header">
+          <div id="threshold-bar">
+            <label>Threshold</label>
+            <input type="range" id="threshold-slider" min="0.10" max="0.25" step="0.001" value="0.148" oninput="onThresholdSlide()">
+            <span id="threshold-val">0.148</span>
+          </div>
+          <div id="gallery-status">
+            <span id="gallery-stats-text">—</span>
+            <button id="btn-calculate" onclick="calculateGalleryStats()">Calculate</button>
+          </div>
+        </div>
+        <div id="frames-scroll">
+          <div id="frames-grid"></div>
+        </div>
+      </div>
+
+      <!-- Music tab -->
+      <div id="music-panel">
+        <div id="music-header">
+          <div id="music-dir-row">
+            <label>Music dir</label>
+            <input type="text" id="music-dir-input" placeholder="~/moto/music">
+            <button class="btn-sm" onclick="openMusicDirBrowser()">Browse</button>
+            <button class="btn-sm" onclick="loadMusicTracks()">Load</button>
+            <button class="btn-sm" id="btn-music-rebuild" onclick="rebuildMusicIndex()">↺ Update index</button>
+          </div>
+          <div id="music-controls">
+            <input type="text" id="music-filter" placeholder="Filter tracks..." oninput="renderMusicList()">
+            <button class="btn-sm" onclick="setAllMusic(true)">All</button>
+            <button class="btn-sm" onclick="setAllMusic(false)">None</button>
+            <span id="music-count">—</span>
+          </div>
+        </div>
+        <div id="music-list-scroll">
+          <div id="music-list"></div>
+        </div>
+      </div>
+
+      <!-- Results tab -->
+      <div id="results-panel">
+        <div class="rf-files" id="rf-files"></div>
+        <div id="video-wrap"><video id="video-player" controls></video></div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /main -->
+</div><!-- /app -->
+
+<!-- Dir browser modal -->
+<div id="dir-modal">
+  <div id="dir-box">
+    <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" onclick="dirUp()">↑ Up</button></div>
+    <div id="dir-list"></div>
+    <div id="dir-footer">
+      <button class="btn-sm" onclick="closeDirBrowser()">Cancel</button>
+      <button class="btn-sm" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settings-modal">
+  <div id="settings-box">
+    <div class="modal-header">
+      SETTINGS
+      <button class="icon-btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ff">
+        <label>Max concurrent jobs</label>
+        <input type="number" id="s-max-jobs" value="1" min="1" max="8">
+      </div>
+      <div id="settings-note">Changes to max concurrent jobs require server restart.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-sm" onclick="closeSettings()">Cancel</button>
+      <button class="btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const api = {
+  async get(u)    { try { const r=await fetch(u); return r.ok?r.json():null; } catch{return null;} },
+  async post(u,b) { const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
+  async put(u,b)  { const r=await fetch(u,{method:'PUT', headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
+  async del(u)    { const r=await fetch(u,{method:'DELETE'}); return r.json(); },
+};
+
+let currentJobId=null, jobWs=null, statsWs=null, elapsedTimer=null;
+let browsePath=null, framesData=[], manualOverrides={};
+let jobSortNewest=true, currentJobMaxScene=null;
+let _refreshing=false;
+let musicTracks=[], musicSelected=new Set();
+
+// Strip /home/<user>/ prefix so paths show as  moto/2025/...  not  /home/pawkor/moto/2025/...
+function trimPath(p) { return p ? p.replace(/^\/home\/[^/]+\//, '') : (p || ''); }
+
+// ── Views ──────────────────────────────────────────────────────────────────────
+function showView(id) { document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function showForm()    { showView('form-view'); }
+function showWelcome() { showView('welcome'); }
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+function toggleSortOrder() {
+  jobSortNewest = !jobSortNewest;
+  document.getElementById('sidebar-sort').textContent = jobSortNewest ? 'newest' : 'oldest';
+  refreshJobList();
+}
+
+async function refreshJobList() {
+  if (_refreshing) return;
+  _refreshing = true;
+  try {
+    let jobs = await api.get('/api/jobs') || [];
+    if (!jobSortNewest) jobs = [...jobs].reverse();
+    const list = document.getElementById('job-list');
+    list.innerHTML = '';
+    for (const j of jobs) {
+      const dir = trimPath(j.work_dir);
+      const dur = j.ended_at ? formatDur(j.ended_at - j.started_at) : '';
+      const div = document.createElement('div');
+      div.className = 'job-item' + (j.id===currentJobId?' active':'');
+      div.innerHTML = `<div class="ji-dir"><span class="dot s-${j.status}"></span>${dir}</div>
+        <div class="ji-meta">${j.status}${dur?' · '+dur:''}</div>
+        <button class="ji-del" title="Remove job" onclick="event.stopPropagation();removeJob('${j.id}')">×</button>`;
+      div.onclick = ()=>openJob(j.id);
+      list.appendChild(div);
+    }
+  } finally {
+    _refreshing = false;
+  }
+}
+setInterval(refreshJobList, 3000);
+refreshJobList();
+
+// ── Stats WebSocket ───────────────────────────────────────────────────────────
+function connectStats() {
+  if (statsWs) return;
+  const proto = location.protocol==='https:'?'wss':'ws';
+  statsWs = new WebSocket(`${proto}://${location.host}/ws/stats`);
+  statsWs.onmessage = e => updateStats(JSON.parse(e.data));
+  statsWs.onclose = () => { statsWs=null; setTimeout(connectStats, 3000); };
+}
+connectStats();
+
+function bar(id, pct) { document.getElementById(id).style.width = Math.min(pct,100)+'%'; }
+function val(id, text) { document.getElementById(id).textContent = text; }
+
+function updateStats(s) {
+  bar('bar-cpu', s.cpu_pct);
+  val('val-cpu', `${s.cpu_pct}%`);
+  bar('bar-ram', s.ram_pct);
+  val('val-ram', `${s.ram_used_gb} / ${s.ram_total_gb} GB <span>(${s.ram_pct}%)</span>`);
+  document.getElementById('val-ram').innerHTML = `${s.ram_used_gb} / ${s.ram_total_gb} GB <span style="color:var(--muted)">(${s.ram_pct}%)</span>`;
+
+  if (s.gpu) {
+    document.getElementById('gpu-section').style.display = '';
+    document.getElementById('no-gpu').style.display = 'none';
+    bar('bar-gpu', s.gpu.pct);
+    val('val-gpu', `${s.gpu.pct}%`);
+    bar('bar-vram', s.gpu.vram_pct);
+    const used = (s.gpu.vram_used_mb/1024).toFixed(1);
+    const tot  = (s.gpu.vram_total_mb/1024).toFixed(1);
+    document.getElementById('val-vram').innerHTML = `${used} / ${tot} GB <span style="color:var(--muted)">(${s.gpu.vram_pct}%)</span>`;
+  } else {
+    document.getElementById('gpu-section').style.display = 'none';
+    document.getElementById('no-gpu').style.display = '';
+  }
+
+  document.getElementById('q-running').textContent = s.running_jobs;
+  document.getElementById('q-queued').textContent  = s.queued_jobs;
+}
+
+// ── Start job ─────────────────────────────────────────────────────────────────
+async function startJob() {
+  const workDir = document.getElementById('f-workdir').value.trim();
+  if (!workDir) { alert('Set working directory'); return; }
+  const p = { work_dir: workDir };
+  const th = document.getElementById('f-threshold').value; if (th) p.threshold = parseFloat(th);
+  const ms = document.getElementById('f-max-scene').value; if (ms) p.max_scene = parseFloat(ms);
+  const pf = document.getElementById('f-per-file').value;  if (pf) p.per_file  = parseFloat(pf);
+  const ti = document.getElementById('f-title').value.trim(); if (ti) p.title = ti;
+  const ca = document.getElementById('f-cam-a').value.trim(); if (ca) p.cam_a = ca;
+  const cb = document.getElementById('f-cam-b').value.trim(); if (cb) p.cam_b = cb;
+  const md = document.getElementById('f-music-dir').value.trim(); if (md) p.music_dir = md;
+  p.no_intro = document.getElementById('f-no-intro').checked;
+  p.no_music = document.getElementById('f-no-music').checked;
+  const resp = await api.post('/api/jobs', p);
+  if (resp?.id) { refreshJobList(); openJob(resp.id); } else alert(JSON.stringify(resp));
+}
+
+// ── About / generate prompts ──────────────────────────────────────────────────
+async function generateAbout() {
+  const desc = document.getElementById('f-about').value.trim();
+  if (!desc) { alert('Enter a description first'); return; }
+  const workDir = document.getElementById('f-workdir').value.trim();
+  const status = document.getElementById('about-status');
+  const output = document.getElementById('about-output');
+  status.textContent = 'Generating…';
+  output.style.display = 'none';
+  const resp = await api.post('/api/about', { description: desc, work_dir: workDir });
+  status.textContent = '';
+  output.style.display = 'block';
+  output.style.color = resp?.ok ? 'var(--green)' : 'var(--red)';
+  output.textContent = resp?.output || 'Error';
+}
+
+// ── Open job ──────────────────────────────────────────────────────────────────
+async function openJob(jobId) {
+  if (jobWs) { jobWs.close(); jobWs=null; }
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
+  currentJobId = jobId;
+  framesData = [];
+  manualOverrides = {};
+  currentJobMaxScene = null;
+  musicTracks = [];
+  musicSelected = new Set();
+  document.getElementById('music-list').innerHTML = '';
+  document.getElementById('music-count').textContent = '—';
+  document.getElementById('gallery-stats-text').textContent = '—';
+  showView('job-view');
+  document.getElementById('log-panel').innerHTML = '';
+  document.getElementById('frames-grid').innerHTML = '';
+  document.getElementById('rf-files').innerHTML = '';
+  document.getElementById('video-wrap').style.display = 'none';
+  document.getElementById('btn-kill').style.display = 'none';
+  document.getElementById('jh-path').textContent = '…';
+  document.getElementById('jh-status').textContent = '';
+  document.getElementById('jh-elapsed').textContent = '';
+  resetSteps();
+  switchTab('log');
+
+  const job = await api.get(`/api/jobs/${jobId}`);
+  if (!job) return;
+
+  document.getElementById('jh-path').textContent = trimPath(job.params.work_dir);
+  setStatusDot(job.status);
+  currentJobMaxScene = job.params.max_scene ?? null;
+  await populateJobSettings(job.params);
+
+  if (job.status === 'running') {
+    document.getElementById('btn-kill').style.display = '';
+    startElapsedTimer(job.started_at);
+  } else if (job.status === 'queued') {
+    document.getElementById('jh-status').textContent = 'queued';
+  } else if (job.ended_at) {
+    document.getElementById('jh-elapsed').textContent = formatDur(job.ended_at - job.started_at);
+  }
+
+  for (const line of job.log) appendLog(line);
+  connectJobWs(jobId, job.started_at);
+
+  if (job.status === 'done' || job.status === 'failed') {
+    loadFrames(jobId);
+    loadResults(jobId);
+  }
+  refreshJobList();
+}
+
+function connectJobWs(jobId, startedAt) {
+  const proto = location.protocol==='https:'?'wss':'ws';
+  jobWs = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+  jobWs.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type==='log') {
+      appendLog(msg.line);
+    } else if (msg.type==='status') {
+      setStatusDot(msg.status);
+      if (msg.status==='running') {
+        document.getElementById('btn-kill').style.display = '';
+        document.getElementById('jh-status').textContent = '';
+        startElapsedTimer(startedAt);
+      } else {
+        document.getElementById('btn-kill').style.display = 'none';
+        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
+        if (msg.status==='done' || msg.status==='failed') { loadFrames(jobId); loadResults(jobId); }
+        refreshJobList();
+      }
+    }
+  };
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+const PROGRESS_RE = /^\s+\[[\u2588\u2591 ]+\]\s+\d+%/;
+
+function appendLog(line) {
+  const panel = document.getElementById('log-panel');
+  const isProgress = PROGRESS_RE.test(line);
+
+  if (isProgress) {
+    // Update existing progress line in place, or create one
+    const last = panel.lastElementChild;
+    if (last && last.classList.contains('log-progress')) {
+      last.textContent = line;
+      return;
+    }
+    const div = document.createElement('div');
+    div.className = 'log-line log-progress';
+    div.style.color = 'var(--muted)';
+    div.textContent = line;
+    panel.appendChild(div);
+    return;
+  }
+
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  const stepM = line.match(/^\[(\d+)\/6\]/);
+  if (stepM)                            { div.classList.add('log-step'); activateStep(parseInt(stepM[1])); }
+  else if (/✓|cached/i.test(line))      { div.classList.add('log-ok'); }
+  else if (/error|failed/i.test(line))  { div.classList.add('log-err'); }
+  div.textContent = line;
+  panel.appendChild(div);
+  const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
+  if (atBottom) panel.scrollTop = panel.scrollHeight;
+}
+
+// ── Steps ─────────────────────────────────────────────────────────────────────
+function resetSteps() { document.querySelectorAll('.step').forEach(s=>s.className='step'); }
+function activateStep(n) {
+  document.querySelectorAll('.step').forEach(s => {
+    const sn = parseInt(s.dataset.step);
+    s.className = 'step' + (sn<n?' done': sn===n?' active':'');
+  });
+}
+
+function setStatusDot(status) {
+  document.getElementById('jh-dot').className = `dot s-${status}`;
+  document.getElementById('jh-status').textContent = status !== 'running' ? status : '';
+  if (status === 'done') document.querySelectorAll('.step').forEach(s=>s.className='step done');
+}
+
+// ── Elapsed ───────────────────────────────────────────────────────────────────
+function startElapsedTimer(startedAt) {
+  if (elapsedTimer) clearInterval(elapsedTimer);
+  elapsedTimer = setInterval(()=>{
+    document.getElementById('jh-elapsed').textContent = formatDur(Date.now()/1000 - startedAt);
+  }, 1000);
+}
+
+// ── Kill / Remove ──────────────────────────────────────────────────────────────
+async function killJob() {
+  if (!currentJobId || !confirm('Kill running job?')) return;
+  await api.del(`/api/jobs/${currentJobId}`);
+  document.getElementById('btn-kill').style.display = 'none';
+}
+
+async function removeJob(jobId) {
+  await api.post(`/api/jobs/${jobId}/remove`, {});
+  if (jobId === currentJobId) { currentJobId = null; showWelcome(); }
+  refreshJobList();
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+const TAB_NAMES = ['settings', 'gallery', 'music', 'log', 'results'];
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', TAB_NAMES[i] === name));
+  document.getElementById('job-settings-panel').style.display = name==='settings' ? 'flex' : 'none';
+  document.getElementById('log-split').style.display          = name==='log'      ? 'flex' : 'none';
+  document.getElementById('gallery-panel').classList.toggle('active', name==='gallery');
+  document.getElementById('music-panel').classList.toggle('active', name==='music');
+  document.getElementById('results-panel').classList.toggle('active', name==='results');
+  if (name==='gallery' && currentJobId) {
+    if (framesData.length) { renderGallery(); calculateGalleryStats(); }
+    else loadFrames(currentJobId);
+  }
+  if (name==='music' && currentJobId && !musicTracks.length) loadMusicTracks();
+  if (name==='results' && currentJobId) loadResults(currentJobId);
+}
+
+// ── Gallery ───────────────────────────────────────────────────────────────────
+async function loadFrames(jobId) {
+  const [data, job] = await Promise.all([
+    api.get(`/api/jobs/${jobId}/frames`),
+    api.get(`/api/jobs/${jobId}`),
+  ]);
+  if (!data?.length) return;
+  // Guard: ignore stale response if user switched to another job
+  if (currentJobId !== jobId) return;
+  framesData = data;
+  loadOverrides();
+  document.getElementById('gallery-stats-text').textContent = '—';
+  const scores = data.map(f=>f.score);
+  const slider = document.getElementById('threshold-slider');
+  slider.min = (Math.min(...scores)-0.005).toFixed(3);
+  slider.max = (Math.max(...scores)+0.005).toFixed(3);
+
+  let threshold = job?.params?.threshold;
+  if (!threshold && job?.log) {
+    const m = job.log.find(l=>/^Threshold:\s+[\d.]+/.test(l));
+    if (m) threshold = parseFloat(m.replace('Threshold:','').trim());
+  }
+  if (threshold) { slider.value=threshold; document.getElementById('threshold-val').textContent=parseFloat(threshold).toFixed(3); }
+  else { slider.value=slider.min; document.getElementById('threshold-val').textContent=parseFloat(slider.min).toFixed(3); }
+  renderGallery();
+  calculateGalleryStats();
+}
+
+function isIncluded(f) {
+  const ov = manualOverrides[f.scene];
+  if (ov === 'include') return true;
+  if (ov === 'exclude') return false;
+  const threshold = parseFloat(document.getElementById('threshold-slider').value);
+  return f.score >= threshold;
+}
+
+function saveOverrides() {
+  if (!currentJobId) return;
+  if (Object.keys(manualOverrides).length)
+    localStorage.setItem('overrides_' + currentJobId, JSON.stringify(manualOverrides));
+  else
+    localStorage.removeItem('overrides_' + currentJobId);
+}
+
+function loadOverrides() {
+  if (!currentJobId) return;
+  try {
+    const raw = localStorage.getItem('overrides_' + currentJobId);
+    manualOverrides = raw ? JSON.parse(raw) : {};
+  } catch { manualOverrides = {}; }
+}
+
+function toggleFrame(scene) {
+  const f = framesData.find(x=>x.scene===scene);
+  if (!f) return;
+  const threshold = parseFloat(document.getElementById('threshold-slider').value);
+  const ov = manualOverrides[scene];
+  const byThreshold = f.score >= threshold;
+  if (ov === undefined) {
+    manualOverrides[scene] = byThreshold ? 'exclude' : 'include';
+  } else {
+    delete manualOverrides[scene];
+  }
+  saveOverrides();
+  // Update only this card in-place — no full grid re-render
+  const card = document.querySelector(`[data-scene="${CSS.escape(scene)}"]`);
+  if (card) {
+    const newOv = manualOverrides[scene];
+    const included = isIncluded(f);
+    card.className = 'fc ' + (included?'included':'excluded') + (newOv?' manual':'');
+    card.title = newOv ? `Score: ${f.score.toFixed(3)} (manual — click to reset)` : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+  }
+}
+
+function renderGallery() {
+  const grid = document.getElementById('frames-grid');
+  grid.innerHTML = '';
+  for (const f of [...framesData].sort((a,b)=>a.scene.localeCompare(b.scene))) {
+    const included = isIncluded(f);
+    const ov = manualOverrides[f.scene];
+    const card = document.createElement('div');
+    card.className = 'fc ' + (included?'included':'excluded') + (ov?' manual':'');
+    card.style.cursor = 'pointer';
+    card.dataset.scene = f.scene;
+    card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)` : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+    card.onclick = ()=>toggleFrame(f.scene);
+    const name = f.scene.replace(/-scene-\d+$/,'').split('/').pop().slice(-22);
+    card.innerHTML = `<img src="${f.frame_url||''}" loading="lazy" onerror="this.style.display='none'">
+      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span><span class="fc-name">${name}</span></div>`;
+    grid.appendChild(card);
+  }
+}
+
+function calculateGalleryStats() {
+  const included = framesData.filter(f=>isIncluded(f));
+  const maxSec = currentJobMaxScene ? parseFloat(currentJobMaxScene) : null;
+  let totalSec = 0;
+  let hasDur = false;
+  for (const f of included) {
+    if (f.duration != null) {
+      hasDur = true;
+      totalSec += maxSec ? Math.min(f.duration, maxSec) : f.duration;
+    }
+  }
+  const countTxt = `${included.length} / ${framesData.length} scenes`;
+  let durTxt = '';
+  if (hasDur) {
+    const m = Math.floor(totalSec/60), s = Math.round(totalSec%60);
+    durTxt = ` · ~${m}:${String(s).padStart(2,'0')} est.`;
+  }
+  document.getElementById('gallery-stats-text').textContent = countTxt + durTxt;
+}
+
+function onThresholdSlide() {
+  const v = parseFloat(document.getElementById('threshold-slider').value).toFixed(3);
+  document.getElementById('threshold-val').textContent = v;
+  renderGallery();
+  calculateGalleryStats();
+}
+
+
+// ── Music tab ─────────────────────────────────────────────────────────────────
+async function loadMusicTracks() {
+  const dir = document.getElementById('music-dir-input').value.trim();
+  if (!dir) return;
+  const data = await api.get(`/api/music-files?dir=${encodeURIComponent(dir)}`);
+  if (!data) return;
+  musicTracks = data;
+  renderMusicList();
+}
+
+function renderMusicList() {
+  const list = document.getElementById('music-list');
+  list.innerHTML = '';
+  const filter = document.getElementById('music-filter').value.toLowerCase();
+  let shown = 0;
+  for (const t of musicTracks) {
+    if (filter && !t.title.toLowerCase().includes(filter)) continue;
+    shown++;
+    const row = document.createElement('div');
+    row.className = 'mt';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = musicSelected.has(t.file);
+    cb.addEventListener('change', e => {
+      if (e.target.checked) musicSelected.add(t.file);
+      else musicSelected.delete(t.file);
+      updateMusicCount(shown);
+    });
+    const title = document.createElement('span');
+    title.className = 'mt-title';
+    title.textContent = t.title;
+    const dur = t.duration ? `${Math.floor(t.duration/60)}:${String(Math.round(t.duration%60)).padStart(2,'0')}` : '?';
+    const meta = document.createElement('span');
+    meta.className = 'mt-meta';
+    meta.textContent = `${t.genre||'?'} · ${dur}`;
+    row.appendChild(cb);
+    row.appendChild(title);
+    row.appendChild(meta);
+    row.onclick = e => { if (e.target !== cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); } };
+    list.appendChild(row);
+  }
+  updateMusicCount(shown);
+}
+
+function updateMusicCount(shown) {
+  const s = musicSelected.size, t = musicTracks.length;
+  const shownTxt = (shown != null && shown !== t) ? ` · ${shown} shown` : '';
+  const allTxt = s === 0 && t > 0 ? ' (no filter = all)' : '';
+  document.getElementById('music-count').textContent = `${s} / ${t} selected${shownTxt}${allTxt}`;
+}
+
+async function rebuildMusicIndex() {
+  const dir = document.getElementById('music-dir-input').value.trim();
+  if (!dir) return;
+  const btn = document.getElementById('btn-music-rebuild');
+  btn.textContent = '↺ Updating…';
+  btn.disabled = true;
+  const res = await api.post('/api/music-rebuild', { dir });
+  btn.textContent = '↺ Update index';
+  btn.disabled = false;
+  if (res?.ok) await loadMusicTracks();
+  else alert('Index update failed:\n' + (res?.output || 'unknown error'));
+}
+
+function setAllMusic(checked) {
+  const filter = document.getElementById('music-filter').value.toLowerCase();
+  for (const t of musicTracks) {
+    if (filter && !t.title.toLowerCase().includes(filter)) continue;
+    if (checked) musicSelected.add(t.file);
+    else musicSelected.delete(t.file);
+  }
+  renderMusicList();
+}
+
+async function populateJobSettings(params) {
+  const sv = (id, v) => { if (v != null && v !== '') document.getElementById(id).value = v; };
+  const sc = (id, v) => { if (v != null) document.getElementById(id).checked = !!v; };
+
+  sv('js-workdir',  params.work_dir);
+  sv('js-cam-a',    params.cam_a);
+  sv('js-cam-b',    params.cam_b);
+  sv('js-title',    params.title);
+  sc('js-no-intro', params.no_intro);
+  sc('js-no-music', params.no_music);
+  // Music tab state
+  if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
+  if (params.music_files?.length) musicSelected = new Set(params.music_files);
+  else musicSelected = new Set();
+
+  // For numeric scene-selection fields, fall back to config.ini defaults when null
+  let th = params.threshold, ms = params.max_scene, pf = params.per_file;
+  if (th == null || ms == null || pf == null) {
+    const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(params.work_dir)}`);
+    if (cfg) {
+      if (th == null) th = cfg.threshold;
+      if (ms == null) ms = cfg.max_scene;
+      if (pf == null) pf = cfg.per_file;
+    }
+  }
+  sv('js-threshold', th);
+  sv('js-max-scene', ms);
+  sv('js-per-file',  pf);
+  if (ms != null) currentJobMaxScene = parseFloat(ms);
+}
+
+function readJobSettings() {
+  const gv = id => document.getElementById(id).value.trim();
+  const gc = id => document.getElementById(id).checked;
+  const p = { work_dir: gv('js-workdir') };
+  const th = gv('js-threshold'); if (th) p.threshold = parseFloat(th);
+  const ms = gv('js-max-scene'); if (ms) p.max_scene = parseFloat(ms);
+  const pf = gv('js-per-file');  if (pf) p.per_file  = parseFloat(pf);
+  const ca = gv('js-cam-a');     if (ca) p.cam_a = ca;
+  const cb = gv('js-cam-b');     if (cb) p.cam_b = cb;
+  const ti = gv('js-title');     if (ti) p.title = ti;
+  p.no_intro = gc('js-no-intro');
+  p.no_music  = gc('js-no-music');
+  const md = document.getElementById('music-dir-input').value.trim();
+  if (md) p.music_dir = md;
+  if (musicSelected.size) p.music_files = [...musicSelected];
+  return p;
+}
+
+async function rerunFromSettings() {
+  const params = readJobSettings();
+  if (!params.work_dir || !currentJobId) return;
+  const resp = await api.post(`/api/jobs/${currentJobId}/rerun`, params);
+  if (resp?.id) { refreshJobList(); openJob(resp.id); }
+}
+
+async function rerunCurrentJob() {
+  if (!currentJobId) return;
+  const job = await api.get(`/api/jobs/${currentJobId}`);
+  if (!job) return;
+  const settingsWorkdir = document.getElementById('js-workdir').value.trim();
+  const params = settingsWorkdir === job.params.work_dir ? readJobSettings() : {...job.params};
+  if (framesData.length > 0) params.threshold = parseFloat(document.getElementById('threshold-slider').value);
+  const resp = await api.post(`/api/jobs/${currentJobId}/rerun`, params);
+  if (resp?.id) { refreshJobList(); openJob(resp.id); }
+}
+
+// ── Results ───────────────────────────────────────────────────────────────────
+async function loadResults(jobId) {
+  const data = await api.get(`/api/jobs/${jobId}/result`);
+  if (!data) return;
+  const container = document.getElementById('rf-files');
+  container.innerHTML = '';
+  for (const name of ['highlight_final_music.mp4','highlight_music.mp4','highlight_final.mp4','highlight.mp4']) {
+    if (!data[name]) continue;
+    const div = document.createElement('div');
+    div.className = 'rf';
+    div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${data[name].size_mb} MB</div>`;
+    div.onclick = ()=>playVideo(data[name].url, div);
+    container.appendChild(div);
+  }
+  container.querySelector('.rf')?.classList.add('playing');
+}
+
+function playVideo(url, card) {
+  document.querySelectorAll('.rf').forEach(c=>c.classList.remove('playing'));
+  if (card) card.classList.add('playing');
+  const wrap = document.getElementById('video-wrap');
+  const video = document.getElementById('video-player');
+  wrap.style.display = 'block';
+  video.src = url;
+}
+
+// ── Dir browser ───────────────────────────────────────────────────────────────
+let _dirSelectCb = null;
+async function openDirBrowser(startPath, callback) {
+  _dirSelectCb = callback || null;
+  document.getElementById('dir-modal').classList.add('open');
+  await browseTo((startPath || '').trim() || null);
+}
+function closeDirBrowser() { document.getElementById('dir-modal').classList.remove('open'); _dirSelectCb = null; }
+function selectCurrentDir() {
+  if (_dirSelectCb) _dirSelectCb(browsePath);
+  closeDirBrowser();
+}
+// Project working dir
+function openFormDirBrowser()      { openDirBrowser(document.getElementById('f-workdir').value, p => { document.getElementById('f-workdir').value = p; loadDirConfig(p); }); }
+// Music dir (form)
+function openFormMusicDirBrowser() { openDirBrowser(document.getElementById('f-music-dir').value, p => { document.getElementById('f-music-dir').value = p; }); }
+// Music dir (job Music tab)
+function openMusicDirBrowser()     { openDirBrowser(document.getElementById('music-dir-input').value, p => { document.getElementById('music-dir-input').value = p; loadMusicTracks(); }); }
+
+async function loadDirConfig(dir) {
+  if (!dir || !dir.trim()) return;
+  const data = await api.get(`/api/job-config?dir=${encodeURIComponent(dir.trim())}`);
+  if (!data) return;
+  const set = (id, v) => { if (v !== undefined && v !== null && v !== '') document.getElementById(id).value = v; };
+  const chk = (id, v) => { if (v !== undefined && v !== null) document.getElementById(id).checked = !!v; };
+  set('f-threshold',    data.threshold);
+  set('f-max-scene',    data.max_scene);
+  set('f-per-file',     data.per_file);
+  set('f-cam-a',        data.cam_a);
+  set('f-cam-b',        data.cam_b);
+  set('f-title',     data.title);
+  set('f-music-dir', data.music_dir);
+  chk('f-no-intro',  data.no_intro);
+  chk('f-no-music',  data.no_music);
+}
+async function dirUp() {
+  const data = await api.get(`/api/browse?path=${encodeURIComponent(browsePath)}`);
+  if (data?.parent) await browseTo(data.parent);
+}
+async function browseTo(path) {
+  const url = path ? `/api/browse?path=${encodeURIComponent(path)}` : '/api/browse';
+  const data = await api.get(url);
+  if (!data) return;
+  browsePath = data.path;
+  document.getElementById('dir-path-txt').textContent = data.path;
+  const list = document.getElementById('dir-list');
+  list.innerHTML = '';
+  if (data.parent) {
+    const d=document.createElement('div'); d.className='de';
+    d.innerHTML=`<span class="icon">↑</span><span class="name">..</span>`;
+    d.onclick=()=>browseTo(data.parent); list.appendChild(d);
+  }
+  for (const e of data.entries) {
+    if (!e.is_dir) continue;
+    const d=document.createElement('div'); d.className='de';
+    d.innerHTML=`<span class="icon">▶</span><span class="name">${e.name}</span>
+      ${e.has_mp4?'<span class="badge">MP4</span>':''}
+      ${e.has_autoframe?'<span class="badge" style="color:var(--accent)">cached</span>':''}`;
+    d.onclick=()=>{browsePath=e.path; document.getElementById('dir-path-txt').textContent=e.path;};
+    d.ondblclick=()=>browseTo(e.path);
+    list.appendChild(d);
+  }
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function openSettings() {
+  const s = await api.get('/api/settings');
+  if (s) document.getElementById('s-max-jobs').value = s.max_concurrent_jobs;
+  document.getElementById('settings-modal').classList.add('open');
+}
+function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
+async function saveSettings() {
+  const data = { max_concurrent_jobs: parseInt(document.getElementById('s-max-jobs').value) };
+  await api.put('/api/settings', data);
+  closeSettings();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatDur(sec) {
+  const s=Math.floor(sec), m=Math.floor(s/60);
+  return m>0?`${m}m${s%60}s`:`${s}s`;
+}
+</script>
+</body>
+</html>
