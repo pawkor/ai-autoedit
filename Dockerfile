@@ -40,8 +40,8 @@ RUN pip install --no-cache-dir --break-system-packages \
         -r requirements.txt
 
 # Copy application
-COPY autoframe.sh clip_score.py select_scenes.py music_index.py \
-     generate_config.py gpu_detect.py config.ini ./
+COPY config.ini ./
+COPY src/ ./src/
 COPY webapp/ ./webapp/
 
 # Jobs directory — writable by container user (bind-mounted at runtime)

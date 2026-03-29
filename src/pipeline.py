@@ -20,13 +20,14 @@ from pathlib import Path
 from typing import AsyncIterator
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+APP_DIR    = SCRIPT_DIR.parent
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 
 def _load_cfg(work_dir: Path) -> configparser.ConfigParser:
     cp = configparser.ConfigParser()
-    cp.read([str(SCRIPT_DIR / "config.ini"), str(work_dir / "config.ini")])
+    cp.read([str(APP_DIR / "config.ini"), str(work_dir / "config.ini")])
     return cp
 
 def _s(cp, sec, key, fb=""):     return cp.get(sec, key, fallback=fb)

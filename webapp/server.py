@@ -26,7 +26,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import pandas as pd
 
-SCRIPT_DIR  = Path(__file__).resolve().parent.parent
+APP_DIR     = Path(__file__).resolve().parent.parent
+SCRIPT_DIR  = APP_DIR / "src"
 
 sys.path.insert(0, str(SCRIPT_DIR))
 import pipeline  # noqa: E402
@@ -162,8 +163,9 @@ def _proc_meminfo() -> tuple[int, int]:
 
 def _container_memory() -> tuple[int, int]:
     """Return (used_bytes, total_bytes) from cgroups (matches docker stats).
-    Falls back to /proc/meminfo if cgroups are unavailable."""
-    proc_total = _proc_meminfo()[1]
+    Falls back to /proc/meminfo if cgroups are unavailable.
+    /proc/meminfo is bind-mounted from the LXC host so it shows the correct
+    container RAM instead of the Proxmox host's physical RAM."""
 
     # cgroup v2
     try:
@@ -173,7 +175,7 @@ def _container_memory() -> tuple[int, int]:
             if line.startswith("inactive_file "):
                 cache = int(line.split()[1]); break
         limit_text = Path("/sys/fs/cgroup/memory.max").read_text().strip()
-        total = proc_total if limit_text == "max" else int(limit_text)
+        total = _proc_meminfo()[1] if limit_text == "max" else int(limit_text)
         return max(0, used_total - cache), total
     except Exception:
         pass
@@ -184,13 +186,13 @@ def _container_memory() -> tuple[int, int]:
         for line in Path("/sys/fs/cgroup/memory/memory.stat").read_text().splitlines():
             if line.startswith("total_inactive_file "):
                 cache = int(line.split()[1]); break
+        proc_total = _proc_meminfo()[1]
         limit = int(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes").read_text())
         total = proc_total if limit > proc_total * 0.99 else limit
         return max(0, used_total - cache), total
     except Exception:
         pass
-    used, total = _proc_meminfo()
-    return used, total
+    return _proc_meminfo()
 
 def _get_stats() -> dict:
     global _gpu_available
@@ -459,7 +461,7 @@ _JOB_CONFIG_MAP = {
 def read_job_config(work_dir: Path) -> dict:
     """Read job-relevant keys; work_dir/config.ini overrides global config.ini."""
     global_cp = configparser.ConfigParser()
-    global_cp.read(str(SCRIPT_DIR / "config.ini"))
+    global_cp.read(str(APP_DIR / "config.ini"))
 
     local_cp = configparser.ConfigParser()
     cfg_path = work_dir / "config.ini"
@@ -634,7 +636,7 @@ def _resolve_params(d: dict, work_dir: Path) -> dict:
     """Fill None scene-selection values from config.ini (work_dir then global), then hardcoded defaults."""
     cfg_chain = [read_job_config(work_dir)]
     global_cp = configparser.ConfigParser()
-    global_cp.read(str(SCRIPT_DIR / "config.ini"))
+    global_cp.read(str(APP_DIR / "config.ini"))
     def _gf(section, key, fallback):
         try:    return float(global_cp.get(section, key))
         except: return fallback
@@ -843,7 +845,7 @@ async def job_frames(job_id: str):
             except Exception:
                 pass
 
-    df = pd.read_csv(scores_csv)
+    df = pd.read_csv(scores_csv).sort_values("scene")
     return [
         {
             "scene":     row["scene"],

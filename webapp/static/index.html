@@ -1106,6 +1106,8 @@ function switchTab(name) {
   document.getElementById('music-panel').classList.toggle('active', name==='music');
   document.getElementById('results-panel').classList.toggle('active', name==='results');
   if (name==='gallery' && currentJobId) {
+    const th = parseFloat(document.getElementById('js-threshold').value);
+    if (th) { document.getElementById('threshold-slider').value = th; document.getElementById('threshold-val').textContent = th.toFixed(3); }
     if (framesData.length) { if (_galleryDirty) { renderGallery(); calculateGalleryStats(); } }
     else loadFrames(currentJobId);
   }
@@ -1194,7 +1196,7 @@ function _cachedSrc(url) {
 function renderGallery() {
   const grid = document.getElementById('frames-grid');
   const frag = document.createDocumentFragment();
-  for (const f of [...framesData].sort((a,b)=>a.scene.localeCompare(b.scene))) {
+  for (const f of [...framesData].sort((a,b)=>a.scene<b.scene?-1:a.scene>b.scene?1:0)) {
     const included = isIncluded(f);
     const ov = manualOverrides[f.scene];
     const card = document.createElement('div');

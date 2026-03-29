@@ -10,7 +10,9 @@ services:
     volumes:
       - "${DATA_DIR}:/data"
       - ./webapp:/app/webapp
+      - ./src:/app/src
       - ./config.ini:/app/config.ini:ro
+      - /proc/meminfo:/proc/meminfo:ro
     environment:
       BROWSE_ROOT: /data
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
