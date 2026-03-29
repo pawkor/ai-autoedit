@@ -14,6 +14,7 @@ services:
     environment:
       BROWSE_ROOT: /data
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      LAST_FM_API_KEY: ${LAST_FM_API_KEY}
     deploy:
       resources:
         reservations:

@@ -197,8 +197,17 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .mt { display:flex; align-items:center; gap:9px; padding:7px 14px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
 .mt:hover { background:var(--bg3); }
 .mt input[type=checkbox] { accent-color:var(--accent); cursor:pointer; flex-shrink:0; width:13px; height:13px; }
-.mt-title { flex:1; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mt-title { flex:1; display:flex; flex-direction:column; font-size:12px; overflow:hidden; min-width:0; }
+.mt-title > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mt-artist { font-size:10px; color:var(--muted); }
 .mt-meta { font-size:10px; color:var(--muted); white-space:nowrap; }
+.mt-bpm  { font-size:10px; color:var(--muted); white-space:nowrap; width:52px; text-align:right; }
+.mt-energy { width:36px; height:4px; background:var(--border); border-radius:2px; flex-shrink:0; }
+.mt-energy-fill { height:100%; border-radius:2px; background:var(--accent); }
+#music-genre { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:3px 5px; font-family:var(--font); font-size:11px; border-radius:3px; outline:none; max-width:130px; }
+#music-genre:focus { border-color:var(--accent); }
+.cb-label { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--muted); cursor:pointer; white-space:nowrap; }
+.cb-label input[type=checkbox] { accent-color:var(--accent); cursor:pointer; }
 
 /* ── Results tab ── */
 #results-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:14px; }
@@ -462,9 +471,12 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
             <button class="btn-sm" data-i18n="btn.browse" onclick="openMusicDirBrowser()">Browse</button>
             <button class="btn-sm" data-i18n="btn.load" onclick="loadMusicTracks()">Load</button>
             <button class="btn-sm" id="btn-music-rebuild" data-i18n="btn.rebuild_index" onclick="rebuildMusicIndex()">↺ Update index</button>
+            <label class="cb-label"><input type="checkbox" id="music-force"> <span data-i18n="lbl.force_audio" data-i18n-tip="force_audio">re-analyze</span></label>
+            <label class="cb-label"><input type="checkbox" id="music-force-genres"> <span data-i18n="lbl.force_genres" data-i18n-tip="force_genres">re-genres</span></label>
           </div>
           <div id="music-controls">
             <input type="text" id="music-filter" data-i18n-ph="ph.filter_tracks" placeholder="Filter tracks..." oninput="renderMusicList()">
+            <select id="music-genre" onchange="renderMusicList()"><option value="">all genres</option></select>
             <button class="btn-sm" data-i18n="btn.all" onclick="setAllMusic(true)">All</button>
             <button class="btn-sm" data-i18n="btn.none" onclick="setAllMusic(false)">None</button>
             <span id="music-count">—</span>
@@ -525,9 +537,11 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 const TRANS = {
   en: {
     tips: {
-      threshold: 'CLIP similarity cutoff (0–1).\nLower = more scenes included. Default 0.148.\nSteps of ±0.005 make a noticeable difference.',
-      max_scene: 'Max seconds taken from a single scene.\nLonger scenes are trimmed to their middle N seconds.',
-      per_file:  'Max total seconds selected from one source file.\nPrevents one recording from dominating the highlight.',
+      threshold:    'CLIP similarity cutoff (0–1).\nLower = more scenes included. Default 0.148.\nSteps of ±0.005 make a noticeable difference.',
+      max_scene:    'Max seconds taken from a single scene.\nLonger scenes are trimmed to their middle N seconds.',
+      per_file:     'Max total seconds selected from one source file.\nPrevents one recording from dominating the highlight.',
+      force_audio:  'Re-analyze BPM/energy for all tracks (slow).',
+      force_genres: 'Re-fetch genres from tags/Last.fm without re-analyzing audio.',
     },
     labels: {
       // tabs
@@ -558,6 +572,8 @@ const TRANS = {
       'lbl.title_short':     'Title',
       'lbl.music_dir_label': 'Music directory',
       'lbl.music_dir_header':'Music dir',
+      'lbl.force_audio':     're-analyze',
+      'lbl.force_genres':    're-genres',
       'lbl.no_intro':        ' No intro/outro',
       'lbl.no_music':        ' No music',
       'lbl.describe_ride':   "Describe today's ride, location, conditions...",
@@ -608,9 +624,11 @@ const TRANS = {
   },
   pl: {
     tips: {
-      threshold: 'Próg podobieństwa CLIP (0–1).\nNiżej = więcej scen. Domyślnie 0.148.\nKrok ±0.005 daje odczuwalną różnicę.',
-      max_scene: 'Max sekundy pobrane z jednej sceny.\nDłuższe sceny są przycinane do środkowych N sekund.',
-      per_file:  'Max łączny czas z jednego pliku źródłowego.\nZapobiega dominacji jednego nagrania w highlight.',
+      threshold:    'Próg podobieństwa CLIP (0–1).\nNiżej = więcej scen. Domyślnie 0.148.\nKrok ±0.005 daje odczuwalną różnicę.',
+      max_scene:    'Max sekundy pobrane z jednej sceny.\nDłuższe sceny są przycinane do środkowych N sekund.',
+      per_file:     'Max łączny czas z jednego pliku źródłowego.\nZapobiega dominacji jednego nagrania w highlight.',
+      force_audio:  'Ponowna analiza BPM/energii dla wszystkich ścieżek (wolno).',
+      force_genres: 'Ponowne pobieranie gatunków z tagów/Last.fm bez re-analizy audio.',
     },
     labels: {
       // tabs
@@ -641,6 +659,8 @@ const TRANS = {
       'lbl.title_short':     'Tytuł',
       'lbl.music_dir_label': 'Folder z muzyką',
       'lbl.music_dir_header':'Muzyka',
+      'lbl.force_audio':     're-analiza',
+      'lbl.force_genres':    're-gatunki',
       'lbl.no_intro':        ' Bez intro/outro',
       'lbl.no_music':        ' Bez muzyki',
       'lbl.describe_ride':   'Opisz dzisiejszą jazdę, lokalizację, warunki...',
@@ -1225,16 +1245,34 @@ async function loadMusicTracks() {
   const data = await api.get(`/api/music-files?dir=${encodeURIComponent(dir)}`);
   if (!data) return;
   musicTracks = data;
+  // Populate genre dropdown
+  const genres = [...new Set(data.map(t => t.genre).filter(Boolean))].sort();
+  const sel = document.getElementById('music-genre');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">all genres</option>';
+  for (const g of genres) {
+    const o = document.createElement('option');
+    o.value = o.textContent = g;
+    sel.appendChild(o);
+  }
+  if (genres.includes(cur)) sel.value = cur;
   renderMusicList();
+}
+
+function _trackVisible(t, filter, genre) {
+  if (filter && !t.title.toLowerCase().includes(filter)) return false;
+  if (genre && (t.genre || '').toLowerCase() !== genre) return false;
+  return true;
 }
 
 function renderMusicList() {
   const list = document.getElementById('music-list');
-  list.innerHTML = '';
   const filter = document.getElementById('music-filter').value.toLowerCase();
+  const genre  = document.getElementById('music-genre').value.toLowerCase();
+  const frag = document.createDocumentFragment();
   let shown = 0;
   for (const t of musicTracks) {
-    if (filter && !t.title.toLowerCase().includes(filter)) continue;
+    if (!_trackVisible(t, filter, genre)) continue;
     shown++;
     const row = document.createElement('div');
     row.className = 'mt';
@@ -1246,19 +1284,40 @@ function renderMusicList() {
       else musicSelected.delete(t.file);
       updateMusicCount(shown);
     });
-    const title = document.createElement('span');
-    title.className = 'mt-title';
-    title.textContent = t.title;
+    const titleWrap = document.createElement('span');
+    titleWrap.className = 'mt-title';
+    if (t.artist) {
+      const artist = document.createElement('span');
+      artist.className = 'mt-artist';
+      artist.textContent = t.artist;
+      titleWrap.appendChild(artist);
+    }
+    const titleText = document.createElement('span');
+    titleText.textContent = t.title;
+    titleWrap.appendChild(titleText);
     const dur = t.duration ? `${Math.floor(t.duration/60)}:${String(Math.round(t.duration%60)).padStart(2,'0')}` : '?';
     const meta = document.createElement('span');
     meta.className = 'mt-meta';
-    meta.textContent = `${t.genre||'?'} · ${dur}`;
+    meta.textContent = `${t.genre || '—'} · ${dur}`;
+    const bpm = document.createElement('span');
+    bpm.className = 'mt-bpm';
+    bpm.textContent = t.bpm ? `${Math.round(t.bpm)} BPM` : '';
+    const energyWrap = document.createElement('div');
+    energyWrap.className = 'mt-energy';
+    const energyFill = document.createElement('div');
+    energyFill.className = 'mt-energy-fill';
+    energyFill.style.width = `${Math.round((t.energy_norm ?? 0) * 100)}%`;
+    energyWrap.appendChild(energyFill);
     row.appendChild(cb);
-    row.appendChild(title);
+    row.appendChild(titleWrap);
     row.appendChild(meta);
+    row.appendChild(bpm);
+    row.appendChild(energyWrap);
     row.onclick = e => { if (e.target !== cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); } };
-    list.appendChild(row);
+    frag.appendChild(row);
   }
+  list.innerHTML = '';
+  list.appendChild(frag);
   updateMusicCount(shown);
 }
 
@@ -1273,10 +1332,12 @@ async function rebuildMusicIndex() {
   const dir = document.getElementById('music-dir-input').value.trim();
   if (!dir) return;
   const btn = document.getElementById('btn-music-rebuild');
-  btn.textContent = '↺ Updating…';
+  btn.textContent = '↺ …';
   btn.disabled = true;
-  const res = await api.post('/api/music-rebuild', { dir });
-  btn.textContent = '↺ Update index';
+  const force       = document.getElementById('music-force').checked;
+  const forceGenres = document.getElementById('music-force-genres').checked;
+  const res = await api.post('/api/music-rebuild', { dir, force, force_genres: forceGenres });
+  btn.textContent = TRANS[currentLang]?.labels?.['btn.rebuild_index'] || '↺ Update index';
   btn.disabled = false;
   if (res?.ok) await loadMusicTracks();
   else alert('Index update failed:\n' + (res?.output || 'unknown error'));
@@ -1284,8 +1345,9 @@ async function rebuildMusicIndex() {
 
 function setAllMusic(checked) {
   const filter = document.getElementById('music-filter').value.toLowerCase();
+  const genre  = document.getElementById('music-genre').value.toLowerCase();
   for (const t of musicTracks) {
-    if (filter && !t.title.toLowerCase().includes(filter)) continue;
+    if (!_trackVisible(t, filter, genre)) continue;
     if (checked) musicSelected.add(t.file);
     else musicSelected.delete(t.file);
   }
@@ -1324,6 +1386,8 @@ async function populateJobSettings(params) {
   sv('js-max-scene', ms);
   sv('js-per-file',  pf);
   if (ms != null) currentJobMaxScene = parseFloat(ms);
+  // Auto-load music index if dir is known
+  if (document.getElementById('music-dir-input').value.trim()) loadMusicTracks();
 }
 
 function readJobSettings() {

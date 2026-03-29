@@ -46,9 +46,23 @@ The gallery shows the midpoint frame of each detected scene with its CLIP score.
 
 ![Przeglądarka muzyki](docs/img/AI-autoedit-music.png)
 
-Zakładka **Music** pokazuje zaindeksowane utwory z folderu muzycznego. Filtruj po nazwie, zaznacz konkretne ścieżki do użycia w następnym przebiegu, przebuduj indeks po dodaniu nowych plików.
+Zakładka **Music** pokazuje zaindeksowane utwory z folderu muzycznego (MP3/M4A) z wykonawcą, tytułem, BPM, energią i gatunkiem. Indeks ładuje się automatycznie przy otwieraniu projektu. Filtruj po nazwie lub gatunku, zaznacz konkretne ścieżki, przebuduj indeks po dodaniu nowych plików.
 
-The **Music** tab shows indexed tracks from the music folder. Filter by name, select specific tracks to use in the next run, rebuild the index after adding new files.
+Przycisk **↺ Aktualizuj indeks** ma dwa ptaszki:
+- **re-analiza** — wymusza ponowne liczenie BPM/energii dla wszystkich ścieżek (`--force`)
+- **re-gatunki** — odświeża tylko gatunki bez ponownej analizy audio (`--force-genres`)
+
+The **Music** tab shows indexed tracks (MP3/M4A) with artist, title, BPM, energy, and genre. The index loads automatically when a project is opened. Filter by name or genre, select specific tracks, rebuild the index after adding new files.
+
+The **↺ Update index** button has two checkboxes:
+- **re-analyze** — forces BPM/energy re-analysis for all tracks (`--force`)
+- **re-genres** — re-fetches genres only, without re-analyzing audio (`--force-genres`)
+
+Gatunek wyciągany jest w kolejności priorytetów / Genre is resolved in priority order:
+
+1. Tagi osadzone w pliku (ID3/iTunes) — `ffprobe` / Embedded file tags via `ffprobe`
+2. Wzorzec nazwy pliku `｜ Genre ｜` (konwencja NCS) / Filename pattern (NCS convention)
+3. Last.fm API — tylko jeśli ustawiony `LAST_FM_API_KEY` / Last.fm API — only if `LAST_FM_API_KEY` is set
 
 ### Log i statystyki systemu / Log and system stats
 
@@ -134,7 +148,8 @@ Webapp dostępna pod / Available at: **http://0.0.0.0:8000**
 
 ```env
 DATA_DIR=/home/user/moto       # katalog z materiałem / footage root
-ANTHROPIC_API_KEY=sk-ant-...   # opcjonalne, do generowania promptów CLIP
+ANTHROPIC_API_KEY=sk-ant-...   # opcjonalne, do generowania promptów CLIP / optional, for CLIP prompt generation
+LAST_FM_API_KEY=...            # opcjonalne, do enrichmentu gatunków muzycznych / optional, for music genre enrichment
 ```
 
 ### Aktualizacja skryptów pipeline / Updating pipeline scripts

@@ -368,8 +368,11 @@ async def music_rebuild(payload: dict):
     d = Path(music_dir).expanduser().resolve()
     if not d.is_dir():
         raise HTTPException(404, "Directory not found")
+    cmd = [sys.executable, str(SCRIPT_DIR / "music_index.py"), str(d)]
+    if payload.get("force"):        cmd.append("--force")
+    if payload.get("force_genres"): cmd.append("--force-genres")
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(SCRIPT_DIR / "music_index.py"), str(d),
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
