@@ -367,7 +367,7 @@ run_select_scenes() {
 
 run_select_scenes
 
-if [ "$THRESHOLD_EXPLICIT" -eq 0 ] && [ -c /dev/tty ]; then
+if [ "$THRESHOLD_EXPLICIT" -eq 0 ] && { true </dev/tty; } 2>/dev/null; then
     USER_THRESHOLD=""
     while true; do
         if [ ! -s "$AUTODIR/selected_scenes.txt" ]; then
