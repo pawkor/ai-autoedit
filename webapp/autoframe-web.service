@@ -1,0 +1,14 @@
+[Unit]
+Description=autoframe web UI
+After=network.target
+
+[Service]
+Type=simple
+User=pawkor
+WorkingDirectory=/home/pawkor/scripts
+ExecStart=/home/pawkor/highlight-env/bin/uvicorn webapp.server:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

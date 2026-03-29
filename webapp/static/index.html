@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>autoframe</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0e0e0e;
+  --bg2: #161616;
+  --bg3: #1e1e1e;
+  --border: #2a2a2a;
+  --text: #d4d4d4;
+  --muted: #6b6b6b;
+  --accent: #e07b39;
+  --green: #4ec94e;
+  --red: #e05555;
+  --yellow: #d4a017;
+  --blue: #4e9de0;
+  --font: 'Consolas', 'Menlo', monospace;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; }
+
+a { color: var(--accent); text-decoration: none; }
+
+/* ── Layout ── */
+#app { display: flex; height: 100vh; }
+
+#sidebar {
+  width: 240px;
+  min-width: 240px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#sidebar-header {
+  padding: 16px 12px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#sidebar-header h1 { font-size: 15px; color: var(--accent); letter-spacing: 1px; }
+
+#btn-new {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: bold;
+}
+#btn-new:hover { opacity: 0.85; }
+
+#job-list { flex: 1; overflow-y: auto; }
+
+.job-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.job-item:hover { background: var(--bg3); }
+.job-item.active { background: var(--bg3); border-left: 2px solid var(--accent); }
+.job-item .job-dir { font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.job-item .job-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.job-status { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+.s-running { background: var(--yellow); animation: pulse 1s infinite; }
+.s-done    { background: var(--green); }
+.s-failed  { background: var(--red); }
+.s-killed  { background: var(--muted); }
+.s-pending { background: var(--blue); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Views ── */
+.view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+.view.active { display: flex; }
+
+/* ── Welcome ── */
+#welcome { align-items: center; justify-content: center; }
+#welcome .wtext { text-align: center; color: var(--muted); }
+#welcome .wtext h2 { font-size: 18px; color: var(--accent); margin-bottom: 8px; }
+
+/* ── Form ── */
+#form-view { padding: 24px; overflow-y: auto; }
+#form-view h2 { font-size: 14px; color: var(--accent); margin-bottom: 20px; letter-spacing: 1px; }
+
+.form-section { margin-bottom: 24px; }
+.form-section h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+
+.form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.form-field { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
+.form-field.wide { flex: 1; }
+.form-field label { font-size: 11px; color: var(--muted); }
+.form-field input, .form-field select {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  font-family: var(--font);
+  font-size: 12px;
+  border-radius: 3px;
+  outline: none;
+}
+.form-field input:focus, .form-field select:focus { border-color: var(--accent); }
+
+.dir-picker { display: flex; gap: 6px; }
+.dir-picker input { flex: 1; }
+.btn-sm {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 12px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+
+.checkbox-row { display: flex; gap: 16px; }
+.form-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.form-check input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent); }
+
+#btn-start {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  padding: 10px 28px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: bold;
+  border-radius: 3px;
+  margin-top: 8px;
+}
+#btn-start:hover { opacity: 0.85; }
+
+/* ── Directory browser modal ── */
+#dir-modal {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+#dir-modal.open { display: flex; }
+#dir-modal-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 520px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+#dir-modal-path {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+#dir-modal-path span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dir-modal-list { flex: 1; overflow-y: auto; }
+.dir-entry {
+  padding: 7px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.dir-entry:hover { background: var(--bg3); }
+.dir-entry .icon { color: var(--accent); width: 14px; }
+.dir-entry .name { flex: 1; }
+.dir-entry .badge { font-size: 10px; color: var(--green); }
+#dir-modal-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── Job view ── */
+#job-view { display: flex; flex-direction: column; overflow: hidden; }
+
+#job-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+#job-header .job-path { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#btn-kill {
+  background: transparent;
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 11px;
+  border-radius: 3px;
+}
+#btn-kill:hover { background: var(--red); color: #000; }
+
+#steps {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  background: var(--bg2);
+}
+.step {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  transition: all 0.2s;
+}
+.step.active { border-color: var(--yellow); color: var(--yellow); }
+.step.done   { border-color: var(--green);  color: var(--green); }
+
+#job-tabs {
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+}
+.tab {
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+#tab-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+/* ── Log panel ── */
+#log-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-step  { color: var(--accent); font-weight: bold; }
+.log-ok    { color: var(--green); }
+.log-err   { color: var(--red); }
+.log-info  { color: var(--blue); }
+
+/* ── Gallery panel ── */
+#gallery-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+#gallery-panel.active { display: flex; }
+
+#threshold-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+#threshold-bar label { font-size: 11px; color: var(--muted); }
+#threshold-slider { flex: 1; accent-color: var(--accent); }
+#threshold-val { font-size: 13px; color: var(--accent); min-width: 40px; }
+#threshold-count { font-size: 11px; color: var(--muted); }
+#btn-rerun {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: bold;
+  border-radius: 3px;
+}
+#btn-rerun:hover { opacity: 0.85; }
+
+#frames-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+.frame-card {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  transition: border-color 0.15s, opacity 0.15s;
+}
+.frame-card.excluded { opacity: 0.3; }
+.frame-card.included { border-color: var(--green); }
+.frame-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #111; }
+.frame-card .frame-info {
+  padding: 4px 6px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+}
+.frame-score { color: var(--accent); }
+.frame-name  { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+
+/* ── Results panel ── */
+#results-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+#results-panel.active { display: flex; }
+
+.result-files { display: flex; gap: 10px; flex-wrap: wrap; }
+.result-file {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.result-file:hover, .result-file.playing { border-color: var(--accent); }
+.result-file .rf-name { font-size: 12px; color: var(--text); }
+.result-file .rf-size { font-size: 11px; color: var(--muted); }
+
+#video-container { background: #000; border-radius: 4px; overflow: hidden; }
+#video-container video { width: 100%; max-height: 60vh; display: block; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>autoframe</h1>
+      <button id="btn-new" onclick="showForm()">+ New</button>
+    </div>
+    <div id="job-list" id="job-list"></div>
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+
+    <!-- Welcome -->
+    <div id="welcome" class="view active">
+      <div class="wtext">
+        <h2>autoframe</h2>
+        <p>AI highlight reel pipeline</p>
+        <p style="margin-top:16px;font-size:11px;">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</p>
+      </div>
+    </div>
+
+    <!-- New Job Form -->
+    <div id="form-view" class="view">
+      <h2>NEW JOB</h2>
+
+      <div class="form-section">
+        <h3>Source</h3>
+        <div class="form-row">
+          <div class="form-field wide">
+            <label>Working directory</label>
+            <div class="dir-picker">
+              <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/04-Grecja/04.21">
+              <button class="btn-sm" onclick="openDirBrowser()">Browse</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Cam A subfolder (e.g. helmet)</label>
+            <input type="text" id="f-cam-a" placeholder="">
+          </div>
+          <div class="form-field">
+            <label>Cam B subfolder (e.g. mirror)</label>
+            <input type="text" id="f-cam-b" placeholder="">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Scene selection</h3>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Threshold (default: 0.148)</label>
+            <input type="number" id="f-threshold" placeholder="0.148" step="0.001" min="0.01" max="1">
+          </div>
+          <div class="form-field">
+            <label>Max scene sec (default: 10)</label>
+            <input type="number" id="f-max-scene" placeholder="10" min="1" max="120">
+          </div>
+          <div class="form-field">
+            <label>Max per file sec (default: 45)</label>
+            <input type="number" id="f-per-file" placeholder="45" min="5" max="300">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Intro / music</h3>
+        <div class="form-row">
+          <div class="form-field wide">
+            <label>Title (use \n for two lines)</label>
+            <input type="text" id="f-title" placeholder="auto (year + trip name)">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Music genre</label>
+            <input type="text" id="f-music-genre" placeholder="house / rock / any">
+          </div>
+          <div class="form-field">
+            <label>Music artist</label>
+            <input type="text" id="f-music-artist" placeholder="tobu,alan,...">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="checkbox-row">
+            <label class="form-check"><input type="checkbox" id="f-no-intro"> No intro/outro</label>
+            <label class="form-check"><input type="checkbox" id="f-no-music"> No music</label>
+          </div>
+        </div>
+      </div>
+
+      <button id="btn-start" onclick="startJob()">▶ Start pipeline</button>
+    </div>
+
+    <!-- Job view -->
+    <div id="job-view" class="view">
+      <div id="job-header">
+        <span class="job-status s-pending" id="jh-dot"></span>
+        <span class="job-path" id="jh-path"></span>
+        <span id="jh-elapsed" style="font-size:11px;color:var(--muted)"></span>
+        <button id="btn-kill" onclick="killJob()" style="display:none">■ Kill</button>
+      </div>
+
+      <div id="steps">
+        <span class="step" data-step="1">1 Sources</span>
+        <span class="step" data-step="2">2 Detection</span>
+        <span class="step" data-step="3">3 Split</span>
+        <span class="step" data-step="4">4 Frames</span>
+        <span class="step" data-step="5">5 CLIP</span>
+        <span class="step" data-step="6">6 Select+Encode</span>
+      </div>
+
+      <div id="job-tabs">
+        <div class="tab active" onclick="switchTab('log')">Log</div>
+        <div class="tab" onclick="switchTab('gallery')">Gallery</div>
+        <div class="tab" onclick="switchTab('results')">Results</div>
+      </div>
+
+      <div id="tab-content">
+        <div id="log-panel"></div>
+        <div id="gallery-panel">
+          <div id="threshold-bar">
+            <label>Threshold</label>
+            <input type="range" id="threshold-slider" min="0.10" max="0.25" step="0.001" value="0.148" oninput="onThresholdSlide()">
+            <span id="threshold-val">0.148</span>
+            <span id="threshold-count"></span>
+            <button id="btn-rerun" onclick="rerunWithThreshold()">▶ Re-run</button>
+          </div>
+          <div id="frames-grid"></div>
+        </div>
+        <div id="results-panel">
+          <div class="result-files" id="result-files"></div>
+          <div id="video-container" style="display:none">
+            <video id="video-player" controls></video>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+
+</div><!-- /app -->
+
+<!-- Directory browser modal -->
+<div id="dir-modal">
+  <div id="dir-modal-box">
+    <div id="dir-modal-path">
+      <span id="dir-modal-path-text">/</span>
+      <button class="btn-sm" onclick="dirUp()">↑ Up</button>
+    </div>
+    <div id="dir-modal-list"></div>
+    <div id="dir-modal-footer">
+      <button class="btn-sm" onclick="closeDirBrowser()">Cancel</button>
+      <button id="btn-select-dir" class="btn-sm" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const api = {
+  async get(url)     { const r = await fetch(url);          return r.ok ? r.json() : null; },
+  async post(url, b) { const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b)}); return r.json(); },
+  async del(url)     { const r = await fetch(url, {method:'DELETE'}); return r.json(); },
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentJobId = null;
+let ws = null;
+let elapsedTimer = null;
+let currentBrowsePath = null;
+let framesData = [];
+
+// ── Views ─────────────────────────────────────────────────────────────────────
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function showForm()    { showView('form-view'); }
+function showWelcome() { showView('welcome'); }
+
+// ── Sidebar job list ──────────────────────────────────────────────────────────
+async function refreshJobList() {
+  const jobs = await api.get('/api/jobs') || [];
+  const list = document.getElementById('job-list');
+  list.innerHTML = '';
+  for (const j of jobs) {
+    const dir = j.work_dir.split('/').slice(-2).join('/');
+    const age = j.ended_at
+      ? formatDur((j.ended_at - j.started_at))
+      : formatDur((Date.now()/1000 - j.started_at));
+    const div = document.createElement('div');
+    div.className = 'job-item' + (j.id === currentJobId ? ' active' : '');
+    div.innerHTML = `
+      <div class="job-dir"><span class="job-status s-${j.status}"></span>${dir}</div>
+      <div class="job-meta">${j.status} · ${age}</div>`;
+    div.onclick = () => openJob(j.id);
+    list.appendChild(div);
+  }
+}
+setInterval(refreshJobList, 3000);
+refreshJobList();
+
+// ── Start job ─────────────────────────────────────────────────────────────────
+async function startJob() {
+  const workDir = document.getElementById('f-workdir').value.trim();
+  if (!workDir) { alert('Set working directory'); return; }
+
+  const params = { work_dir: workDir };
+  const threshold = document.getElementById('f-threshold').value;
+  if (threshold) params.threshold = parseFloat(threshold);
+  const maxScene = document.getElementById('f-max-scene').value;
+  if (maxScene) params.max_scene = parseFloat(maxScene);
+  const perFile = document.getElementById('f-per-file').value;
+  if (perFile) params.per_file = parseFloat(perFile);
+  const title = document.getElementById('f-title').value.trim();
+  if (title) params.title = title;
+  const camA = document.getElementById('f-cam-a').value.trim();
+  if (camA) params.cam_a = camA;
+  const camB = document.getElementById('f-cam-b').value.trim();
+  if (camB) params.cam_b = camB;
+  const genre = document.getElementById('f-music-genre').value.trim();
+  if (genre) params.music_genre = genre;
+  const artist = document.getElementById('f-music-artist').value.trim();
+  if (artist) params.music_artist = artist;
+  params.no_intro = document.getElementById('f-no-intro').checked;
+  params.no_music = document.getElementById('f-no-music').checked;
+
+  const resp = await api.post('/api/jobs', params);
+  if (resp.id) {
+    refreshJobList();
+    openJob(resp.id);
+  } else {
+    alert(JSON.stringify(resp));
+  }
+}
+
+// ── Open job ──────────────────────────────────────────────────────────────────
+async function openJob(jobId) {
+  if (ws) { ws.close(); ws = null; }
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+
+  currentJobId = jobId;
+  document.querySelectorAll('.job-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.job-item').forEach(el => {
+    if (el.querySelector('.job-dir')?.textContent?.includes(jobId)) el.classList.add('active');
+  });
+
+  showView('job-view');
+  document.getElementById('log-panel').innerHTML = '';
+  document.getElementById('jh-path').textContent = '...';
+  document.getElementById('jh-dot').className = 'job-status s-pending';
+  document.getElementById('btn-kill').style.display = 'none';
+  resetSteps();
+  framesData = [];
+  document.getElementById('frames-grid').innerHTML = '';
+  document.getElementById('result-files').innerHTML = '';
+  switchTab('log');
+
+  const job = await api.get(`/api/jobs/${jobId}`);
+  if (!job) return;
+
+  document.getElementById('jh-path').textContent = job.params.work_dir;
+  updateStatusDot(job.status);
+  if (job.status === 'running') {
+    document.getElementById('btn-kill').style.display = '';
+    startElapsedTimer(job.started_at);
+  } else if (job.ended_at) {
+    document.getElementById('jh-elapsed').textContent = formatDur(job.ended_at - job.started_at);
+  }
+
+  // Render buffered log
+  for (const line of job.log) appendLog(line);
+
+  // Connect WS
+  connectWS(jobId, job.started_at);
+
+  // Load frames if available
+  loadFrames(jobId);
+
+  // Load results if done
+  if (job.status === 'done') loadResults(jobId);
+
+  refreshJobList();
+}
+
+function connectWS(jobId, startedAt) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'log') {
+      appendLog(msg.line);
+    } else if (msg.type === 'status') {
+      updateStatusDot(msg.status);
+      if (msg.status === 'running') {
+        document.getElementById('btn-kill').style.display = '';
+        startElapsedTimer(startedAt);
+      } else {
+        document.getElementById('btn-kill').style.display = 'none';
+        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+        if (msg.status === 'done') {
+          loadFrames(jobId);
+          loadResults(jobId);
+        }
+        refreshJobList();
+      }
+    }
+  };
+  ws.onclose = () => {};
+}
+
+// ── Log rendering ─────────────────────────────────────────────────────────────
+function appendLog(line) {
+  const panel = document.getElementById('log-panel');
+  const div = document.createElement('div');
+  div.className = 'log-line';
+
+  const stepM = line.match(/^\[(\d+)\/6\]/);
+  if (stepM) {
+    div.classList.add('log-step');
+    activateStep(parseInt(stepM[1]));
+  } else if (/✓|cached|done/i.test(line)) {
+    div.classList.add('log-ok');
+  } else if (/error|failed|warning/i.test(line)) {
+    div.classList.add('log-err');
+  } else if (/^\s+\[.*\]/.test(line)) {
+    div.classList.add('log-info');
+  }
+
+  div.textContent = line;
+  panel.appendChild(div);
+
+  // Auto-scroll if near bottom
+  const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
+  if (atBottom) panel.scrollTop = panel.scrollHeight;
+}
+
+// ── Steps indicator ───────────────────────────────────────────────────────────
+function resetSteps() {
+  document.querySelectorAll('.step').forEach(s => s.className = 'step');
+}
+function activateStep(n) {
+  document.querySelectorAll('.step').forEach(s => {
+    const sn = parseInt(s.dataset.step);
+    if (sn < n) s.className = 'step done';
+    else if (sn === n) s.className = 'step active';
+    else s.className = 'step';
+  });
+}
+
+// ── Status dot ────────────────────────────────────────────────────────────────
+function updateStatusDot(status) {
+  const dot = document.getElementById('jh-dot');
+  dot.className = `job-status s-${status}`;
+  if (status !== 'running') {
+    document.querySelectorAll('.step').forEach(s => {
+      if (status === 'done') s.className = 'step done';
+    });
+  }
+}
+
+// ── Elapsed timer ─────────────────────────────────────────────────────────────
+function startElapsedTimer(startedAt) {
+  if (elapsedTimer) clearInterval(elapsedTimer);
+  elapsedTimer = setInterval(() => {
+    const el = document.getElementById('jh-elapsed');
+    if (el) el.textContent = formatDur(Date.now()/1000 - startedAt);
+  }, 1000);
+}
+
+// ── Kill job ──────────────────────────────────────────────────────────────────
+async function killJob() {
+  if (!currentJobId) return;
+  if (!confirm('Kill running job?')) return;
+  await api.del(`/api/jobs/${currentJobId}`);
+  document.getElementById('btn-kill').style.display = 'none';
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const names = ['log', 'gallery', 'results'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.getElementById('log-panel').style.display = name === 'log' ? 'block' : 'none';
+  document.getElementById('gallery-panel').classList.toggle('active', name === 'gallery');
+  document.getElementById('results-panel').classList.toggle('active', name === 'results');
+
+  if (name === 'gallery' && currentJobId) loadFrames(currentJobId);
+  if (name === 'results' && currentJobId) loadResults(currentJobId);
+}
+
+// ── Gallery / threshold ───────────────────────────────────────────────────────
+async function loadFrames(jobId) {
+  const data = await api.get(`/api/jobs/${jobId}/frames`);
+  if (!data || !data.length) return;
+  framesData = data;
+
+  const maxScore = Math.max(...data.map(f => f.score));
+  const minScore = Math.min(...data.map(f => f.score));
+  const slider = document.getElementById('threshold-slider');
+  slider.min = (minScore - 0.005).toFixed(3);
+  slider.max = (maxScore + 0.005).toFixed(3);
+
+  // Default to current threshold from job params
+  const job = await api.get(`/api/jobs/${jobId}`);
+  if (job?.params?.threshold) {
+    slider.value = job.params.threshold;
+    document.getElementById('threshold-val').textContent = parseFloat(job.params.threshold).toFixed(3);
+  }
+
+  renderGallery();
+}
+
+function renderGallery() {
+  const threshold = parseFloat(document.getElementById('threshold-slider').value);
+  const grid = document.getElementById('frames-grid');
+  grid.innerHTML = '';
+
+  const included = framesData.filter(f => f.score >= threshold);
+  document.getElementById('threshold-count').textContent =
+    `${included.length} / ${framesData.length} scenes`;
+
+  // Sort by score desc
+  const sorted = [...framesData].sort((a, b) => b.score - a.score);
+  for (const f of sorted) {
+    const inc = f.score >= threshold;
+    const card = document.createElement('div');
+    card.className = 'frame-card ' + (inc ? 'included' : 'excluded');
+    const name = f.scene.split('/').pop().replace(/-scene-\d+$/, '').slice(-20);
+    card.innerHTML = `
+      <img src="${f.frame_url || ''}" loading="lazy" onerror="this.style.display='none'">
+      <div class="frame-info">
+        <span class="frame-score">${f.score.toFixed(3)}</span>
+        <span class="frame-name">${name}</span>
+      </div>`;
+    grid.appendChild(card);
+  }
+}
+
+function onThresholdSlide() {
+  const val = parseFloat(document.getElementById('threshold-slider').value).toFixed(3);
+  document.getElementById('threshold-val').textContent = val;
+  renderGallery();
+}
+
+async function rerunWithThreshold() {
+  if (!currentJobId) return;
+  const job = await api.get(`/api/jobs/${currentJobId}`);
+  if (!job) return;
+
+  const threshold = parseFloat(document.getElementById('threshold-slider').value);
+  const params = { ...job.params, threshold };
+
+  const resp = await api.post('/api/jobs', params);
+  if (resp.id) {
+    refreshJobList();
+    openJob(resp.id);
+  }
+}
+
+// ── Results ───────────────────────────────────────────────────────────────────
+async function loadResults(jobId) {
+  const data = await api.get(`/api/jobs/${jobId}/result`);
+  if (!data) return;
+
+  const container = document.getElementById('result-files');
+  container.innerHTML = '';
+
+  const order = ['highlight_final_music.mp4', 'highlight_music.mp4', 'highlight_final.mp4', 'highlight.mp4'];
+  for (const name of order) {
+    if (!data[name]) continue;
+    const div = document.createElement('div');
+    div.className = 'result-file';
+    div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${data[name].size_mb} MB</div>`;
+    div.onclick = () => playVideo(data[name].url, div);
+    container.appendChild(div);
+  }
+
+  // Auto-play best file
+  const best = order.find(n => data[n]);
+  if (best) playVideo(data[best].url, container.querySelector('.result-file'));
+}
+
+function playVideo(url, card) {
+  document.querySelectorAll('.result-file').forEach(c => c.classList.remove('playing'));
+  if (card) card.classList.add('playing');
+  const container = document.getElementById('video-container');
+  const video = document.getElementById('video-player');
+  container.style.display = 'block';
+  video.src = url;
+  video.play().catch(() => {});
+}
+
+// ── Directory browser ─────────────────────────────────────────────────────────
+async function openDirBrowser() {
+  const current = document.getElementById('f-workdir').value.trim();
+  document.getElementById('dir-modal').classList.add('open');
+  await browseTo(current || null);
+}
+
+function closeDirBrowser() {
+  document.getElementById('dir-modal').classList.remove('open');
+}
+
+async function browseTo(path) {
+  const url = path ? `/api/browse?path=${encodeURIComponent(path)}` : '/api/browse';
+  const data = await api.get(url);
+  if (!data) return;
+
+  currentBrowsePath = data.path;
+  document.getElementById('dir-modal-path-text').textContent = data.path;
+
+  const list = document.getElementById('dir-modal-list');
+  list.innerHTML = '';
+
+  if (data.parent) {
+    const div = document.createElement('div');
+    div.className = 'dir-entry';
+    div.innerHTML = `<span class="icon">↑</span><span class="name">..</span>`;
+    div.onclick = () => browseTo(data.parent);
+    list.appendChild(div);
+  }
+
+  for (const e of data.entries) {
+    if (!e.is_dir) continue;
+    const div = document.createElement('div');
+    div.className = 'dir-entry';
+    div.innerHTML = `
+      <span class="icon">▶</span>
+      <span class="name">${e.name}</span>
+      ${e.has_mp4 ? '<span class="badge">MP4</span>' : ''}
+      ${e.has_autoframe ? '<span class="badge" style="color:var(--accent)">cached</span>' : ''}`;
+    div.ondblclick = () => browseTo(e.path);
+    div.onclick = () => { currentBrowsePath = e.path; document.getElementById('dir-modal-path-text').textContent = e.path; };
+    list.appendChild(div);
+  }
+}
+
+async function dirUp() {
+  const data = await api.get(`/api/browse?path=${encodeURIComponent(currentBrowsePath)}`);
+  if (data?.parent) await browseTo(data.parent);
+}
+
+function selectCurrentDir() {
+  document.getElementById('f-workdir').value = currentBrowsePath;
+  closeDirBrowser();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatDur(sec) {
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m${s % 60}s` : `${s}s`;
+}
+</script>
+</body>
+</html>
