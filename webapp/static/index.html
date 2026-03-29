@@ -6,792 +6,629 @@
 <title>autoframe</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 :root {
-  --bg: #0e0e0e;
-  --bg2: #161616;
-  --bg3: #1e1e1e;
-  --border: #2a2a2a;
-  --text: #d4d4d4;
-  --muted: #6b6b6b;
-  --accent: #e07b39;
-  --green: #4ec94e;
-  --red: #e05555;
-  --yellow: #d4a017;
-  --blue: #4e9de0;
-  --font: 'Consolas', 'Menlo', monospace;
+  --bg:#0e0e0e; --bg2:#161616; --bg3:#1e1e1e; --border:#2a2a2a;
+  --text:#d4d4d4; --muted:#6b6b6b; --accent:#e07b39;
+  --green:#4ec94e; --red:#e05555; --yellow:#d4a017; --blue:#4e9de0;
+  --font:'Consolas','Menlo',monospace;
 }
-
-html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; }
-
-a { color: var(--accent); text-decoration: none; }
+html,body { height:100%; background:var(--bg); color:var(--text); font-family:var(--font); font-size:13px; }
 
 /* ── Layout ── */
-#app { display: flex; height: 100vh; }
+#app { display:flex; height:100vh; }
+#sidebar { width:230px; min-width:230px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+#sidebar-header { padding:12px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; }
+#sidebar-header h1 { flex:1; font-size:14px; color:var(--accent); letter-spacing:1px; }
+.icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:13px; }
+.icon-btn:hover { border-color:var(--accent); color:var(--accent); }
+#btn-new { background:var(--accent); color:#000; border:none; padding:4px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
+#btn-new:hover { opacity:.85; }
+#job-list { flex:1; overflow-y:auto; }
+.job-item { padding:9px 10px; border-bottom:1px solid var(--border); cursor:pointer; }
+.job-item:hover { background:var(--bg3); }
+.job-item.active { background:var(--bg3); border-left:2px solid var(--accent); }
+.ji-dir { font-size:11px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ji-meta { font-size:10px; color:var(--muted); margin-top:2px; }
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; }
+.s-running { background:var(--yellow); animation:pulse 1s infinite; }
+.s-done    { background:var(--green); }
+.s-failed  { background:var(--red); }
+.s-killed  { background:var(--muted); }
+.s-queued  { background:var(--blue); }
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
-#sidebar {
-  width: 240px;
-  min-width: 240px;
-  background: var(--bg2);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-#sidebar-header {
-  padding: 16px 12px 12px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-#sidebar-header h1 { font-size: 15px; color: var(--accent); letter-spacing: 1px; }
-
-#btn-new {
-  background: var(--accent);
-  color: #000;
-  border: none;
-  padding: 4px 10px;
-  border-radius: 3px;
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: bold;
-}
-#btn-new:hover { opacity: 0.85; }
-
-#job-list { flex: 1; overflow-y: auto; }
-
-.job-item {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background 0.1s;
-}
-.job-item:hover { background: var(--bg3); }
-.job-item.active { background: var(--bg3); border-left: 2px solid var(--accent); }
-.job-item .job-dir { font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.job-item .job-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-.job-status { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
-.s-running { background: var(--yellow); animation: pulse 1s infinite; }
-.s-done    { background: var(--green); }
-.s-failed  { background: var(--red); }
-.s-killed  { background: var(--muted); }
-.s-pending { background: var(--blue); }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
-#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-/* ── Views ── */
-.view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
-.view.active { display: flex; }
+#main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.view { display:none; flex:1; overflow:hidden; flex-direction:column; }
+.view.active { display:flex; }
 
 /* ── Welcome ── */
-#welcome { align-items: center; justify-content: center; }
-#welcome .wtext { text-align: center; color: var(--muted); }
-#welcome .wtext h2 { font-size: 18px; color: var(--accent); margin-bottom: 8px; }
+#welcome { align-items:center; justify-content:center; }
+#welcome .wt { text-align:center; color:var(--muted); }
+#welcome .wt h2 { font-size:18px; color:var(--accent); margin-bottom:8px; }
 
 /* ── Form ── */
-#form-view { padding: 24px; overflow-y: auto; }
-#form-view h2 { font-size: 14px; color: var(--accent); margin-bottom: 20px; letter-spacing: 1px; }
+#form-view { padding:20px; overflow-y:auto; }
+#form-view h2 { font-size:13px; color:var(--accent); margin-bottom:16px; letter-spacing:1px; }
+.fsec { margin-bottom:20px; }
+.fsec h3 { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; }
+.frow { display:flex; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+.ff { display:flex; flex-direction:column; gap:3px; min-width:110px; }
+.ff.wide { flex:1; }
+.ff label { font-size:10px; color:var(--muted); }
+.ff input, .ff select, .ff textarea {
+  background:var(--bg3); border:1px solid var(--border); color:var(--text);
+  padding:5px 7px; font-family:var(--font); font-size:12px; border-radius:3px; outline:none;
+}
+.ff input:focus,.ff select:focus,.ff textarea:focus { border-color:var(--accent); }
+.ff textarea { resize:vertical; min-height:70px; }
+.dir-pick { display:flex; gap:5px; }
+.dir-pick input { flex:1; }
+.btn-sm { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:5px 9px; cursor:pointer; font-family:var(--font); font-size:12px; border-radius:3px; white-space:nowrap; }
+.btn-sm:hover { border-color:var(--accent); color:var(--accent); }
+.chk-row { display:flex; gap:14px; flex-wrap:wrap; }
+.chk { display:flex; align-items:center; gap:5px; cursor:pointer; font-size:12px; }
+.chk input { width:13px; height:13px; cursor:pointer; accent-color:var(--accent); }
+#btn-start { background:var(--accent); color:#000; border:none; padding:9px 24px; cursor:pointer; font-family:var(--font); font-size:13px; font-weight:bold; border-radius:3px; margin-top:6px; }
+#btn-start:hover { opacity:.85; }
+#about-output { margin-top:6px; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:3px; font-size:11px; color:var(--green); white-space:pre-wrap; display:none; max-height:120px; overflow-y:auto; }
 
-.form-section { margin-bottom: 24px; }
-.form-section h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+/* ── Dir browser modal ── */
+#dir-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#dir-modal.open { display:flex; }
+#dir-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:500px; max-height:65vh; display:flex; flex-direction:column; }
+#dir-path { padding:9px 11px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); display:flex; gap:7px; align-items:center; }
+#dir-path span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#dir-list { flex:1; overflow-y:auto; }
+.de { padding:6px 11px; cursor:pointer; display:flex; align-items:center; gap:7px; border-bottom:1px solid var(--border); }
+.de:hover { background:var(--bg3); }
+.de .icon { color:var(--accent); width:13px; font-size:11px; }
+.de .name { flex:1; font-size:12px; }
+.de .badge { font-size:10px; color:var(--green); }
+#dir-footer { padding:9px 11px; border-top:1px solid var(--border); display:flex; gap:7px; justify-content:flex-end; }
 
-.form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.form-field { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
-.form-field.wide { flex: 1; }
-.form-field label { font-size: 11px; color: var(--muted); }
-.form-field input, .form-field select {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 6px 8px;
-  font-family: var(--font);
-  font-size: 12px;
-  border-radius: 3px;
-  outline: none;
-}
-.form-field input:focus, .form-field select:focus { border-color: var(--accent); }
-
-.dir-picker { display: flex; gap: 6px; }
-.dir-picker input { flex: 1; }
-.btn-sm {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 6px 10px;
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 12px;
-  border-radius: 3px;
-  white-space: nowrap;
-}
-.btn-sm:hover { border-color: var(--accent); color: var(--accent); }
-
-.checkbox-row { display: flex; gap: 16px; }
-.form-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.form-check input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent); }
-
-#btn-start {
-  background: var(--accent);
-  color: #000;
-  border: none;
-  padding: 10px 28px;
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 13px;
-  font-weight: bold;
-  border-radius: 3px;
-  margin-top: 8px;
-}
-#btn-start:hover { opacity: 0.85; }
-
-/* ── Directory browser modal ── */
-#dir-modal {
-  display: none;
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.7);
-  z-index: 100;
-  align-items: center;
-  justify-content: center;
-}
-#dir-modal.open { display: flex; }
-#dir-modal-box {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  width: 520px;
-  max-height: 70vh;
-  display: flex;
-  flex-direction: column;
-}
-#dir-modal-path {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--muted);
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-#dir-modal-path span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#dir-modal-list { flex: 1; overflow-y: auto; }
-.dir-entry {
-  padding: 7px 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid var(--border);
-}
-.dir-entry:hover { background: var(--bg3); }
-.dir-entry .icon { color: var(--accent); width: 14px; }
-.dir-entry .name { flex: 1; }
-.dir-entry .badge { font-size: 10px; color: var(--green); }
-#dir-modal-footer {
-  padding: 10px 12px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
+/* ── Settings modal ── */
+#settings-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#settings-modal.open { display:flex; }
+#settings-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:360px; }
+.modal-header { padding:12px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-size:13px; color:var(--accent); letter-spacing:1px; }
+.modal-body { padding:16px 14px; display:flex; flex-direction:column; gap:12px; }
+.modal-footer { padding:10px 14px; border-top:1px solid var(--border); display:flex; gap:7px; justify-content:flex-end; }
+.btn-primary { background:var(--accent); color:#000; border:none; padding:6px 16px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; border-radius:3px; }
+.btn-primary:hover { opacity:.85; }
+#settings-note { font-size:10px; color:var(--muted); margin-top:-6px; }
 
 /* ── Job view ── */
-#job-view { display: flex; flex-direction: column; overflow: hidden; }
+#job-view { display:flex; flex-direction:column; overflow:hidden; }
+#job-header { padding:10px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; background:var(--bg2); flex-shrink:0; }
+#jh-path { flex:1; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#jh-elapsed { font-size:11px; color:var(--muted); }
+#btn-kill { background:transparent; border:1px solid var(--red); color:var(--red); padding:3px 9px; cursor:pointer; font-family:var(--font); font-size:11px; border-radius:3px; display:none; }
+#btn-kill:hover { background:var(--red); color:#000; }
+#steps { padding:8px 14px; border-bottom:1px solid var(--border); display:flex; gap:5px; flex-wrap:wrap; flex-shrink:0; background:var(--bg2); }
+.step { padding:2px 9px; border-radius:10px; font-size:10px; background:var(--bg3); border:1px solid var(--border); color:var(--muted); transition:all .2s; }
+.step.active { border-color:var(--yellow); color:var(--yellow); }
+.step.done   { border-color:var(--green); color:var(--green); }
+#job-tabs { padding:0 14px; border-bottom:1px solid var(--border); display:flex; gap:0; flex-shrink:0; align-items:center; }
+.tab { padding:7px 13px; cursor:pointer; font-size:12px; color:var(--muted); border-bottom:2px solid transparent; }
+.tab:hover { color:var(--text); }
+.tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+#btn-rerun-tab { margin-left:auto; margin-right:0; background:var(--accent); color:#000; border:none; padding:4px 13px; cursor:pointer; font-family:var(--font); font-size:11px; font-weight:bold; border-radius:3px; }
+#btn-rerun-tab:hover { opacity:.85; }
+#tab-content { flex:1; overflow:hidden; display:flex; }
 
-#job-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--bg2);
-  flex-shrink: 0;
-}
-#job-header .job-path { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#btn-kill {
-  background: transparent;
-  border: 1px solid var(--red);
-  color: var(--red);
-  padding: 4px 10px;
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 11px;
-  border-radius: 3px;
-}
-#btn-kill:hover { background: var(--red); color: #000; }
+/* ── Log tab (split) ── */
+#log-split { flex:1; display:flex; overflow:hidden; }
+#log-panel { flex:1; overflow-y:auto; padding:10px 14px; font-size:12px; line-height:1.6; }
+.log-line { white-space:pre-wrap; word-break:break-all; }
+.log-step { color:var(--accent); font-weight:bold; }
+.log-ok   { color:var(--green); }
+.log-err  { color:var(--red); }
+.log-info { color:var(--blue); }
 
-#steps {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  flex-shrink: 0;
-  background: var(--bg2);
-}
-.step {
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-size: 11px;
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  transition: all 0.2s;
-}
-.step.active { border-color: var(--yellow); color: var(--yellow); }
-.step.done   { border-color: var(--green);  color: var(--green); }
+/* ── Stats panel ── */
+#stats-panel { width:230px; min-width:230px; border-left:1px solid var(--border); padding:14px 12px; display:flex; flex-direction:column; gap:12px; background:var(--bg2); overflow-y:auto; flex-shrink:0; }
+.stat-label { font-size:10px; color:var(--muted); margin-bottom:3px; letter-spacing:.5px; text-transform:uppercase; }
+.stat-bar-wrap { background:var(--bg3); border-radius:2px; height:5px; overflow:hidden; margin-bottom:3px; }
+.stat-bar { height:5px; border-radius:2px; transition:width .5s ease; }
+.stat-bar.cpu  { background:var(--accent); }
+.stat-bar.ram  { background:var(--blue); }
+.stat-bar.gpu  { background:var(--green); }
+.stat-bar.vram { background:#9b59b6; }
+.stat-val { font-size:11px; color:var(--text); }
+.stat-val span { color:var(--muted); }
+.stat-divider { border:none; border-top:1px solid var(--border); }
+.queue-row { display:flex; justify-content:space-between; font-size:11px; }
+.queue-row .ql { color:var(--muted); }
+.queue-row .qv { }
+.qv.running { color:var(--yellow); }
+.qv.queued  { color:var(--blue); }
+#no-gpu { font-size:10px; color:var(--muted); font-style:italic; }
 
-#job-tabs {
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  gap: 0;
-  flex-shrink: 0;
-}
-.tab {
-  padding: 8px 14px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--muted);
-  border-bottom: 2px solid transparent;
-}
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+/* ── Gallery tab ── */
+#gallery-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:10px; }
+#gallery-panel.active { display:flex; }
+#threshold-bar { display:flex; align-items:center; gap:10px; padding:9px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; flex-shrink:0; }
+#threshold-bar label { font-size:11px; color:var(--muted); }
+#threshold-slider { flex:1; accent-color:var(--accent); }
+#threshold-val { font-size:13px; color:var(--accent); min-width:38px; }
+#threshold-count { font-size:11px; color:var(--muted); }
+#btn-rerun-gallery { background:var(--accent); color:#000; border:none; padding:5px 12px; cursor:pointer; font-family:var(--font); font-size:11px; font-weight:bold; border-radius:3px; }
+#btn-rerun-gallery:hover { opacity:.85; }
+#frames-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(175px,1fr)); gap:7px; }
+.fc { border:1px solid var(--border); border-radius:3px; overflow:hidden; transition:border-color .15s, opacity .15s; }
+.fc.excluded { opacity:.25; }
+.fc.included { border-color:var(--green); }
+.fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#111; }
+.fc-info { padding:3px 6px; display:flex; justify-content:space-between; font-size:10px; }
+.fc-score { color:var(--accent); }
+.fc-name  { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }
 
-#tab-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-
-/* ── Log panel ── */
-#log-panel {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 16px;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.log-line { white-space: pre-wrap; word-break: break-all; }
-.log-step  { color: var(--accent); font-weight: bold; }
-.log-ok    { color: var(--green); }
-.log-err   { color: var(--red); }
-.log-info  { color: var(--blue); }
-
-/* ── Gallery panel ── */
-#gallery-panel {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: none;
-  flex-direction: column;
-  gap: 12px;
-}
-#gallery-panel.active { display: flex; }
-
-#threshold-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  flex-shrink: 0;
-}
-#threshold-bar label { font-size: 11px; color: var(--muted); }
-#threshold-slider { flex: 1; accent-color: var(--accent); }
-#threshold-val { font-size: 13px; color: var(--accent); min-width: 40px; }
-#threshold-count { font-size: 11px; color: var(--muted); }
-#btn-rerun {
-  background: var(--accent);
-  color: #000;
-  border: none;
-  padding: 6px 14px;
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: bold;
-  border-radius: 3px;
-}
-#btn-rerun:hover { opacity: 0.85; }
-
-#frames-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-}
-.frame-card {
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-  transition: border-color 0.15s, opacity 0.15s;
-}
-.frame-card.excluded { opacity: 0.3; }
-.frame-card.included { border-color: var(--green); }
-.frame-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #111; }
-.frame-card .frame-info {
-  padding: 4px 6px;
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-}
-.frame-score { color: var(--accent); }
-.frame-name  { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
-
-/* ── Results panel ── */
-#results-panel {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: none;
-  flex-direction: column;
-  gap: 16px;
-}
-#results-panel.active { display: flex; }
-
-.result-files { display: flex; gap: 10px; flex-wrap: wrap; }
-.result-file {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px 14px;
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-.result-file:hover, .result-file.playing { border-color: var(--accent); }
-.result-file .rf-name { font-size: 12px; color: var(--text); }
-.result-file .rf-size { font-size: 11px; color: var(--muted); }
-
-#video-container { background: #000; border-radius: 4px; overflow: hidden; }
-#video-container video { width: 100%; max-height: 60vh; display: block; }
+/* ── Results tab ── */
+#results-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:14px; }
+#results-panel.active { display:flex; }
+.rf-files { display:flex; gap:9px; flex-wrap:wrap; }
+.rf { background:var(--bg2); border:1px solid var(--border); border-radius:4px; padding:9px 13px; cursor:pointer; }
+.rf:hover, .rf.playing { border-color:var(--accent); }
+.rf-name { font-size:12px; }
+.rf-size { font-size:11px; color:var(--muted); margin-top:2px; }
+#video-wrap { background:#000; border-radius:4px; overflow:hidden; display:none; }
+#video-wrap video { width:100%; max-height:58vh; display:block; }
 </style>
 </head>
 <body>
 <div id="app">
 
-  <!-- Sidebar -->
-  <div id="sidebar">
-    <div id="sidebar-header">
-      <h1>autoframe</h1>
-      <button id="btn-new" onclick="showForm()">+ New</button>
+<!-- Sidebar -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>autoframe</h1>
+    <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+    <button id="btn-new" onclick="showForm()">+ New</button>
+  </div>
+  <div id="job-list"></div>
+</div>
+
+<!-- Main -->
+<div id="main">
+
+  <div id="welcome" class="view active">
+    <div class="wt"><h2>autoframe</h2><p>AI highlight reel pipeline</p>
+      <p style="margin-top:14px;font-size:11px;">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</p>
     </div>
-    <div id="job-list" id="job-list"></div>
   </div>
 
-  <!-- Main -->
-  <div id="main">
+  <!-- Form -->
+  <div id="form-view" class="view">
+    <h2>NEW JOB</h2>
 
-    <!-- Welcome -->
-    <div id="welcome" class="view active">
-      <div class="wtext">
-        <h2>autoframe</h2>
-        <p>AI highlight reel pipeline</p>
-        <p style="margin-top:16px;font-size:11px;">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</p>
+    <div class="fsec">
+      <h3>Source</h3>
+      <div class="frow">
+        <div class="ff wide">
+          <label>Working directory</label>
+          <div class="dir-pick">
+            <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/...">
+            <button class="btn-sm" onclick="openDirBrowser()">Browse</button>
+          </div>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="ff"><label>Cam A subfolder</label><input type="text" id="f-cam-a" placeholder="helmet"></div>
+        <div class="ff"><label>Cam B subfolder</label><input type="text" id="f-cam-b" placeholder="mirror"></div>
       </div>
     </div>
 
-    <!-- New Job Form -->
-    <div id="form-view" class="view">
-      <h2>NEW JOB</h2>
+    <div class="fsec">
+      <h3>Scene selection</h3>
+      <div class="frow">
+        <div class="ff"><label>Threshold (default: 0.148)</label><input type="number" id="f-threshold" placeholder="0.148" step="0.001" min="0.01" max="1"></div>
+        <div class="ff"><label>Max scene sec</label><input type="number" id="f-max-scene" placeholder="10" min="1" max="120"></div>
+        <div class="ff"><label>Max per file sec</label><input type="number" id="f-per-file" placeholder="45" min="5" max="300"></div>
+      </div>
+    </div>
 
-      <div class="form-section">
-        <h3>Source</h3>
-        <div class="form-row">
-          <div class="form-field wide">
-            <label>Working directory</label>
-            <div class="dir-picker">
-              <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/04-Grecja/04.21">
-              <button class="btn-sm" onclick="openDirBrowser()">Browse</button>
+    <div class="fsec">
+      <h3>Intro / music</h3>
+      <div class="frow">
+        <div class="ff wide"><label>Title (use \n for two lines)</label><input type="text" id="f-title" placeholder="auto"></div>
+      </div>
+      <div class="frow">
+        <div class="ff"><label>Music genre</label><input type="text" id="f-music-genre" placeholder="house / rock"></div>
+        <div class="ff"><label>Music artist</label><input type="text" id="f-music-artist" placeholder="tobu,alan,..."></div>
+      </div>
+      <div class="frow">
+        <div class="chk-row">
+          <label class="chk"><input type="checkbox" id="f-no-intro"> No intro/outro</label>
+          <label class="chk"><input type="checkbox" id="f-no-music"> No music</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="fsec">
+      <h3>About this ride <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(optional — generates CLIP prompts via Claude)</span></h3>
+      <div class="frow">
+        <div class="ff wide">
+          <label>Describe today's ride, location, conditions...</label>
+          <textarea id="f-about" placeholder="Rode the Transfăgărășan in Romania, sunny, dry road, amazing curves through the mountains..."></textarea>
+        </div>
+      </div>
+      <div class="frow">
+        <button class="btn-sm" onclick="generateAbout()">✦ Generate CLIP prompts</button>
+        <span id="about-status" style="font-size:11px;color:var(--muted);align-self:center"></span>
+      </div>
+      <div id="about-output"></div>
+    </div>
+
+    <button id="btn-start" onclick="startJob()">▶ Start pipeline</button>
+  </div>
+
+  <!-- Job view -->
+  <div id="job-view" class="view">
+    <div id="job-header">
+      <span class="dot s-pending" id="jh-dot"></span>
+      <span id="jh-path"></span>
+      <span id="jh-status" style="font-size:11px;color:var(--muted)"></span>
+      <span id="jh-elapsed" style="font-size:11px;color:var(--muted)"></span>
+      <button id="btn-kill" onclick="killJob()">■ Kill</button>
+    </div>
+    <div id="steps">
+      <span class="step" data-step="1">1 Sources</span>
+      <span class="step" data-step="2">2 Detection</span>
+      <span class="step" data-step="3">3 Split</span>
+      <span class="step" data-step="4">4 Frames</span>
+      <span class="step" data-step="5">5 CLIP</span>
+      <span class="step" data-step="6">6 Select+Encode</span>
+    </div>
+    <div id="job-tabs">
+      <div class="tab active" onclick="switchTab('log')">Log</div>
+      <div class="tab" onclick="switchTab('gallery')">Gallery</div>
+      <div class="tab" onclick="switchTab('results')">Results</div>
+      <button id="btn-rerun-tab" onclick="rerunCurrentJob()">▶ Rerun</button>
+    </div>
+    <div id="tab-content">
+
+      <!-- Log tab: split log + stats -->
+      <div id="log-split">
+        <div id="log-panel"></div>
+        <div id="stats-panel">
+          <div>
+            <div class="stat-label">CPU</div>
+            <div class="stat-bar-wrap"><div class="stat-bar cpu" id="bar-cpu" style="width:0%"></div></div>
+            <div class="stat-val" id="val-cpu">—</div>
+          </div>
+          <div>
+            <div class="stat-label">RAM</div>
+            <div class="stat-bar-wrap"><div class="stat-bar ram" id="bar-ram" style="width:0%"></div></div>
+            <div class="stat-val" id="val-ram">—</div>
+          </div>
+          <hr class="stat-divider">
+          <div id="gpu-section">
+            <div>
+              <div class="stat-label">GPU</div>
+              <div class="stat-bar-wrap"><div class="stat-bar gpu" id="bar-gpu" style="width:0%"></div></div>
+              <div class="stat-val" id="val-gpu">—</div>
+            </div>
+            <div>
+              <div class="stat-label">VRAM</div>
+              <div class="stat-bar-wrap"><div class="stat-bar vram" id="bar-vram" style="width:0%"></div></div>
+              <div class="stat-val" id="val-vram">—</div>
             </div>
           </div>
-        </div>
-        <div class="form-row">
-          <div class="form-field">
-            <label>Cam A subfolder (e.g. helmet)</label>
-            <input type="text" id="f-cam-a" placeholder="">
-          </div>
-          <div class="form-field">
-            <label>Cam B subfolder (e.g. mirror)</label>
-            <input type="text" id="f-cam-b" placeholder="">
+          <div id="no-gpu" style="display:none">GPU not detected</div>
+          <hr class="stat-divider">
+          <div>
+            <div class="queue-row"><span class="ql">Running</span><span class="qv running" id="q-running">0</span></div>
+            <div class="queue-row" style="margin-top:4px"><span class="ql">Queued</span><span class="qv queued" id="q-queued">0</span></div>
           </div>
         </div>
       </div>
 
-      <div class="form-section">
-        <h3>Scene selection</h3>
-        <div class="form-row">
-          <div class="form-field">
-            <label>Threshold (default: 0.148)</label>
-            <input type="number" id="f-threshold" placeholder="0.148" step="0.001" min="0.01" max="1">
-          </div>
-          <div class="form-field">
-            <label>Max scene sec (default: 10)</label>
-            <input type="number" id="f-max-scene" placeholder="10" min="1" max="120">
-          </div>
-          <div class="form-field">
-            <label>Max per file sec (default: 45)</label>
-            <input type="number" id="f-per-file" placeholder="45" min="5" max="300">
-          </div>
+      <!-- Gallery tab -->
+      <div id="gallery-panel">
+        <div id="threshold-bar">
+          <label>Threshold</label>
+          <input type="range" id="threshold-slider" min="0.10" max="0.25" step="0.001" value="0.148" oninput="onThresholdSlide()">
+          <span id="threshold-val">0.148</span>
+          <span id="threshold-count"></span>
+          <button id="btn-rerun-gallery" onclick="rerunWithThreshold()">▶ Re-run</button>
         </div>
+        <div id="frames-grid"></div>
       </div>
 
-      <div class="form-section">
-        <h3>Intro / music</h3>
-        <div class="form-row">
-          <div class="form-field wide">
-            <label>Title (use \n for two lines)</label>
-            <input type="text" id="f-title" placeholder="auto (year + trip name)">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-field">
-            <label>Music genre</label>
-            <input type="text" id="f-music-genre" placeholder="house / rock / any">
-          </div>
-          <div class="form-field">
-            <label>Music artist</label>
-            <input type="text" id="f-music-artist" placeholder="tobu,alan,...">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="checkbox-row">
-            <label class="form-check"><input type="checkbox" id="f-no-intro"> No intro/outro</label>
-            <label class="form-check"><input type="checkbox" id="f-no-music"> No music</label>
-          </div>
-        </div>
+      <!-- Results tab -->
+      <div id="results-panel">
+        <div class="rf-files" id="rf-files"></div>
+        <div id="video-wrap"><video id="video-player" controls></video></div>
       </div>
 
-      <button id="btn-start" onclick="startJob()">▶ Start pipeline</button>
     </div>
+  </div>
 
-    <!-- Job view -->
-    <div id="job-view" class="view">
-      <div id="job-header">
-        <span class="job-status s-pending" id="jh-dot"></span>
-        <span class="job-path" id="jh-path"></span>
-        <span id="jh-elapsed" style="font-size:11px;color:var(--muted)"></span>
-        <button id="btn-kill" onclick="killJob()" style="display:none">■ Kill</button>
-      </div>
-
-      <div id="steps">
-        <span class="step" data-step="1">1 Sources</span>
-        <span class="step" data-step="2">2 Detection</span>
-        <span class="step" data-step="3">3 Split</span>
-        <span class="step" data-step="4">4 Frames</span>
-        <span class="step" data-step="5">5 CLIP</span>
-        <span class="step" data-step="6">6 Select+Encode</span>
-      </div>
-
-      <div id="job-tabs">
-        <div class="tab active" onclick="switchTab('log')">Log</div>
-        <div class="tab" onclick="switchTab('gallery')">Gallery</div>
-        <div class="tab" onclick="switchTab('results')">Results</div>
-        <div style="flex:1"></div>
-        <button id="btn-rerun-tab" onclick="rerunCurrentJob()" style="margin:4px 8px;background:var(--accent);color:#000;border:none;padding:4px 14px;cursor:pointer;font-family:var(--font);font-size:12px;font-weight:bold;border-radius:3px;">▶ Rerun</button>
-      </div>
-
-      <div id="tab-content">
-        <div id="log-panel"></div>
-        <div id="gallery-panel">
-          <div id="threshold-bar">
-            <label>Threshold</label>
-            <input type="range" id="threshold-slider" min="0.10" max="0.25" step="0.001" value="0.148" oninput="onThresholdSlide()">
-            <span id="threshold-val">0.148</span>
-            <span id="threshold-count"></span>
-            <button id="btn-rerun" onclick="rerunWithThreshold()">▶ Re-run</button>
-          </div>
-          <div id="frames-grid"></div>
-        </div>
-        <div id="results-panel">
-          <div class="result-files" id="result-files"></div>
-          <div id="video-container" style="display:none">
-            <video id="video-player" controls></video>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </div><!-- /main -->
-
+</div><!-- /main -->
 </div><!-- /app -->
 
-<!-- Directory browser modal -->
+<!-- Dir browser modal -->
 <div id="dir-modal">
-  <div id="dir-modal-box">
-    <div id="dir-modal-path">
-      <span id="dir-modal-path-text">/</span>
-      <button class="btn-sm" onclick="dirUp()">↑ Up</button>
-    </div>
-    <div id="dir-modal-list"></div>
-    <div id="dir-modal-footer">
+  <div id="dir-box">
+    <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" onclick="dirUp()">↑ Up</button></div>
+    <div id="dir-list"></div>
+    <div id="dir-footer">
       <button class="btn-sm" onclick="closeDirBrowser()">Cancel</button>
-      <button id="btn-select-dir" class="btn-sm" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
+      <button class="btn-sm" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settings-modal">
+  <div id="settings-box">
+    <div class="modal-header">
+      SETTINGS
+      <button class="icon-btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ff">
+        <label>Max concurrent jobs</label>
+        <input type="number" id="s-max-jobs" value="1" min="1" max="8">
+      </div>
+      <div id="settings-note">Changes to max concurrent jobs require server restart.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-sm" onclick="closeSettings()">Cancel</button>
+      <button class="btn-primary" onclick="saveSettings()">Save</button>
     </div>
   </div>
 </div>
 
 <script>
 const api = {
-  async get(url)     { const r = await fetch(url);          return r.ok ? r.json() : null; },
-  async post(url, b) { const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b)}); return r.json(); },
-  async del(url)     { const r = await fetch(url, {method:'DELETE'}); return r.json(); },
+  async get(u)    { try { const r=await fetch(u); return r.ok?r.json():null; } catch{return null;} },
+  async post(u,b) { const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
+  async put(u,b)  { const r=await fetch(u,{method:'PUT', headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },
+  async del(u)    { const r=await fetch(u,{method:'DELETE'}); return r.json(); },
 };
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let currentJobId = null;
-let ws = null;
-let elapsedTimer = null;
-let currentBrowsePath = null;
-let framesData = [];
+let currentJobId=null, jobWs=null, statsWs=null, elapsedTimer=null;
+let browsePath=null, framesData=[];
 
-// ── Views ─────────────────────────────────────────────────────────────────────
-function showView(id) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-}
+// ── Views ──────────────────────────────────────────────────────────────────────
+function showView(id) { document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 function showForm()    { showView('form-view'); }
 function showWelcome() { showView('welcome'); }
 
-// ── Sidebar job list ──────────────────────────────────────────────────────────
+// ── Sidebar ───────────────────────────────────────────────────────────────────
 async function refreshJobList() {
   const jobs = await api.get('/api/jobs') || [];
   const list = document.getElementById('job-list');
   list.innerHTML = '';
   for (const j of jobs) {
-    const dir = j.work_dir.split('/').slice(-2).join('/');
-    const age = j.ended_at
-      ? formatDur((j.ended_at - j.started_at))
-      : formatDur((Date.now()/1000 - j.started_at));
+    const parts = j.work_dir.split('/');
+    const dir = parts.slice(-2).join('/');
+    const dur = j.ended_at ? formatDur(j.ended_at - j.started_at) : '';
     const div = document.createElement('div');
-    div.className = 'job-item' + (j.id === currentJobId ? ' active' : '');
-    div.innerHTML = `
-      <div class="job-dir"><span class="job-status s-${j.status}"></span>${dir}</div>
-      <div class="job-meta">${j.status} · ${age}</div>`;
-    div.onclick = () => openJob(j.id);
+    div.className = 'job-item' + (j.id===currentJobId?' active':'');
+    div.innerHTML = `<div class="ji-dir"><span class="dot s-${j.status}"></span>${dir}</div>
+      <div class="ji-meta">${j.status}${dur?' · '+dur:''}</div>`;
+    div.onclick = ()=>openJob(j.id);
     list.appendChild(div);
   }
 }
 setInterval(refreshJobList, 3000);
 refreshJobList();
 
+// ── Stats WebSocket ───────────────────────────────────────────────────────────
+function connectStats() {
+  if (statsWs) return;
+  const proto = location.protocol==='https:'?'wss':'ws';
+  statsWs = new WebSocket(`${proto}://${location.host}/ws/stats`);
+  statsWs.onmessage = e => updateStats(JSON.parse(e.data));
+  statsWs.onclose = () => { statsWs=null; setTimeout(connectStats, 3000); };
+}
+connectStats();
+
+function bar(id, pct) { document.getElementById(id).style.width = Math.min(pct,100)+'%'; }
+function val(id, text) { document.getElementById(id).textContent = text; }
+
+function updateStats(s) {
+  bar('bar-cpu', s.cpu_pct);
+  val('val-cpu', `${s.cpu_pct}%`);
+  bar('bar-ram', s.ram_pct);
+  val('val-ram', `${s.ram_used_gb} / ${s.ram_total_gb} GB <span>(${s.ram_pct}%)</span>`);
+  document.getElementById('val-ram').innerHTML = `${s.ram_used_gb} / ${s.ram_total_gb} GB <span style="color:var(--muted)">(${s.ram_pct}%)</span>`;
+
+  if (s.gpu) {
+    document.getElementById('gpu-section').style.display = '';
+    document.getElementById('no-gpu').style.display = 'none';
+    bar('bar-gpu', s.gpu.pct);
+    val('val-gpu', `${s.gpu.pct}%`);
+    bar('bar-vram', s.gpu.vram_pct);
+    const used = (s.gpu.vram_used_mb/1024).toFixed(1);
+    const tot  = (s.gpu.vram_total_mb/1024).toFixed(1);
+    document.getElementById('val-vram').innerHTML = `${used} / ${tot} GB <span style="color:var(--muted)">(${s.gpu.vram_pct}%)</span>`;
+  } else {
+    document.getElementById('gpu-section').style.display = 'none';
+    document.getElementById('no-gpu').style.display = '';
+  }
+
+  document.getElementById('q-running').textContent = s.running_jobs;
+  document.getElementById('q-queued').textContent  = s.queued_jobs;
+}
+
 // ── Start job ─────────────────────────────────────────────────────────────────
 async function startJob() {
   const workDir = document.getElementById('f-workdir').value.trim();
   if (!workDir) { alert('Set working directory'); return; }
+  const p = { work_dir: workDir };
+  const th = document.getElementById('f-threshold').value; if (th) p.threshold = parseFloat(th);
+  const ms = document.getElementById('f-max-scene').value; if (ms) p.max_scene = parseFloat(ms);
+  const pf = document.getElementById('f-per-file').value;  if (pf) p.per_file  = parseFloat(pf);
+  const ti = document.getElementById('f-title').value.trim(); if (ti) p.title = ti;
+  const ca = document.getElementById('f-cam-a').value.trim(); if (ca) p.cam_a = ca;
+  const cb = document.getElementById('f-cam-b').value.trim(); if (cb) p.cam_b = cb;
+  const mg = document.getElementById('f-music-genre').value.trim();  if (mg) p.music_genre  = mg;
+  const ma = document.getElementById('f-music-artist').value.trim(); if (ma) p.music_artist = ma;
+  p.no_intro = document.getElementById('f-no-intro').checked;
+  p.no_music = document.getElementById('f-no-music').checked;
+  const resp = await api.post('/api/jobs', p);
+  if (resp?.id) { refreshJobList(); openJob(resp.id); } else alert(JSON.stringify(resp));
+}
 
-  const params = { work_dir: workDir };
-  const threshold = document.getElementById('f-threshold').value;
-  if (threshold) params.threshold = parseFloat(threshold);
-  const maxScene = document.getElementById('f-max-scene').value;
-  if (maxScene) params.max_scene = parseFloat(maxScene);
-  const perFile = document.getElementById('f-per-file').value;
-  if (perFile) params.per_file = parseFloat(perFile);
-  const title = document.getElementById('f-title').value.trim();
-  if (title) params.title = title;
-  const camA = document.getElementById('f-cam-a').value.trim();
-  if (camA) params.cam_a = camA;
-  const camB = document.getElementById('f-cam-b').value.trim();
-  if (camB) params.cam_b = camB;
-  const genre = document.getElementById('f-music-genre').value.trim();
-  if (genre) params.music_genre = genre;
-  const artist = document.getElementById('f-music-artist').value.trim();
-  if (artist) params.music_artist = artist;
-  params.no_intro = document.getElementById('f-no-intro').checked;
-  params.no_music = document.getElementById('f-no-music').checked;
-
-  const resp = await api.post('/api/jobs', params);
-  if (resp.id) {
-    refreshJobList();
-    openJob(resp.id);
-  } else {
-    alert(JSON.stringify(resp));
-  }
+// ── About / generate prompts ──────────────────────────────────────────────────
+async function generateAbout() {
+  const desc = document.getElementById('f-about').value.trim();
+  if (!desc) { alert('Enter a description first'); return; }
+  const workDir = document.getElementById('f-workdir').value.trim();
+  const status = document.getElementById('about-status');
+  const output = document.getElementById('about-output');
+  status.textContent = 'Generating…';
+  output.style.display = 'none';
+  const resp = await api.post('/api/about', { description: desc, work_dir: workDir });
+  status.textContent = '';
+  output.style.display = 'block';
+  output.style.color = resp?.ok ? 'var(--green)' : 'var(--red)';
+  output.textContent = resp?.output || 'Error';
 }
 
 // ── Open job ──────────────────────────────────────────────────────────────────
 async function openJob(jobId) {
-  if (ws) { ws.close(); ws = null; }
-  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-
+  if (jobWs) { jobWs.close(); jobWs=null; }
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
   currentJobId = jobId;
-  document.querySelectorAll('.job-item').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.job-item').forEach(el => {
-    if (el.querySelector('.job-dir')?.textContent?.includes(jobId)) el.classList.add('active');
-  });
-
+  framesData = [];
   showView('job-view');
   document.getElementById('log-panel').innerHTML = '';
-  document.getElementById('jh-path').textContent = '...';
-  document.getElementById('jh-dot').className = 'job-status s-pending';
-  document.getElementById('btn-kill').style.display = 'none';
-  resetSteps();
-  framesData = [];
   document.getElementById('frames-grid').innerHTML = '';
-  document.getElementById('result-files').innerHTML = '';
+  document.getElementById('rf-files').innerHTML = '';
+  document.getElementById('video-wrap').style.display = 'none';
+  document.getElementById('btn-kill').style.display = 'none';
+  document.getElementById('jh-path').textContent = '…';
+  document.getElementById('jh-status').textContent = '';
+  document.getElementById('jh-elapsed').textContent = '';
+  resetSteps();
   switchTab('log');
 
   const job = await api.get(`/api/jobs/${jobId}`);
   if (!job) return;
 
   document.getElementById('jh-path').textContent = job.params.work_dir;
-  updateStatusDot(job.status);
+  setStatusDot(job.status);
+
   if (job.status === 'running') {
     document.getElementById('btn-kill').style.display = '';
     startElapsedTimer(job.started_at);
+  } else if (job.status === 'queued') {
+    document.getElementById('jh-status').textContent = 'queued';
   } else if (job.ended_at) {
     document.getElementById('jh-elapsed').textContent = formatDur(job.ended_at - job.started_at);
   }
 
-  // Render buffered log
   for (const line of job.log) appendLog(line);
+  connectJobWs(jobId, job.started_at);
 
-  // Connect WS
-  connectWS(jobId, job.started_at);
-
-  // Load frames if available
-  loadFrames(jobId);
-
-  // Load results if done
-  if (job.status === 'done') loadResults(jobId);
-
+  if (job.status === 'done' || job.status === 'failed') {
+    loadFrames(jobId);
+    loadResults(jobId);
+  }
   refreshJobList();
 }
 
-function connectWS(jobId, startedAt) {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
-  ws.onmessage = (e) => {
+function connectJobWs(jobId, startedAt) {
+  const proto = location.protocol==='https:'?'wss':'ws';
+  jobWs = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+  jobWs.onmessage = e => {
     const msg = JSON.parse(e.data);
-    if (msg.type === 'log') {
+    if (msg.type==='log') {
       appendLog(msg.line);
-    } else if (msg.type === 'status') {
-      updateStatusDot(msg.status);
-      if (msg.status === 'running') {
+    } else if (msg.type==='status') {
+      setStatusDot(msg.status);
+      if (msg.status==='running') {
         document.getElementById('btn-kill').style.display = '';
+        document.getElementById('jh-status').textContent = '';
         startElapsedTimer(startedAt);
       } else {
         document.getElementById('btn-kill').style.display = 'none';
-        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-        if (msg.status === 'done') {
-          loadFrames(jobId);
-          loadResults(jobId);
-        }
+        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
+        if (msg.status==='done' || msg.status==='failed') { loadFrames(jobId); loadResults(jobId); }
         refreshJobList();
       }
     }
   };
-  ws.onclose = () => {};
 }
 
-// ── Log rendering ─────────────────────────────────────────────────────────────
+// ── Log ───────────────────────────────────────────────────────────────────────
 function appendLog(line) {
   const panel = document.getElementById('log-panel');
   const div = document.createElement('div');
   div.className = 'log-line';
-
   const stepM = line.match(/^\[(\d+)\/6\]/);
-  if (stepM) {
-    div.classList.add('log-step');
-    activateStep(parseInt(stepM[1]));
-  } else if (/✓|cached|done/i.test(line)) {
-    div.classList.add('log-ok');
-  } else if (/error|failed|warning/i.test(line)) {
-    div.classList.add('log-err');
-  } else if (/^\s+\[.*\]/.test(line)) {
-    div.classList.add('log-info');
-  }
-
+  if (stepM)                            { div.classList.add('log-step'); activateStep(parseInt(stepM[1])); }
+  else if (/✓|cached/i.test(line))      { div.classList.add('log-ok'); }
+  else if (/error|failed/i.test(line))  { div.classList.add('log-err'); }
+  else if (/^\s+\[.*\]/.test(line))     { div.classList.add('log-info'); }
   div.textContent = line;
   panel.appendChild(div);
-
-  // Auto-scroll if near bottom
   const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
   if (atBottom) panel.scrollTop = panel.scrollHeight;
 }
 
-// ── Steps indicator ───────────────────────────────────────────────────────────
-function resetSteps() {
-  document.querySelectorAll('.step').forEach(s => s.className = 'step');
-}
+// ── Steps ─────────────────────────────────────────────────────────────────────
+function resetSteps() { document.querySelectorAll('.step').forEach(s=>s.className='step'); }
 function activateStep(n) {
   document.querySelectorAll('.step').forEach(s => {
     const sn = parseInt(s.dataset.step);
-    if (sn < n) s.className = 'step done';
-    else if (sn === n) s.className = 'step active';
-    else s.className = 'step';
+    s.className = 'step' + (sn<n?' done': sn===n?' active':'');
   });
 }
 
-// ── Status dot ────────────────────────────────────────────────────────────────
-function updateStatusDot(status) {
-  const dot = document.getElementById('jh-dot');
-  dot.className = `job-status s-${status}`;
-  if (status !== 'running') {
-    document.querySelectorAll('.step').forEach(s => {
-      if (status === 'done') s.className = 'step done';
-    });
-  }
+function setStatusDot(status) {
+  document.getElementById('jh-dot').className = `dot s-${status}`;
+  document.getElementById('jh-status').textContent = status !== 'running' ? status : '';
+  if (status === 'done') document.querySelectorAll('.step').forEach(s=>s.className='step done');
 }
 
-// ── Elapsed timer ─────────────────────────────────────────────────────────────
+// ── Elapsed ───────────────────────────────────────────────────────────────────
 function startElapsedTimer(startedAt) {
   if (elapsedTimer) clearInterval(elapsedTimer);
-  elapsedTimer = setInterval(() => {
-    const el = document.getElementById('jh-elapsed');
-    if (el) el.textContent = formatDur(Date.now()/1000 - startedAt);
+  elapsedTimer = setInterval(()=>{
+    document.getElementById('jh-elapsed').textContent = formatDur(Date.now()/1000 - startedAt);
   }, 1000);
 }
 
-// ── Kill job ──────────────────────────────────────────────────────────────────
+// ── Kill ──────────────────────────────────────────────────────────────────────
 async function killJob() {
-  if (!currentJobId) return;
-  if (!confirm('Kill running job?')) return;
+  if (!currentJobId || !confirm('Kill running job?')) return;
   await api.del(`/api/jobs/${currentJobId}`);
   document.getElementById('btn-kill').style.display = 'none';
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    const names = ['log', 'gallery', 'results'];
-    t.classList.toggle('active', names[i] === name);
-  });
-  document.getElementById('log-panel').style.display = name === 'log' ? 'block' : 'none';
-  document.getElementById('gallery-panel').classList.toggle('active', name === 'gallery');
-  document.getElementById('results-panel').classList.toggle('active', name === 'results');
-
-  if (name === 'gallery' && currentJobId) loadFrames(currentJobId);
-  if (name === 'results' && currentJobId) loadResults(currentJobId);
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['log','gallery','results'][i]===name));
+  document.getElementById('log-split').style.display    = name==='log'      ? 'flex' : 'none';
+  document.getElementById('gallery-panel').classList.toggle('active', name==='gallery');
+  document.getElementById('results-panel').classList.toggle('active', name==='results');
+  if (name==='gallery' && currentJobId) loadFrames(currentJobId);
+  if (name==='results' && currentJobId) loadResults(currentJobId);
 }
 
-// ── Gallery / threshold ───────────────────────────────────────────────────────
+// ── Gallery ───────────────────────────────────────────────────────────────────
 async function loadFrames(jobId) {
   const data = await api.get(`/api/jobs/${jobId}/frames`);
-  if (!data || !data.length) return;
+  if (!data?.length) return;
   framesData = data;
-
-  const maxScore = Math.max(...data.map(f => f.score));
-  const minScore = Math.min(...data.map(f => f.score));
+  const scores = data.map(f=>f.score);
   const slider = document.getElementById('threshold-slider');
-  slider.min = (minScore - 0.005).toFixed(3);
-  slider.max = (maxScore + 0.005).toFixed(3);
+  slider.min = (Math.min(...scores)-0.005).toFixed(3);
+  slider.max = (Math.max(...scores)+0.005).toFixed(3);
 
   const job = await api.get(`/api/jobs/${jobId}`);
   let threshold = job?.params?.threshold;
-  // If not explicit, parse from log: "Threshold: 0.141"
   if (!threshold && job?.log) {
-    const m = job.log.find(l => /^Threshold:\s+[\d.]+/.test(l));
-    if (m) threshold = parseFloat(m.replace('Threshold:', '').trim());
+    const m = job.log.find(l=>/^Threshold:\s+[\d.]+/.test(l));
+    if (m) threshold = parseFloat(m.replace('Threshold:','').trim());
   }
-  if (threshold) {
-    slider.value = threshold;
-    document.getElementById('threshold-val').textContent = parseFloat(threshold).toFixed(3);
-  } else {
-    slider.value = slider.min;
-    document.getElementById('threshold-val').textContent = parseFloat(slider.min).toFixed(3);
-  }
-
+  if (threshold) { slider.value=threshold; document.getElementById('threshold-val').textContent=parseFloat(threshold).toFixed(3); }
+  else { slider.value=slider.min; document.getElementById('threshold-val').textContent=parseFloat(slider.min).toFixed(3); }
   renderGallery();
 }
 
@@ -799,31 +636,22 @@ function renderGallery() {
   const threshold = parseFloat(document.getElementById('threshold-slider').value);
   const grid = document.getElementById('frames-grid');
   grid.innerHTML = '';
-
-  const included = framesData.filter(f => f.score >= threshold);
-  document.getElementById('threshold-count').textContent =
-    `${included.length} / ${framesData.length} scenes`;
-
-  // Sort by score desc
-  const sorted = [...framesData].sort((a, b) => b.score - a.score);
-  for (const f of sorted) {
-    const inc = f.score >= threshold;
+  const inc = framesData.filter(f=>f.score>=threshold);
+  document.getElementById('threshold-count').textContent = `${inc.length} / ${framesData.length} scenes`;
+  for (const f of [...framesData].sort((a,b)=>b.score-a.score)) {
+    const included = f.score >= threshold;
     const card = document.createElement('div');
-    card.className = 'frame-card ' + (inc ? 'included' : 'excluded');
-    const name = f.scene.split('/').pop().replace(/-scene-\d+$/, '').slice(-20);
-    card.innerHTML = `
-      <img src="${f.frame_url || ''}" loading="lazy" onerror="this.style.display='none'">
-      <div class="frame-info">
-        <span class="frame-score">${f.score.toFixed(3)}</span>
-        <span class="frame-name">${name}</span>
-      </div>`;
+    card.className = 'fc ' + (included?'included':'excluded');
+    const name = f.scene.replace(/-scene-\d+$/,'').split('/').pop().slice(-22);
+    card.innerHTML = `<img src="${f.frame_url||''}" loading="lazy" onerror="this.style.display='none'">
+      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span><span class="fc-name">${name}</span></div>`;
     grid.appendChild(card);
   }
 }
 
 function onThresholdSlide() {
-  const val = parseFloat(document.getElementById('threshold-slider').value).toFixed(3);
-  document.getElementById('threshold-val').textContent = val;
+  const v = parseFloat(document.getElementById('threshold-slider').value).toFixed(3);
+  document.getElementById('threshold-val').textContent = v;
   renderGallery();
 }
 
@@ -832,115 +660,99 @@ async function rerunWithThreshold() {
   const job = await api.get(`/api/jobs/${currentJobId}`);
   if (!job) return;
   const threshold = parseFloat(document.getElementById('threshold-slider').value);
-  const resp = await api.post('/api/jobs', { ...job.params, threshold });
-  if (resp.id) { refreshJobList(); openJob(resp.id); }
+  const resp = await api.post('/api/jobs', {...job.params, threshold});
+  if (resp?.id) { refreshJobList(); openJob(resp.id); }
 }
 
 async function rerunCurrentJob() {
   if (!currentJobId) return;
   const job = await api.get(`/api/jobs/${currentJobId}`);
   if (!job) return;
-  // Use gallery slider threshold if frames are loaded, else same params
-  const params = { ...job.params };
-  if (framesData.length > 0) {
-    params.threshold = parseFloat(document.getElementById('threshold-slider').value);
-  }
+  const params = {...job.params};
+  if (framesData.length > 0) params.threshold = parseFloat(document.getElementById('threshold-slider').value);
   const resp = await api.post('/api/jobs', params);
-  if (resp.id) { refreshJobList(); openJob(resp.id); }
+  if (resp?.id) { refreshJobList(); openJob(resp.id); }
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
 async function loadResults(jobId) {
   const data = await api.get(`/api/jobs/${jobId}/result`);
   if (!data) return;
-
-  const container = document.getElementById('result-files');
+  const container = document.getElementById('rf-files');
   container.innerHTML = '';
-
-  const order = ['highlight_final_music.mp4', 'highlight_music.mp4', 'highlight_final.mp4', 'highlight.mp4'];
-  for (const name of order) {
+  for (const name of ['highlight_final_music.mp4','highlight_music.mp4','highlight_final.mp4','highlight.mp4']) {
     if (!data[name]) continue;
     const div = document.createElement('div');
-    div.className = 'result-file';
+    div.className = 'rf';
     div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${data[name].size_mb} MB</div>`;
-    div.onclick = () => playVideo(data[name].url, div);
+    div.onclick = ()=>playVideo(data[name].url, div);
     container.appendChild(div);
   }
-
-  // Highlight best file without auto-playing
-  const best = order.find(n => data[n]);
-  if (best) container.querySelector('.result-file')?.classList.add('playing');
+  container.querySelector('.rf')?.classList.add('playing');
 }
 
 function playVideo(url, card) {
-  document.querySelectorAll('.result-file').forEach(c => c.classList.remove('playing'));
+  document.querySelectorAll('.rf').forEach(c=>c.classList.remove('playing'));
   if (card) card.classList.add('playing');
-  const container = document.getElementById('video-container');
+  const wrap = document.getElementById('video-wrap');
   const video = document.getElementById('video-player');
-  container.style.display = 'block';
+  wrap.style.display = 'block';
   video.src = url;
 }
 
-// ── Directory browser ─────────────────────────────────────────────────────────
+// ── Dir browser ───────────────────────────────────────────────────────────────
 async function openDirBrowser() {
-  const current = document.getElementById('f-workdir').value.trim();
   document.getElementById('dir-modal').classList.add('open');
-  await browseTo(current || null);
+  await browseTo(document.getElementById('f-workdir').value.trim() || null);
 }
-
-function closeDirBrowser() {
-  document.getElementById('dir-modal').classList.remove('open');
+function closeDirBrowser() { document.getElementById('dir-modal').classList.remove('open'); }
+function selectCurrentDir() { document.getElementById('f-workdir').value = browsePath; closeDirBrowser(); }
+async function dirUp() {
+  const data = await api.get(`/api/browse?path=${encodeURIComponent(browsePath)}`);
+  if (data?.parent) await browseTo(data.parent);
 }
-
 async function browseTo(path) {
   const url = path ? `/api/browse?path=${encodeURIComponent(path)}` : '/api/browse';
   const data = await api.get(url);
   if (!data) return;
-
-  currentBrowsePath = data.path;
-  document.getElementById('dir-modal-path-text').textContent = data.path;
-
-  const list = document.getElementById('dir-modal-list');
+  browsePath = data.path;
+  document.getElementById('dir-path-txt').textContent = data.path;
+  const list = document.getElementById('dir-list');
   list.innerHTML = '';
-
   if (data.parent) {
-    const div = document.createElement('div');
-    div.className = 'dir-entry';
-    div.innerHTML = `<span class="icon">↑</span><span class="name">..</span>`;
-    div.onclick = () => browseTo(data.parent);
-    list.appendChild(div);
+    const d=document.createElement('div'); d.className='de';
+    d.innerHTML=`<span class="icon">↑</span><span class="name">..</span>`;
+    d.onclick=()=>browseTo(data.parent); list.appendChild(d);
   }
-
   for (const e of data.entries) {
     if (!e.is_dir) continue;
-    const div = document.createElement('div');
-    div.className = 'dir-entry';
-    div.innerHTML = `
-      <span class="icon">▶</span>
-      <span class="name">${e.name}</span>
-      ${e.has_mp4 ? '<span class="badge">MP4</span>' : ''}
-      ${e.has_autoframe ? '<span class="badge" style="color:var(--accent)">cached</span>' : ''}`;
-    div.ondblclick = () => browseTo(e.path);
-    div.onclick = () => { currentBrowsePath = e.path; document.getElementById('dir-modal-path-text').textContent = e.path; };
-    list.appendChild(div);
+    const d=document.createElement('div'); d.className='de';
+    d.innerHTML=`<span class="icon">▶</span><span class="name">${e.name}</span>
+      ${e.has_mp4?'<span class="badge">MP4</span>':''}
+      ${e.has_autoframe?'<span class="badge" style="color:var(--accent)">cached</span>':''}`;
+    d.onclick=()=>{browsePath=e.path; document.getElementById('dir-path-txt').textContent=e.path;};
+    d.ondblclick=()=>browseTo(e.path);
+    list.appendChild(d);
   }
 }
 
-async function dirUp() {
-  const data = await api.get(`/api/browse?path=${encodeURIComponent(currentBrowsePath)}`);
-  if (data?.parent) await browseTo(data.parent);
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function openSettings() {
+  const s = await api.get('/api/settings');
+  if (s) document.getElementById('s-max-jobs').value = s.max_concurrent_jobs;
+  document.getElementById('settings-modal').classList.add('open');
 }
-
-function selectCurrentDir() {
-  document.getElementById('f-workdir').value = currentBrowsePath;
-  closeDirBrowser();
+function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
+async function saveSettings() {
+  const data = { max_concurrent_jobs: parseInt(document.getElementById('s-max-jobs').value) };
+  await api.put('/api/settings', data);
+  closeSettings();
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDur(sec) {
-  const s = Math.floor(sec);
-  const m = Math.floor(s / 60);
-  return m > 0 ? `${m}m${s % 60}s` : `${s}s`;
+  const s=Math.floor(sec), m=Math.floor(s/60);
+  return m>0?`${m}m${s%60}s`:`${s}s`;
 }
 </script>
 </body>
