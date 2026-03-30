@@ -20,8 +20,8 @@ from typing import Optional
 
 import aiofiles
 import psutil
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request, Body
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import pandas as pd
@@ -64,21 +64,29 @@ class Job:
         self.id          = job_id
         self.params      = params
         self.status      = "queued"   # queued | running | done | failed | killed
+        self.phase       = "analyzing" # analyzing | analyzed | rendering | done | failed
         self.log: list[str] = []
         self.process: Optional[asyncio.subprocess.Process] = None
         self._task: Optional[asyncio.Task] = None
+        self.created_at  = time.time()
         self.started_at  = time.time()
         self.ended_at: Optional[float] = None
         self.subscribers: set[WebSocket] = set()
+        self.analyze_result: Optional[dict] = None
+        self.selected_track: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
-            "id":         self.id,
-            "params":     self.params,
-            "status":     self.status,
-            "log":        self.log,
-            "started_at": self.started_at,
-            "ended_at":   self.ended_at,
+            "id":             self.id,
+            "params":         self.params,
+            "status":         self.status,
+            "phase":          self.phase,
+            "log":            self.log,
+            "created_at":     self.created_at,
+            "started_at":     self.started_at,
+            "ended_at":       self.ended_at,
+            "analyze_result": self.analyze_result,
+            "selected_track": self.selected_track,
         }
 
     def save(self):
@@ -88,10 +96,14 @@ class Job:
     @classmethod
     def from_dict(cls, data: dict) -> "Job":
         j = cls(data["id"], data["params"])
-        j.status     = data["status"]
-        j.log        = data.get("log", [])
-        j.started_at = data.get("started_at", time.time())
-        j.ended_at   = data.get("ended_at")
+        j.status         = data["status"]
+        j.phase          = data.get("phase", "done")   # backward compat: old jobs are "done"
+        j.log            = data.get("log", [])
+        j.created_at     = data.get("created_at", data.get("started_at", time.time()))
+        j.started_at     = data.get("started_at", time.time())
+        j.ended_at       = data.get("ended_at")
+        j.analyze_result = data.get("analyze_result")
+        j.selected_track = data.get("selected_track")
         return j
 
     def work_dir(self) -> Path:
@@ -117,6 +129,8 @@ job_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 
 app = FastAPI(title="autoframe")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+_rebuild_tasks: dict[str, dict] = {}  # task_id -> {progress, total, done, ok}
 
 
 @app.on_event("startup")
@@ -262,35 +276,52 @@ async def _stats_broadcaster():
 
 # ── Job runner ─────────────────────────────────────────────────────────────────
 
-async def _run_job(job: Job):
+async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optional[str] = None):
     async with job_semaphore:
         job.status = "running"
+        job.phase  = "analyzing" if analyze_only else "rendering"
         job.started_at = time.time()
-        await job.broadcast({"type": "status", "status": "running"})
+        await job.broadcast({"type": "status", "status": "running", "phase": job.phase})
         job.save()
 
         try:
-            async for raw_line in pipeline.run(job.params, job.work_dir()):
+            async for raw_line in pipeline.run(job.params, job.work_dir(),
+                                               analyze_only=analyze_only,
+                                               selected_track=selected_track):
                 # \r prefix = ffmpeg progress bar update (overwrite previous line)
                 for part in raw_line.split('\r'):
                     line = part.rstrip('\n').rstrip()
                     if line:
                         job.log.append(line)
                         await job.broadcast({"type": "log", "line": line})
-            job.status = "done"
+            if analyze_only:
+                job.status = "done"
+                job.phase  = "analyzed"
+                ar_path = job.auto_dir() / "analyze_result.json"
+                if ar_path.exists():
+                    try:
+                        job.analyze_result = json.loads(ar_path.read_text())
+                    except Exception:
+                        pass
+            else:
+                job.status = "done"
+                job.phase  = "done"
         except asyncio.CancelledError:
             job.log.append("[job cancelled]")
             job.status = "killed"
+            job.phase  = "failed"
         except RuntimeError as e:
             job.log.append(f"ERROR: {e}")
             job.status = "failed"
+            job.phase  = "failed"
         except Exception as e:
             job.log.append(f"ERROR: {e}")
             job.status = "failed"
+            job.phase  = "failed"
 
         job.ended_at = time.time()
         job.save()
-        await job.broadcast({"type": "status", "status": job.status})
+        await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -298,6 +329,14 @@ async def _run_job(job: Job):
 @app.get("/")
 async def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    p = STATIC_DIR / "favicon.ico"
+    if not p.exists():
+        raise HTTPException(404)
+    return FileResponse(str(p))
 
 
 @app.get("/api/config")
@@ -362,6 +401,17 @@ async def save_job_prompts(job_id: str, data: dict):
     return {"ok": True}
 
 
+@app.post("/api/save-prompts")
+async def save_prompts(data: dict):
+    work_dir = data.get("work_dir", "").strip()
+    if not work_dir or not Path(work_dir).is_dir():
+        raise HTTPException(400, f"work_dir not found: {work_dir}")
+    positive = data.get("positive", "").strip()
+    negative = data.get("negative", "").strip()
+    save_prompts_to_config(Path(work_dir) / "config.ini", positive, negative)
+    return {"ok": True}
+
+
 @app.post("/api/music-rebuild")
 async def music_rebuild(payload: dict):
     music_dir = payload.get("dir", "")
@@ -375,13 +425,39 @@ async def music_rebuild(payload: dict):
     cmd = [sys.executable, str(SCRIPT_DIR / "music_index.py"), str(d)]
     if payload.get("force"):        cmd.append("--force")
     if payload.get("force_genres"): cmd.append("--force-genres")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    out, _ = await proc.communicate()
-    return {"ok": proc.returncode == 0, "output": out.decode("utf-8", errors="replace")}
+
+    task_id = uuid.uuid4().hex[:8]
+    _rebuild_tasks[task_id] = {"progress": 0, "total": 0, "done": False, "ok": False}
+
+    async def run():
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").strip()
+            m = re.match(r"^TOTAL:(\d+)", line)
+            if m:
+                _rebuild_tasks[task_id]["total"] = int(m.group(1))
+            m = re.match(r"^PROGRESS:(\d+)/(\d+)", line)
+            if m:
+                _rebuild_tasks[task_id]["progress"] = int(m.group(1))
+        await proc.wait()
+        _rebuild_tasks[task_id]["done"] = True
+        _rebuild_tasks[task_id]["ok"] = proc.returncode == 0
+
+    asyncio.create_task(run())
+    return {"task_id": task_id}
+
+
+@app.get("/api/music-rebuild-status/{task_id}")
+async def music_rebuild_status(task_id: str):
+    task = _rebuild_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return task
 
 
 @app.get("/api/music-files")
@@ -441,6 +517,8 @@ class JobParams(BaseModel):
     music_artist: Optional[str] = None
     work_subdir:  str = "_autoframe"
     description:  Optional[str] = None
+    positive:     Optional[str] = None
+    negative:     Optional[str] = None
 
 
 # ── Per-directory config.ini helpers ──────────────────────────────────────────
@@ -663,7 +741,7 @@ def _validate_cam(cam: Optional[str], work_dir: Path) -> None:
 
 
 @app.post("/api/jobs")
-async def create_job(params: JobParams):
+async def create_job(params: JobParams, analyze_only: bool = Query(default=True)):
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
@@ -674,13 +752,16 @@ async def create_job(params: JobParams):
     d["work_dir"] = str(work_dir)
 
     save_job_config(work_dir, d)
+    if params.positive or params.negative:
+        save_prompts_to_config(work_dir / "config.ini", params.positive or "", params.negative or "")
 
     job_id = str(uuid.uuid4())[:8]
     job = Job(job_id, d)
+    job.phase = "analyzing" if analyze_only else "rendering"
     jobs[job_id] = job
     job.save()
 
-    job._task = asyncio.create_task(_run_job(job))
+    job._task = asyncio.create_task(_run_job(job, analyze_only=analyze_only))
     return {"id": job_id}
 
 
@@ -690,11 +771,12 @@ async def list_jobs():
         {
             "id":         j.id,
             "status":     j.status,
+            "phase":      j.phase,
             "work_dir":   j.params["work_dir"],
             "started_at": j.started_at,
             "ended_at":   j.ended_at,
         }
-        for j in sorted(jobs.values(), key=lambda j: -j.started_at)
+        for j in sorted(jobs.values(), key=lambda j: -j.created_at)
     ]
 
 
@@ -717,16 +799,19 @@ async def rerun_job(job_id: str, params: JobParams):
     save_job_config(work_dir, d)
 
     # Reset job in-place
-    job.params    = d
-    job.log       = []
-    job.status    = "queued"
-    job.started_at = time.time()
-    job.ended_at  = None
-    job.process   = None
-    job._task     = None
+    job.params         = d
+    job.log            = []
+    job.status         = "queued"
+    job.phase          = "analyzing"
+    job.analyze_result = None
+    job.selected_track = None
+    job.started_at     = time.time()
+    job.ended_at       = None
+    job.process        = None
+    job._task          = None
     job.save()
 
-    job._task = asyncio.create_task(_run_job(job))
+    job._task = asyncio.create_task(_run_job(job, analyze_only=True))
     return {"id": job_id}
 
 
@@ -736,6 +821,101 @@ async def get_job(job_id: str):
     if not job:
         raise HTTPException(404)
     return job.to_dict()
+
+
+@app.get("/api/jobs/{job_id}/analyze-result")
+async def get_analyze_result(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.analyze_result:
+        return job.analyze_result
+    ar_path = job.auto_dir() / "analyze_result.json"
+    if ar_path.exists():
+        try:
+            return json.loads(ar_path.read_text())
+        except Exception:
+            pass
+    # Fallback: parse what we can from the job log
+    result = {}
+    for line in job.log:
+        m = re.search(r'Threshold:\s*([\d.]+)', line)
+        if m:
+            result["auto_threshold"] = float(m.group(1))
+        m = re.search(r'Selected:\s*(\d+)\s*scenes', line)
+        if m:
+            result["estimated_scenes"] = int(m.group(1))
+        m = re.search(r'Total:\s*([\d.]+)s', line)
+        if m:
+            result["estimated_duration_sec"] = float(m.group(1))
+    # Compute scene_count + estimated_duration from scores CSV if not yet available
+    try:
+        scores_csv = job.auto_dir() / "scene_scores.csv"
+        if scores_csv.exists():
+            df = pd.read_csv(scores_csv).dropna(subset=["score"])
+            result["scene_count"] = int(len(df))
+            threshold = result.get("auto_threshold",
+                        float(job.params.get("threshold") or 0.148))
+            est_scenes = int((df["score"] >= threshold).sum())
+            result["estimated_scenes"] = result.get("estimated_scenes", est_scenes)
+            if "estimated_duration_sec" not in result:
+                # avg scene duration from PySceneDetect CSVs
+                avg_dur, cnt = 0.0, 0
+                max_scene = float(job.params.get("max_scene") or 10)
+                for csv_path in (job.auto_dir() / "csv").glob("*-Scenes.csv"):
+                    try:
+                        sdf = pd.read_csv(csv_path, skiprows=1)
+                        for _, row in sdf.iterrows():
+                            d = float(row.get("Length (seconds)", 0) or 0)
+                            if d > 0:
+                                avg_dur += d; cnt += 1
+                    except Exception:
+                        pass
+                avg_dur = (avg_dur / cnt) if cnt else max_scene * 0.6
+                result["estimated_duration_sec"] = round(
+                    est_scenes * min(avg_dur, max_scene), 1)
+    except Exception:
+        pass
+    if result:
+        return result
+    raise HTTPException(404, "No analysis data available")
+
+
+class RenderParams(BaseModel):
+    selected_track: Optional[str] = None
+    threshold: Optional[float] = None
+
+
+@app.post("/api/jobs/{job_id}/render")
+async def render_job(job_id: str, params: RenderParams):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is already running or queued")
+
+    if params.threshold is not None:
+        job.params["threshold"] = params.threshold
+        job.save()
+
+    track = params.selected_track
+    if track:
+        tp = Path(track).resolve()
+        if not str(tp).startswith(str(BROWSE_ROOT)):
+            raise HTTPException(403, "Track path outside allowed root")
+        if not tp.exists():
+            raise HTTPException(400, f"Track not found: {track}")
+
+    job.log.append("")
+    job.log.append("── Render phase ──────────────────────────")
+    job.status         = "queued"
+    job.phase          = "rendering"
+    job.ended_at       = None
+    job.selected_track = track
+    job.save()
+
+    job._task = asyncio.create_task(_run_job(job, analyze_only=False, selected_track=track))
+    return {"id": job_id, "phase": "rendering"}
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -755,6 +935,19 @@ async def kill_job(job_id: str):
         job.ended_at = time.time()
         job.save()
         await job.broadcast({"type": "status", "status": "killed"})
+    return {"ok": True}
+
+
+@app.patch("/api/jobs/{job_id}/params")
+async def patch_job_params(job_id: str, data: dict = Body(...)):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    allowed = {"threshold", "max_scene", "per_file"}
+    for k, v in data.items():
+        if k in allowed:
+            job.params[k] = v
+    job.save()
     return {"ok": True}
 
 
@@ -800,7 +993,7 @@ async def job_ws(websocket: WebSocket, job_id: str):
     await websocket.accept()
     for line in job.log:
         await websocket.send_text(json.dumps({"type": "log", "line": line}))
-    await websocket.send_text(json.dumps({"type": "status", "status": job.status}))
+    await websocket.send_text(json.dumps({"type": "status", "status": job.status, "phase": job.phase}))
 
     if job.status not in ("running", "queued"):
         await websocket.close()
@@ -865,12 +1058,13 @@ async def job_frames(job_id: str):
     return [
         {
             "scene":     row["scene"],
-            "score":     round(float(row["score"]), 4),
+            "score":     None if pd.isna(row["score"]) else round(float(row["score"]), 4),
             "duration":  durations.get(row["scene"]),
             "frame_url": f"/api/file?path={frames_dir / (row['scene'] + '.jpg')}"
                          if (frames_dir / (row["scene"] + ".jpg")).exists() else None,
         }
         for _, row in df.iterrows()
+        if not pd.isna(row["score"])
     ]
 
 
@@ -905,7 +1099,61 @@ async def job_result(job_id: str):
         for name in ("highlight_final.mp4", "highlight.mp4"):
             _add(auto_dir / name)
 
+    # Attach stored YouTube URLs
+    yt_urls = _read_yt_urls(auto_dir)
+    for name in files:
+        if name in yt_urls:
+            files[name]["yt_url"] = yt_urls[name]
+
     return files
+
+
+@app.delete("/api/jobs/{job_id}/result-file")
+async def delete_result_file(job_id: str, filename: str = Query(...)):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    work_dir = job.work_dir()
+    # Only allow deleting files inside work_dir or _autoframe subdir
+    candidates = [work_dir / filename, work_dir / "_autoframe" / filename]
+    for p in candidates:
+        resolved = p.resolve()
+        if resolved.parent.resolve() in (work_dir.resolve(), (work_dir / "_autoframe").resolve()):
+            if resolved.exists():
+                resolved.unlink()
+                return {"ok": True}
+    raise HTTPException(404, f"File not found: {filename}")
+
+
+def _yt_urls_path(auto_dir: Path) -> Path:
+    return auto_dir / "youtube_urls.json"
+
+def _read_yt_urls(auto_dir: Path) -> dict:
+    p = _yt_urls_path(auto_dir)
+    try:
+        return json.loads(p.read_text()) if p.exists() else {}
+    except Exception:
+        return {}
+
+def _write_yt_url(auto_dir: Path, filename: str, url: str) -> None:
+    auto_dir.mkdir(exist_ok=True)
+    urls = _read_yt_urls(auto_dir)
+    urls[filename] = url
+    _yt_urls_path(auto_dir).write_text(json.dumps(urls, indent=2))
+
+
+@app.post("/api/jobs/{job_id}/youtube-url")
+async def save_yt_url(job_id: str, payload: dict):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    filename = payload.get("filename", "").strip()
+    url = payload.get("url", "").strip()
+    if not filename or not url:
+        raise HTTPException(400, "filename and url required")
+    auto_dir = job.work_dir() / "_autoframe"
+    _write_yt_url(auto_dir, filename, url)
+    return {"ok": True}
 
 
 # ── YouTube ───────────────────────────────────────────────────────────────────
@@ -1019,7 +1267,7 @@ async def yt_upload(payload: dict):
             ).execute()
             playlist_id = pl["id"]
 
-        chunksize = 10 * 1024 * 1024  # 10 MB chunks
+        chunksize = 100 * 1024 * 1024  # 100 MB chunks — fewer round-trips, better throughput
         media = MediaFileUpload(str(file_path), chunksize=chunksize, resumable=True)
         req = yt.videos().insert(
             part="snippet,status",
@@ -1032,10 +1280,20 @@ async def yt_upload(payload: dict):
         )
 
         response = None
+        _last_bytes = 0
+        _last_time  = time.time()
         while response is None:
             status, response = req.next_chunk()
             if status:
-                _yt_uploads[upload_id]["pct"] = int(status.progress() * 100)
+                now       = time.time()
+                cur_bytes = status.resumable_progress
+                dt        = now - _last_time or 0.001
+                speed_mbps = (cur_bytes - _last_bytes) * 8 / dt / 1_000_000
+                _last_bytes, _last_time = cur_bytes, now
+                _yt_uploads[upload_id].update({
+                    "pct":       int(status.progress() * 100),
+                    "speed_mbps": round(speed_mbps, 1),
+                })
 
         video_id = response["id"]
         if playlist_id:
@@ -1049,8 +1307,12 @@ async def yt_upload(payload: dict):
     async def _run():
         try:
             video_id = await asyncio.to_thread(_do_upload)
-            _yt_uploads[upload_id].update({"status": "done", "pct": 100,
-                                           "url": f"https://youtu.be/{video_id}"})
+            yt_url = f"https://youtu.be/{video_id}"
+            _yt_uploads[upload_id].update({"status": "done", "pct": 100, "url": yt_url})
+            # Persist URL to project so Results tab shows the link
+            auto_dir = file_path.parent if file_path.parent.name == "_autoframe" \
+                       else file_path.parent / "_autoframe"
+            _write_yt_url(auto_dir, file_path.name, yt_url)
         except Exception as e:
             _yt_uploads[upload_id].update({"status": "error", "error": str(e)})
 
@@ -1095,9 +1357,11 @@ async def serve_file(request: Request, path: str = Query(...)):
         "Cache-Control":  "public, max-age=86400",
     }
 
-    # Conditional request — return 304 if client already has the file
+    # Conditional request — return 304 (no body) if client already has the file
     if request.headers.get("if-none-match") == etag:
-        return JSONResponse(None, status_code=304, headers=base_headers)
+        return Response(status_code=304, headers=base_headers)
+    if request.headers.get("if-modified-since") == last_mod:
+        return Response(status_code=304, headers=base_headers)
 
     range_header = request.headers.get("range")
     if range_header:

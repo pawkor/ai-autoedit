@@ -2,25 +2,29 @@
 
 ## PL
 
-Pipeline zamienia surowy materiał z całego dnia w highlight reel bez ręcznego montażu.
+Pipeline zamienia surowy materiał z całego dnia w highlight reel bez ręcznego montażu. Uruchamiany przez przeglądarkę, wyniki dostępne w zakładce Results bez kopiowania plików.
 
-**1. Detekcja scen** (`scenedetect` lub `gpu_detect.py`)
+### Kroki pipeline
 
-Domyślnie: każdy plik MP4 przechodzi przez algorytm `detect-content` PySceneDetect — różnice histogramów kolorów między klatkami. Gdy różnica przekracza `threshold` (domyślnie 20) przez minimum `min_scene_len` (domyślnie 8s), zapisywana jest granica sceny.
+| Krok | Opis |
+|------|------|
+| 1 | Znalezienie plików MP4 w katalogu roboczym |
+| 2 | Detekcja cięć — PySceneDetect `detect-content` |
+| 3 | Podział — każda scena jako osobny plik w `_autoframe/autocut/` (stream copy, bez re-encodingu) |
+| 4 | Ekstrakcja klatki środkowej dla każdego klipu → `_autoframe/frames/` |
+| 5 | Scoring CLIP — `ViT-L-14` na GPU, wyniki w `_autoframe/scene_scores.csv` |
+| 6 | Selekcja + manualne overrides + przycinanie + enkodowanie scen |
+| 7 | Concat → `_autoframe/highlight.mp4` |
+| 8 | Intro (klatka z najwyższym score) + outro + fade → `_autoframe/highlight_final.mp4` |
+| 9 | Dobór muzyki, miks → `highlight_final_music_v1.mp4` (kolejne rundy: v2, v3…) |
 
-Z `--gpudetect`: klatki dekodowane przez `decord` w porcjach po 128, miniaturyzowane do 64×64, porównywane MAD. Wynik to CSV kompatybilny z PySceneDetect — cache działa tak samo. Jeśli decord nie ma CUDA, automatycznie spada na CPU.
+Wyniki kroków 1–5 są cache'owane — ponowne uruchomienie (np. po zmianie threshold) pomija już przetworzone etapy.
 
-Wyniki detekcji są cache'owane — ponowne uruchomienie pomija przetworzone pliki.
+### Detekcja scen
 
-**2. Podział na sceny** (`scenedetect split-video`)
+Każdy plik MP4 przechodzi przez algorytm `detect-content` PySceneDetect — różnice histogramów kolorów między klatkami. Gdy różnica przekracza `threshold` (domyślnie 20) przez minimum `min_scene_len` (domyślnie 8s), zapisywana jest granica sceny. Wyniki detekcji są cache'owane per plik.
 
-Każda wykryta scena wycinana jako osobny MP4 przez stream copy (bez re-encodingu). Pliki trafiają do `_autoframe/autocut/`.
-
-**3. Ekstrakcja klatek kluczowych** (`ffmpeg`)
-
-Dla każdego klipu większego niż 5 MB wyciągany jest jeden JPEG ze środka klipu (`duration / 2`). Klipy poniżej 5 MB są pomijane. Klatki cache'owane w `_autoframe/frames/`.
-
-**4. Scoring CLIP** (`clip_score.py`, ViT-L-14 na GPU)
+### Scoring CLIP
 
 Model `ViT-L-14` OpenCLIP (wagi OpenAI) na GPU. Klatki przetwarzane w paczkach (domyślnie 64). Dla każdej klatki:
 
@@ -30,93 +34,136 @@ neg_score   = średnie podobieństwo cosinusowe do wszystkich promptów negatywn
 final_score = pos_score - neg_score × neg_weight
 ```
 
-Wyniki trafiają do `_autoframe/scene_scores.csv` i są cache'owane.
+Wyniki trafiają do `_autoframe/scene_scores.csv`.
 
-**5. Selekcja scen** (`select_scenes.py`)
+### Selekcja scen
 
 Sceny filtrowane i wybierane osobno dla każdego pliku źródłowego:
 
-- Tylko sceny powyżej `threshold` (domyślnie 0.148).
-- Każdy plik ma limit `max_per_file_sec` (domyślnie 45s).
-- Słabo oceniane pliki dostają ostrzejszy limit przez system tierów.
+- Tylko sceny powyżej `threshold` (ustawiany w Gallery).
+- Każdy plik ma limit `max_per_file_sec` (domyślnie 45s łącznie).
 - Każda scena przycinana do `max_scene_sec` (domyślnie 10s), wyśrodkowana na środku klipu.
 - Klipy krótsze niż `min_take_sec` po przycięciu odrzucane.
+- Manualne overrides z Gallery (force-include / force-exclude) mają pierwszeństwo nad threshold.
 
-W trybie dual-camera sceny z kamery A i B przeplatane chronologicznie. Kamera A jest źródłem audio; kamera B jest wyciszona. Wynik: `_autoframe/selected_scenes.txt`.
+W trybie dual-camera sceny z kamery A i B przeplatane chronologicznie. Kamera A jest źródłem audio; kamera B jest wyciszona i zastępuje audio sygnałem null.
 
-**6. Składanie highlightu** (`ffmpeg`)
+### Enkodowanie
 
-Wybrane sceny łączone w `highlight.mp4`. Skalowanie do 4K (Lanczos), normalizacja do 60 fps (CFR), kodowanie NVENC jeśli dostępny, inaczej libx264. 4K jest celowe — YouTube przydziela znacznie więcej bitrate do uploadów 4K.
+Wybrane sceny łączone przez `ffmpeg concat`. Skalowanie do 4K (Lanczos), normalizacja do 60 fps (CFR), kodowanie NVENC jeśli dostępny, inaczej libx264. 4K jest celowe — YouTube przydziela znacznie więcej bitrate do uploadów 4K niż 1080p.
 
-**7. Intro i outro** (`ffmpeg drawtext`)
+### Intro i outro
 
-Tło intro: klatka z najwyższym score CLIP. Nad nią dwie linie fontem Caveat Bold: rok + nazwa trasy (auto z nazwy katalogu lub `--title`). Outro: czarna plansza z konfigurowalnym tekstem. Fade in/out. Montaż przez stream copy do `highlight_final.mp4`.
+Tło intro: klatka z najwyższym score CLIP. Nad nią dwie linie fontem Caveat Bold: rok + nazwa trasy (auto z nazwy katalogu roboczego). Outro: czarna plansza z konfigurowalnym tekstem. Fade in/out. Montaż przez stream copy do `_autoframe/highlight_final.mp4`.
 
-**8. Dobór i miks muzyki** (`music_index.py` + `ffmpeg`)
+### Dobór i miks muzyki
 
-Biblioteka muzyczna analizowana raz i cache'owana w `index.json`. Średni score CLIP mapowany na docelową energię muzyki. Finalny wybór losowany z top 5 kandydatów — różne utwory przy kolejnych uruchomieniach. Wynik: `highlight_final_music.mp4`.
+Biblioteka muzyczna analizowana raz i cache'owana w `index.json` (BPM, energia, gatunek). Średni score CLIP mapowany na docelową energię muzyki:
 
-**Auto-generowanie config.ini** (`generate_config.py`)
+```
+energy_target = (avg_score - 0.14) × 10   (obcięte do 0.2–0.9)
+```
 
-Flaga `--about "opis dnia"` wywołuje Claude Haiku API przed uruchomieniem pipeline i generuje `config.ini` dopasowany do opisanego materiału. Wymaga zmiennej środowiskowej `ANTHROPIC_API_KEY`.
+Materiał wysoko oceniany → energetyczna muzyka. Filtrowanie po czasie trwania (utwór ≈ długość highlight ±5s). Finalny wybór losowany z top 5 kandydatów — różne utwory przy kolejnych uruchomieniach.
 
-**Kaskada konfiguracji**
+Kolejne rundy z nową muzyką nie nadpisują poprzednich wyników — każda tworzy nowy plik `v2.mp4`, `v3.mp4` itd.
 
-`<repo>/config.ini` przechowuje globalne domyślne. Jeśli w bieżącym katalogu (folder dnia) istnieje `config.ini`, jego wartości mają pierwszeństwo.
+### Prompty CLIP i auto-generowanie
 
----
+Prompty edytowalne w zakładce **Settings** lub w `config.ini`. Przycisk **Generate CLIP prompts** w formularzu nowego projektu wywołuje Claude API i generuje prompty POSITIVE/NEGATIVE na podstawie opisu wyjazdu.
 
-## Kroki pipeline
+### Pliki wyjściowe
 
-| Krok | Opis |
-|------|------|
-| 1 | Znalezienie plików MP4 |
-| 2 | Detekcja scen — `scenedetect` (CPU) lub `gpu_detect.py` (GPU) |
-| 3 | Podział — każda scena jako osobny plik w `autocut/` |
-| 4 | Ekstrakcja klatek kluczowych |
-| 5 | Scoring CLIP — `ViT-L-14` na GPU |
-| 6 | Selekcja scen |
-| 7 | Concat → `highlight.mp4` |
-| 8 | Intro + outro → `highlight_final.mp4` |
-| 9 | Miks muzyczny → `highlight_final_music.mp4` |
-
-Wyniki kroków 1–5 są cache'owane.
+```
+projekt/
+├── highlight_final_music_v1.mp4   ← główny wynik
+├── highlight_final_music_v2.mp4   ← kolejna muzyka
+└── _autoframe/
+    ├── highlight.mp4              ← surowy highlight bez intro
+    ├── highlight_final.mp4        ← z intro/outro, bez muzyki
+    ├── autocut/                   ← pocięte sceny
+    ├── frames/                    ← klatki do scoringu (JPEG)
+    ├── scene_scores.csv           ← wyniki CLIP
+    ├── selected_scenes.txt        ← lista do ffmpeg concat
+    └── manual_overrides.json      ← ręczne oznaczenia z Gallery
+```
 
 ---
 
 ## EN
 
-**1. Scene detection** (`scenedetect` or `gpu_detect.py`)
+The pipeline turns a full day of raw footage into a highlight reel without manual editing. Launched from the browser; results available in the Results tab without copying files.
 
-Default: PySceneDetect `detect-content` — frame-to-frame colour histogram differences. With `--gpudetect`: frames decoded by `decord` in chunks of 128, downscaled to 64×64, compared with MAD. If decord lacks CUDA, falls back to CPU automatically.
+### Pipeline steps
 
-**2. Scene splitting** — stream copy, no re-encoding. Files land in `_autoframe/autocut/`.
+| Step | Description |
+|------|-------------|
+| 1 | Find MP4 files in the working directory |
+| 2 | Scene cut detection — PySceneDetect `detect-content` |
+| 3 | Split — each scene as a separate file in `_autoframe/autocut/` (stream copy, no re-encoding) |
+| 4 | Key frame extraction (midpoint JPEG) → `_autoframe/frames/` |
+| 5 | CLIP scoring — `ViT-L-14` on GPU, results in `_autoframe/scene_scores.csv` |
+| 6 | Selection + manual overrides + trimming + scene encoding |
+| 7 | Concat → `_autoframe/highlight.mp4` |
+| 8 | Intro (top-scoring frame) + outro + fade → `_autoframe/highlight_final.mp4` |
+| 9 | Music selection, mix → `highlight_final_music_v1.mp4` (subsequent runs: v2, v3…) |
 
-**3. Key frame extraction** — midpoint JPEG from each clip >5 MB. Cached in `_autoframe/frames/`.
+Steps 1–5 results are cached — rerunning after a threshold change skips already-processed stages.
 
-**4. CLIP scoring** (`clip_score.py`) — OpenCLIP `ViT-L-14` on GPU, batch processing.
+### Scene detection
+
+PySceneDetect `detect-content` — frame-to-frame colour histogram differences. A cut is recorded when the difference exceeds `threshold` (default 20) for at least `min_scene_len` (default 8s). Results cached per file.
+
+### CLIP scoring
+
+OpenCLIP `ViT-L-14` (OpenAI weights) on GPU, processing frames in batches (default 64).
+
 ```
 final_score = pos_score - neg_score × neg_weight
 ```
 
-**5. Scene selection** (`select_scenes.py`) — threshold filter, tier limits, per-file cap, trim to midpoint. Dual-camera mode interleaves A and B chronologically.
+### Scene selection
 
-**6. Highlight assembly** — 4K upscale (Lanczos), 60fps CFR, NVENC or libx264.
+Scenes filtered and selected per source file:
 
-**7. Intro/outro** — best-scoring frame as background, Caveat Bold title text, fade in/out.
+- Only scenes above `threshold` (set in Gallery).
+- Each file has a `max_per_file_sec` cap (default 45s total).
+- Each scene trimmed to `max_scene_sec` (default 10s), centred on the midpoint.
+- Clips shorter than `min_take_sec` after trimming are discarded.
+- Manual overrides from Gallery (force-include / force-exclude) take precedence over threshold.
 
-**8. Music mix** — average CLIP score mapped to energy target, random pick from top 5 candidates.
+Dual-camera mode interleaves scenes from camera A and B chronologically. Camera A is the audio source; camera B is muted with a null audio source.
 
-| Step | Description |
-|------|-------------|
-| 1 | Find MP4 files |
-| 2 | Scene detection — `scenedetect` (CPU) or `gpu_detect.py` (GPU) |
-| 3 | Split scenes → `autocut/` |
-| 4 | Key frame extraction |
-| 5 | CLIP scoring — `ViT-L-14` on GPU |
-| 6 | Scene selection |
-| 7 | Concat → `highlight.mp4` |
-| 8 | Intro + outro → `highlight_final.mp4` |
-| 9 | Music mix → `highlight_final_music.mp4` |
+### Encoding
 
-Steps 1–5 results are cached.
+4K upscale (Lanczos), 60fps CFR, NVENC if available, libx264 fallback. 4K is intentional — YouTube allocates significantly more bitrate to 4K uploads than 1080p.
+
+### Intro/outro
+
+Best-scoring frame as background, two-line Caveat Bold title (year + trip name from directory), configurable outro card, fade in/out, assembled via stream copy.
+
+### Music selection
+
+Library analysed once and cached in `index.json` (BPM, energy, genre). Average CLIP score mapped to energy target:
+
+```
+energy_target = (avg_score - 0.14) × 10   (clamped 0.2–0.9)
+```
+
+High-scoring footage → energetic music. Filtered by duration (track ≈ highlight length ±5s). Final pick chosen randomly from top 5 — ensures variety across runs. Each music rerun creates a new versioned file rather than overwriting.
+
+### Output files
+
+```
+project/
+├── highlight_final_music_v1.mp4   ← main output
+├── highlight_final_music_v2.mp4   ← next music run
+└── _autoframe/
+    ├── highlight.mp4              ← raw highlight without intro
+    ├── highlight_final.mp4        ← with intro/outro, no music
+    ├── autocut/                   ← split scenes
+    ├── frames/                    ← CLIP scoring frames (JPEG)
+    ├── scene_scores.csv           ← CLIP scores
+    ├── selected_scenes.txt        ← ffmpeg concat list
+    └── manual_overrides.json      ← Gallery overrides
+```

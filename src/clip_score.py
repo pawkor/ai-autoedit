@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 import os
 import sys
+import logging
 import warnings
 import configparser
+
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
 import torch
 import open_clip
 
@@ -28,6 +33,17 @@ def _parse_prompts(raw: str) -> list:
 
 POSITIVE_PROMPTS = _parse_prompts(_cfg.get("clip_prompts", "positive", fallback=""))
 NEGATIVE_PROMPTS = _parse_prompts(_cfg.get("clip_prompts", "negative", fallback=""))
+
+if not POSITIVE_PROMPTS:
+    print("ERROR: No positive CLIP prompts configured.\n"
+          "Set [clip_prompts] positive in config.ini or generate prompts in Settings → Describe this ride.",
+          file=sys.stderr)
+    sys.exit(1)
+if not NEGATIVE_PROMPTS:
+    print("ERROR: No negative CLIP prompts configured.\n"
+          "Set [clip_prompts] negative in config.ini.",
+          file=sys.stderr)
+    sys.exit(1)
 
 print(f"Device: {DEVICE}")
 if DEVICE == "cuda":

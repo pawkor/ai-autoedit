@@ -8,7 +8,7 @@
 # NCS — pobierz z playlisty YouTube
 yt-dlp -x --audio-format mp3 \
     "PLAYLIST_URL" \
-    -o "$HOME/moto/music/%(title)s.%(ext)s"
+    -o "$HOME/moto/music/NCS/%(title)s.%(ext)s"
 ```
 
 Pliki mogą mieć dowolną nazwę. Gatunek wykrywany automatycznie z formatu NCS:
@@ -16,42 +16,41 @@ Pliki mogą mieć dowolną nazwę. Gatunek wykrywany automatycznie z formatu NCS
 
 ### Budowanie indeksu
 
-```bash
-# Pierwsze indeksowanie lub po dodaniu nowych plików
-~/ai-autoedit/autoframe.sh --music-rebuild
+Indeks budowany przez Web UI: zakładka **Music** → przycisk **↺ Update index**.
 
-# Albo bezpośrednio
-source ~/highlight-env/bin/activate
-python3 ~/ai-autoedit/music_index.py ~/moto/music
-```
+- **re-analyze** — wymusza ponowne liczenie BPM i energii dla wszystkich plików (`--force`)
+- **re-genres** — odświeża tylko gatunki przez Last.fm bez ponownej analizy audio (`--force-genres`)
 
-`index.json` przechowuje: BPM, energię 0–1, czas trwania, gatunek. Usunięte pliki są usuwane z indeksu automatycznie. Już zindeksowane pliki są pomijane.
+Paski postępu pokazują rzeczywisty postęp analizy pliku po pliku. Usunięte pliki są usuwane z indeksu automatycznie przy kolejnym uruchomieniu. Już zindeksowane pliki są pomijane.
+
+Indeks przechowywany w `index.json` w katalogu muzycznym. Pola: BPM, energia (0–1), czas trwania, gatunek, wykonawca, tytuł.
+
+### Gatunek — źródła w kolejności priorytetów
+
+1. Tagi osadzone w pliku (ID3/iTunes) — odczytywane przez `ffprobe`
+2. Wzorzec nazwy pliku `｜ Genre ｜` (konwencja NCS)
+3. Last.fm API — tylko jeśli ustawiony `LAST_FM_API_KEY` w `.env`
+
+### Wybór muzyki przez Web UI
+
+Zakładka **Music**:
+- Filtruj po tytule/wykonawcy wpisując tekst w pole Filter
+- Filtruj po gatunku przez dropdown
+- Kliknij ▶ żeby odsłuchać utwór — seek bar pojawi się pod tytułem
+- Zaznacz checkboxy przy wybranych ścieżkach
+- Zaznaczone ścieżki trafiają do pipeline przy kolejnym renderze
+
+Filtr czasu trwania: pokazywane są tylko ścieżki o czasie trwania zbliżonym do szacowanego czasu highlight (±5s). Jeśli żadna ścieżka nie pasuje — rozszerz bibliotekę lub zmień threshold w Gallery.
 
 ### Logika doboru utworu
 
-Pipeline mapuje średni score CLIP wszystkich scen na docelową energię:
+Pipeline mapuje średni score CLIP wszystkich wybranych scen na docelową energię muzyki:
 
 ```
 energy_target = (avg_score - 0.14) × 10   (obcięte do 0.2–0.9)
 ```
 
-Materiał wysoko oceniany → energetyczna muzyka. Materiał słabo oceniany → spokojna.
-
-Filtrowane są utwory co najmniej tak długie jak wideo, sortowane po bliskości długości. Finalny wybór losowany z top 5 kandydatów — różne utwory przy kolejnych uruchomieniach na tym samym materiale.
-
-### Filtrowanie muzyki
-
-```bash
-# Tylko konkretny gatunek
-~/ai-autoedit/autoframe.sh --music-genre "progressive house"
-
-# Konkretny artysta lub lista artystów
-~/ai-autoedit/autoframe.sh --music-artist "elektronomia"
-~/ai-autoedit/autoframe.sh --music-artist "tobu,janji,alan"
-
-# Kombinacja
-~/ai-autoedit/autoframe.sh --music-genre "dnb" --music-artist "high maintenance"
-```
+Materiał wysoko oceniany → energetyczna muzyka. Materiał słabo oceniany → spokojna. Finalny wybór losowany z top 5 kandydatów — różne utwory przy kolejnych renderach tego samego materiału.
 
 ---
 
@@ -63,7 +62,7 @@ Filtrowane są utwory co najmniej tak długie jak wideo, sortowane po bliskości
 # NCS — download from YouTube playlist
 yt-dlp -x --audio-format mp3 \
     "PLAYLIST_URL" \
-    -o "$HOME/moto/music/%(title)s.%(ext)s"
+    -o "$HOME/moto/music/NCS/%(title)s.%(ext)s"
 ```
 
 Files can have any name. Genre detected automatically from NCS filename format:
@@ -71,30 +70,38 @@ Files can have any name. Genre detected automatically from NCS filename format:
 
 ### Building the index
 
-```bash
-~/ai-autoedit/autoframe.sh --music-rebuild
-# or directly:
-python3 ~/ai-autoedit/music_index.py ~/moto/music
-```
+Built via Web UI: **Music** tab → **↺ Update index** button.
 
-`index.json` stores: BPM, energy 0–1, duration, genre. Deleted files are removed automatically. Already indexed files are skipped.
+- **re-analyze** — forces BPM and energy re-analysis for all files
+- **re-genres** — refreshes genres via Last.fm only, no audio re-analysis
+
+A real per-file progress bar tracks the analysis. Deleted files are removed from the index automatically on the next run. Already indexed files are skipped.
+
+Index stored in `index.json` in the music directory. Fields: BPM, energy (0–1), duration, genre, artist, title.
+
+### Genre — source priority
+
+1. Embedded file tags (ID3/iTunes) — read via `ffprobe`
+2. Filename pattern `｜ Genre ｜` (NCS convention)
+3. Last.fm API — only if `LAST_FM_API_KEY` is set in `.env`
+
+### Music selection via Web UI
+
+**Music** tab:
+- Filter by title/artist using the text filter
+- Filter by genre using the dropdown
+- Click ▶ to preview a track — seek bar appears inline below the title
+- Check boxes next to selected tracks
+- Checked tracks are used in the next render
+
+Duration filter: only tracks within ±5s of the estimated highlight duration are shown. If no tracks match — expand the library or adjust the Gallery threshold.
 
 ### Track selection logic
 
-Average CLIP score of all scenes mapped to energy target:
+Average CLIP score of selected scenes mapped to music energy target:
 
 ```
 energy_target = (avg_score - 0.14) × 10   (clamped 0.2–0.9)
 ```
 
-High-scoring footage → energetic music. Low-scoring footage → calm music.
-
-Tracks filtered to those at least as long as the video, sorted by duration proximity. Final pick chosen randomly from top 5 — ensures variety across runs.
-
-### Filtering music
-
-```bash
-~/ai-autoedit/autoframe.sh --music-genre "progressive house"
-~/ai-autoedit/autoframe.sh --music-artist "elektronomia"
-~/ai-autoedit/autoframe.sh --music-artist "tobu,janji,alan"
-```
+High-scoring footage → energetic music. Final pick chosen randomly from top 5 candidates — ensures variety across renders of the same footage.

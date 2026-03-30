@@ -17,7 +17,7 @@ import argparse
 import urllib.request
 import urllib.parse
 from pathlib import Path
-from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import subprocess
 import numpy as np
@@ -152,8 +152,11 @@ def analyze_track(mp3_path: str) -> dict | None:
     try:
         sr = 22050
         y = load_audio_ffmpeg(mp3_path, sr)
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = float(tempo) if np.isscalar(tempo) else float(tempo[0])
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tempo = librosa.beat.tempo(y=y, sr=sr)
+        bpm = float(tempo[0])
         energy = float(np.mean(librosa.feature.rms(y=y)[0]))
         duration = len(y) / sr
 
@@ -260,13 +263,17 @@ def main():
     new_count = 0
 
     if new_files:
-        print(f"  Analyzing {len(new_files)} new tracks ({args.workers} workers)...")
-        with Pool(args.workers) as pool:
-            for entry in tqdm(pool.imap_unordered(analyze_track, new_files), total=len(new_files)):
+        total_new = len(new_files)
+        print(f"TOTAL:{total_new}", flush=True)
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futures = {ex.submit(analyze_track, f): f for f in new_files}
+            for i, future in enumerate(as_completed(futures), 1):
+                entry = future.result()
                 if entry:
                     results.append(entry)
                     new_count += 1
-                if new_count % 10 == 0:
+                print(f"PROGRESS:{i}/{total_new}", flush=True)
+                if i % 10 == 0:
                     save(results, output_path)
 
     enriched = enrich_genres(results, force=args.force_genres)

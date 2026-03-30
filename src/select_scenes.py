@@ -15,10 +15,6 @@ _cfg.read([_script_dir / "config.ini", Path.cwd() / "config.ini"])
 THRESHOLD        = float(sys.argv[1]) if len(sys.argv) > 1 else _cfg.getfloat("scene_selection", "threshold",        fallback=0.148)
 MAX_SCENE_SEC    = float(sys.argv[2]) if len(sys.argv) > 2 else _cfg.getfloat("scene_selection", "max_scene_sec",    fallback=10)
 MAX_PER_FILE_SEC = float(sys.argv[3]) if len(sys.argv) > 3 else _cfg.getfloat("scene_selection", "max_per_file_sec", fallback=45)
-TIER1_CUTOFF     = _cfg.getfloat("scene_selection", "tier1_cutoff", fallback=0.145)
-TIER1_LIMIT      = _cfg.getfloat("scene_selection", "tier1_limit",  fallback=10)
-TIER2_CUTOFF     = _cfg.getfloat("scene_selection", "tier2_cutoff", fallback=0.150)
-TIER2_LIMIT      = _cfg.getfloat("scene_selection", "tier2_limit",  fallback=20)
 MIN_TAKE_SEC     = _cfg.getfloat("scene_selection", "min_take_sec", fallback=0.5)
 WORKERS          = _cfg.getint("scene_selection",   "workers",      fallback=min(os.cpu_count() or 1, 12))
 X264_CRF         = str(_cfg.getint("video", "x264_crf",    fallback=15))
@@ -86,18 +82,10 @@ with ThreadPoolExecutor(max_workers=WORKERS) as ex:
 
 
 def select_from_group(group_df):
-    top_score = group_df['score'].max()
-    if top_score < TIER1_CUTOFF:
-        file_limit = TIER1_LIMIT
-    elif top_score < TIER2_CUTOFF:
-        file_limit = TIER2_LIMIT
-    else:
-        file_limit = MAX_PER_FILE_SEC
-
     file_total = 0
     result = []
     for _, row in group_df[group_df['score'] >= THRESHOLD].sort_values('score', ascending=False).iterrows():
-        if file_total >= file_limit:
+        if file_total >= MAX_PER_FILE_SEC:
             break
 
         duration = duration_map.get(row['scene'])
@@ -105,7 +93,7 @@ def select_from_group(group_df):
             continue
 
         take = min(duration, MAX_SCENE_SEC)
-        take = min(take, file_limit - file_total)
+        take = min(take, MAX_PER_FILE_SEC - file_total)
         if take < MIN_TAKE_SEC:
             continue
 
