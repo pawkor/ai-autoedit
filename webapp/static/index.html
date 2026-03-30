@@ -1730,7 +1730,7 @@ async function ytUpload() {
   const btn    = document.getElementById('btn-yt-upload');
   const status = document.getElementById('yt-status');
   btn.disabled = true;
-  status.textContent = 'Uploading…';
+  status.textContent = 'Starting…';
   status.style.color = 'var(--muted)';
 
   const resp = await api.post('/api/youtube/upload', {
@@ -1742,15 +1742,31 @@ async function ytUpload() {
     new_playlist: newPlaylist,
   });
 
-  if (resp?.ok) {
-    status.innerHTML = `✓ <a href="${resp.url}" target="_blank" style="color:var(--accent)">${resp.url}</a>`;
-    status.style.color = 'var(--green)';
-    btn.textContent = '✓ Done';
-  } else {
-    status.textContent = 'Error: ' + (resp?.detail || resp?.message || 'upload failed');
+  if (!resp?.upload_id) {
+    status.textContent = 'Error: ' + (resp?.detail || 'failed to start');
     status.style.color = 'var(--red)';
     btn.disabled = false;
+    return;
   }
+
+  // Poll progress
+  const poll = setInterval(async () => {
+    const s = await api.get(`/api/youtube/upload/${resp.upload_id}`);
+    if (!s) return;
+    if (s.status === 'uploading') {
+      status.textContent = `Uploading… ${s.pct}%`;
+    } else if (s.status === 'done') {
+      clearInterval(poll);
+      status.innerHTML = `✓ <a href="${s.url}" target="_blank" style="color:var(--accent)">${s.url}</a>`;
+      status.style.color = 'var(--green)';
+      btn.textContent = '✓ Done';
+    } else if (s.status === 'error') {
+      clearInterval(poll);
+      status.textContent = 'Error: ' + (s.error || 'upload failed');
+      status.style.color = 'var(--red)';
+      btn.disabled = false;
+    }
+  }, 2000);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

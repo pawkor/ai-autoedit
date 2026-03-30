@@ -966,6 +966,8 @@ async def yt_playlists():
     return await asyncio.to_thread(_fetch)
 
 
+_yt_uploads: dict = {}  # upload_id → {status, pct, url, error}
+
 @app.post("/api/youtube/upload")
 async def yt_upload(payload: dict):
     creds = _yt_creds()
@@ -976,6 +978,9 @@ async def yt_upload(payload: dict):
         raise HTTPException(404, "File not found")
     if not str(file_path).startswith(str(BROWSE_ROOT)):
         raise HTTPException(403, "Access denied")
+
+    upload_id = str(uuid.uuid4())[:8]
+    _yt_uploads[upload_id] = {"status": "uploading", "pct": 0, "url": None, "error": None}
 
     def _do_upload():
         from googleapiclient.discovery import build
@@ -991,7 +996,8 @@ async def yt_upload(payload: dict):
             ).execute()
             playlist_id = pl["id"]
 
-        media = MediaFileUpload(str(file_path), chunksize=-1, resumable=True)
+        chunksize = 10 * 1024 * 1024  # 10 MB chunks
+        media = MediaFileUpload(str(file_path), chunksize=chunksize, resumable=True)
         req = yt.videos().insert(
             part="snippet,status",
             body={
@@ -1001,9 +1007,14 @@ async def yt_upload(payload: dict):
             },
             media_body=media,
         )
-        _, response = req.next_chunk()
-        video_id = response["id"]
 
+        response = None
+        while response is None:
+            status, response = req.next_chunk()
+            if status:
+                _yt_uploads[upload_id]["pct"] = int(status.progress() * 100)
+
+        video_id = response["id"]
         if playlist_id:
             yt.playlistItems().insert(
                 part="snippet",
@@ -1012,8 +1023,24 @@ async def yt_upload(payload: dict):
             ).execute()
         return video_id
 
-    video_id = await asyncio.to_thread(_do_upload)
-    return {"ok": True, "video_id": video_id, "url": f"https://youtu.be/{video_id}"}
+    async def _run():
+        try:
+            video_id = await asyncio.to_thread(_do_upload)
+            _yt_uploads[upload_id].update({"status": "done", "pct": 100,
+                                           "url": f"https://youtu.be/{video_id}"})
+        except Exception as e:
+            _yt_uploads[upload_id].update({"status": "error", "error": str(e)})
+
+    asyncio.create_task(_run())
+    return {"upload_id": upload_id}
+
+
+@app.get("/api/youtube/upload/{upload_id}")
+async def yt_upload_status(upload_id: str):
+    s = _yt_uploads.get(upload_id)
+    if not s:
+        raise HTTPException(404)
+    return s
 
 
 @app.delete("/api/youtube/disconnect")
