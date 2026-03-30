@@ -213,6 +213,9 @@ async def run(params: dict, work_dir: Path) -> AsyncIterator[str]:
     yield ""
     yield "[2/6] Scene detection..."
 
+    total_detect = len(source_files)
+    done_detect = 0
+
     async def _detect(sf: Path) -> str:
         csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
         if csv.exists():
@@ -229,8 +232,11 @@ async def run(params: dict, work_dir: Path) -> AsyncIterator[str]:
         status = "✓" if csv.exists() else "✗"
         return f"  {status} {sf.name}: {count} scenes"
 
-    for line in await asyncio.gather(*[_detect(sf) for sf in source_files]):
-        yield line
+    tasks = [asyncio.create_task(_detect(sf)) for sf in source_files]
+    for coro in asyncio.as_completed(tasks):
+        result = await coro
+        done_detect += 1
+        yield f"  [{done_detect}/{total_detect}] {result.strip()}"
 
     # ── [3/6] Split scenes (parallel) ────────────────────────────────────────
     yield ""

@@ -886,6 +886,142 @@ async def job_result(job_id: str):
     return files
 
 
+# ── YouTube ───────────────────────────────────────────────────────────────────
+
+YT_SECRETS = WEBAPP_DIR / "youtube_client_secrets.json"
+YT_TOKEN   = WEBAPP_DIR / "youtube_token.json"
+YT_SCOPES  = ["https://www.googleapis.com/auth/youtube"]
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")  # allow http for local server
+
+
+def _yt_creds():
+    if not YT_TOKEN.exists():
+        return None
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request as GRequest
+        creds = Credentials.from_authorized_user_file(str(YT_TOKEN), YT_SCOPES)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GRequest())
+            YT_TOKEN.write_text(creds.to_json())
+        return creds if creds.valid else None
+    except Exception:
+        return None
+
+
+@app.get("/api/youtube/status")
+async def yt_status():
+    return {"authenticated": _yt_creds() is not None, "has_secrets": YT_SECRETS.exists()}
+
+
+@app.get("/api/youtube/auth")
+async def yt_auth(origin: str = Query(...)):
+    if not YT_SECRETS.exists():
+        raise HTTPException(400, "youtube_client_secrets.json not found in webapp/")
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_secrets_file(
+        str(YT_SECRETS), scopes=YT_SCOPES,
+        redirect_uri=f"{origin}/api/youtube/callback",
+    )
+    auth_url, state = flow.authorization_url(access_type="offline", prompt="consent")
+    (WEBAPP_DIR / "youtube_flow.json").write_text(json.dumps({
+        "state": state, "redirect_uri": f"{origin}/api/youtube/callback",
+    }))
+    return {"url": auth_url}
+
+
+@app.get("/api/youtube/callback")
+async def yt_callback(code: str = Query(None), error: str = Query(None)):
+    from fastapi.responses import HTMLResponse
+    if error:
+        return HTMLResponse(f"<h2>YouTube auth error: {error}</h2>")
+    flow_file = WEBAPP_DIR / "youtube_flow.json"
+    if not flow_file.exists():
+        return HTMLResponse("<h2>OAuth flow not started — please try again.</h2>")
+    flow_data = json.loads(flow_file.read_text())
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_secrets_file(
+        str(YT_SECRETS), scopes=YT_SCOPES,
+        redirect_uri=flow_data["redirect_uri"], state=flow_data["state"],
+    )
+    flow.fetch_token(code=code)
+    YT_TOKEN.write_text(flow.credentials.to_json())
+    flow_file.unlink(missing_ok=True)
+    return HTMLResponse("<h2>YouTube connected! You can close this tab.</h2><script>window.close()</script>")
+
+
+@app.get("/api/youtube/playlists")
+async def yt_playlists():
+    creds = _yt_creds()
+    if not creds:
+        raise HTTPException(401, "Not authenticated")
+    def _fetch():
+        from googleapiclient.discovery import build
+        yt = build("youtube", "v3", credentials=creds)
+        resp = yt.playlists().list(part="snippet", mine=True, maxResults=50).execute()
+        return sorted(
+            [{"id": i["id"], "title": i["snippet"]["title"]} for i in resp.get("items", [])],
+            key=lambda x: x["title"],
+        )
+    return await asyncio.to_thread(_fetch)
+
+
+@app.post("/api/youtube/upload")
+async def yt_upload(payload: dict):
+    creds = _yt_creds()
+    if not creds:
+        raise HTTPException(401, "Not authenticated")
+    file_path = Path(payload["file_path"])
+    if not file_path.exists():
+        raise HTTPException(404, "File not found")
+    if not str(file_path).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403, "Access denied")
+
+    def _do_upload():
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        yt = build("youtube", "v3", credentials=creds)
+
+        playlist_id = payload.get("playlist_id") or None
+        if payload.get("new_playlist"):
+            pl = yt.playlists().insert(
+                part="snippet,status",
+                body={"snippet": {"title": payload["new_playlist"]},
+                      "status": {"privacyStatus": payload.get("privacy", "unlisted")}},
+            ).execute()
+            playlist_id = pl["id"]
+
+        media = MediaFileUpload(str(file_path), chunksize=-1, resumable=True)
+        req = yt.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {"title": payload.get("title", file_path.stem),
+                            "description": payload.get("description", "")},
+                "status":  {"privacyStatus": payload.get("privacy", "unlisted")},
+            },
+            media_body=media,
+        )
+        _, response = req.next_chunk()
+        video_id = response["id"]
+
+        if playlist_id:
+            yt.playlistItems().insert(
+                part="snippet",
+                body={"snippet": {"playlistId": playlist_id,
+                                  "resourceId": {"kind": "youtube#video", "videoId": video_id}}},
+            ).execute()
+        return video_id
+
+    video_id = await asyncio.to_thread(_do_upload)
+    return {"ok": True, "video_id": video_id, "url": f"https://youtu.be/{video_id}"}
+
+
+@app.delete("/api/youtube/disconnect")
+async def yt_disconnect():
+    YT_TOKEN.unlink(missing_ok=True)
+    return {"ok": True}
+
+
 @app.get("/api/file")
 async def serve_file(request: Request, path: str = Query(...)):
     p = Path(path).resolve()

@@ -172,15 +172,16 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #sidebar-sort:hover { border-color:var(--accent); color:var(--accent); }
 #frames-scroll { flex:1; overflow-y:scroll; padding:14px; }
 #frames-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
-.fc { border:1px solid var(--border); border-radius:3px; overflow:hidden; transition:border-color .15s, opacity .15s; }
-.fc.excluded { opacity:.25; }
+.fc { border:1px solid var(--border); border-radius:3px; overflow:hidden; transition:border-color .15s; }
+.fc.excluded img { opacity:.2; }
 .fc.included { border-color:var(--green); }
 .fc.manual.included { border-color:#4af; border-style:dashed; }
-.fc.manual.excluded { opacity:.25; border:2px dashed #f64; }
-.fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#111; }
-.fc-info { padding:3px 6px; display:flex; justify-content:space-between; font-size:10px; }
-.fc-score { color:var(--accent); }
-.fc-name  { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }
+.fc.manual.excluded { border:2px dashed #f64; }
+.fc.manual.excluded img { opacity:.2; }
+.fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#111; transition:opacity .15s; }
+.fc-info { padding:3px 6px; display:flex; justify-content:space-between; align-items:baseline; font-size:12px; background:var(--bg2); }
+.fc-score { color:var(--accent); flex-shrink:0; }
+.fc-name  { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; text-align:right; }
 
 /* ── Music tab ── */
 #music-panel { flex:1; overflow:hidden; display:none; flex-direction:column; }
@@ -209,6 +210,11 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #music-genre:focus { border-color:var(--accent); }
 .cb-label { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--muted); cursor:pointer; white-space:nowrap; }
 .cb-label input[type=checkbox] { accent-color:var(--accent); cursor:pointer; }
+
+/* ── YouTube modal ── */
+#yt-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#yt-modal.open { display:flex; }
+#yt-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:460px; }
 
 /* ── Results tab ── */
 #results-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:14px; }
@@ -527,10 +533,58 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
         <input type="number" id="s-max-jobs" value="1" min="1" max="8">
       </div>
       <div id="settings-note" data-i18n="misc.settings_note">Changes to max concurrent jobs require server restart.</div>
+      <hr style="border-color:var(--border);margin:12px 0">
+      <div class="ff">
+        <label>YouTube</label>
+        <div id="yt-connect-row" style="display:flex;align-items:center;gap:8px;margin-top:4px">
+          <span id="yt-status-dot" style="font-size:11px;color:var(--muted)">…</span>
+          <button class="btn-sm" id="btn-yt-connect" onclick="ytConnect()">Connect</button>
+          <button class="btn-sm" id="btn-yt-disconnect" style="display:none" onclick="ytDisconnect()">Disconnect</button>
+        </div>
+        <div id="yt-secrets-hint" style="display:none;font-size:10px;color:var(--muted);margin-top:4px">
+          Place <code>youtube_client_secrets.json</code> in <code>webapp/</code> first.
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn-sm" data-i18n="btn.cancel" onclick="closeSettings()">Cancel</button>
       <button class="btn-primary" data-i18n="btn.save" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- YouTube upload modal -->
+<div id="yt-modal">
+  <div id="yt-box">
+    <div class="modal-header">
+      <span>▲ Upload to YouTube</span>
+      <button class="icon-btn" onclick="ytModalClose()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ff"><label>File</label><div id="yt-file-name" style="font-size:11px;color:var(--muted)"></div></div>
+      <div class="ff"><label>Title</label><input type="text" id="yt-title"></div>
+      <div class="ff"><label>Description</label><textarea id="yt-desc" rows="3" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box"></textarea></div>
+      <div class="ff">
+        <label>Privacy</label>
+        <div style="display:flex;gap:14px;margin-top:4px">
+          <label class="cb-label"><input type="radio" name="yt-privacy" value="private"> private</label>
+          <label class="cb-label"><input type="radio" name="yt-privacy" value="unlisted" checked> unlisted</label>
+          <label class="cb-label"><input type="radio" name="yt-privacy" value="public"> public</label>
+        </div>
+      </div>
+      <div class="ff">
+        <label>Playlist</label>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <select id="yt-playlist" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none"></select>
+          <button class="btn-sm" onclick="ytNewPlaylist()">+ New</button>
+        </div>
+        <input type="text" id="yt-new-playlist" placeholder="New playlist name…" style="display:none;margin-top:6px;width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--accent);color:var(--text);padding:4px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none">
+      </div>
+      <div id="yt-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-sm" onclick="ytModalClose()">Cancel</button>
+      <button class="btn-primary" id="btn-yt-upload" onclick="ytUpload()">▲ Upload</button>
     </div>
   </div>
 </div>
@@ -755,6 +809,7 @@ const api = {
 let currentJobId=null, jobWs=null, statsWs=null, elapsedTimer=null;
 let browsePath=null, framesData=[], manualOverrides={};
 let jobSortNewest=true, currentJobMaxScene=null;
+let _ytFilePath = null;
 let _refreshing=false;
 let musicTracks=[], musicSelected=new Set();
 const _frameCache = new Map(); // original url → blob URL
@@ -1017,7 +1072,7 @@ function connectJobWs(jobId, startedAt) {
 }
 
 // ── Log ───────────────────────────────────────────────────────────────────────
-const PROGRESS_RE = /^\s+\[[\u2588\u2591 ]+\]\s+\d+%/;
+const PROGRESS_RE = /^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%/;
 
 function appendLog(line) {
   const panel = document.getElementById('log-panel');
@@ -1205,9 +1260,12 @@ function renderGallery() {
     card.dataset.scene = f.scene;
     card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)` : `Score: ${f.score.toFixed(3)} (click to toggle)`;
     card.onclick = ()=>toggleFrame(f.scene);
-    const name = f.scene.replace(/-scene-\d+$/,'').split('/').pop().slice(-22);
+    const sceneLabel = (s => {
+      const m = s.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2}).*-scene-(\d+)$/);
+      return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} #${m[7]}` : s.split('/').pop().slice(-22);
+    })(f.scene);
     card.innerHTML = `<img src="${_cachedSrc(f.frame_url)}" loading="lazy" onerror="this.style.display='none'">
-      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span><span class="fc-name">${name}</span></div>`;
+      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span><span class="fc-name">${sceneLabel}</span></div>`;
     frag.appendChild(card);
   }
   grid.innerHTML = '';
@@ -1440,9 +1498,16 @@ async function loadResults(jobId) {
   const container = document.getElementById('rf-files');
   container.innerHTML = '';
   for (const [name, info] of Object.entries(data)) {
+    const filePath = new URLSearchParams((info.url.split('?')[1]) || '').get('path') || '';
     const div = document.createElement('div');
     div.className = 'rf';
     div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${info.size_mb} MB</div>`;
+    const ytBtn = document.createElement('button');
+    ytBtn.className = 'btn-sm';
+    ytBtn.textContent = '▲ YT';
+    ytBtn.style.marginTop = '5px';
+    ytBtn.onclick = e => { e.stopPropagation(); ytModalOpen(filePath, name); };
+    div.appendChild(ytBtn);
     div.onclick = () => playVideo(info.url, div);
     container.appendChild(div);
   }
@@ -1554,12 +1619,138 @@ async function openSettings() {
   const s = await api.get('/api/settings');
   if (s) document.getElementById('s-max-jobs').value = s.max_concurrent_jobs;
   document.getElementById('settings-modal').classList.add('open');
+  ytCheckStatus();
 }
 function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
 async function saveSettings() {
   const data = { max_concurrent_jobs: parseInt(document.getElementById('s-max-jobs').value) };
   await api.put('/api/settings', data);
   closeSettings();
+}
+
+// ── YouTube ───────────────────────────────────────────────────────────────────
+async function ytCheckStatus() {
+  const data = await api.get('/api/youtube/status');
+  const dot          = document.getElementById('yt-status-dot');
+  const btnConnect   = document.getElementById('btn-yt-connect');
+  const btnDisconnect= document.getElementById('btn-yt-disconnect');
+  const hint         = document.getElementById('yt-secrets-hint');
+  if (!data) return;
+  if (!data.has_secrets) {
+    dot.textContent = 'no credentials file';
+    dot.style.color = 'var(--red)';
+    hint.style.display = '';
+    btnConnect.style.display = 'none';
+    btnDisconnect.style.display = 'none';
+  } else if (data.authenticated) {
+    dot.textContent = '● connected';
+    dot.style.color = 'var(--green)';
+    hint.style.display = 'none';
+    btnConnect.style.display = 'none';
+    btnDisconnect.style.display = '';
+  } else {
+    dot.textContent = '○ not connected';
+    dot.style.color = 'var(--muted)';
+    hint.style.display = 'none';
+    btnConnect.style.display = '';
+    btnDisconnect.style.display = 'none';
+  }
+}
+
+async function ytConnect() {
+  const data = await api.get(`/api/youtube/auth?origin=${encodeURIComponent(window.location.origin)}`);
+  if (!data?.url) { alert('Failed to get auth URL — is youtube_client_secrets.json in place?'); return; }
+  const win = window.open(data.url, 'yt-auth', 'width=620,height=720,noopener');
+  if (!win) { alert('Pop-up blocked — allow pop-ups and try again.'); return; }
+  const timer = setInterval(() => {
+    if (win.closed) { clearInterval(timer); ytCheckStatus(); }
+  }, 1000);
+}
+
+async function ytDisconnect() {
+  if (!confirm('Disconnect YouTube?')) return;
+  await fetch('/api/youtube/disconnect', { method: 'DELETE' });
+  ytCheckStatus();
+}
+
+async function ytLoadPlaylists() {
+  const sel = document.getElementById('yt-playlist');
+  sel.innerHTML = '<option value="">— no playlist —</option>';
+  const data = await api.get('/api/youtube/playlists');
+  if (!data?.length) return;
+  for (const p of data) {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.title;
+    sel.appendChild(o);
+  }
+}
+
+async function ytModalOpen(filePath, fileName) {
+  const status = await api.get('/api/youtube/status');
+  if (!status?.authenticated) { alert('Connect YouTube first (Settings ⚙ → YouTube)'); return; }
+  _ytFilePath = filePath;
+  document.getElementById('yt-file-name').textContent = fileName;
+  const workdir = document.getElementById('js-workdir').value;
+  const projectName = workdir ? workdir.split('/').filter(Boolean).pop() : fileName.replace(/\.mp4$/i, '');
+  document.getElementById('yt-title').value = projectName || '';
+  document.getElementById('yt-desc').value = '';
+  document.querySelector('input[name="yt-privacy"][value="unlisted"]').checked = true;
+  document.getElementById('yt-new-playlist').style.display = 'none';
+  document.getElementById('yt-new-playlist').value = '';
+  document.getElementById('yt-status').textContent = '';
+  const btn = document.getElementById('btn-yt-upload');
+  btn.disabled = false;
+  btn.textContent = '▲ Upload';
+  document.getElementById('yt-modal').classList.add('open');
+  await ytLoadPlaylists();
+}
+
+function ytModalClose() {
+  document.getElementById('yt-modal').classList.remove('open');
+}
+
+function ytNewPlaylist() {
+  const inp = document.getElementById('yt-new-playlist');
+  const visible = inp.style.display !== 'none';
+  inp.style.display = visible ? 'none' : '';
+  if (!visible) { inp.focus(); document.getElementById('yt-playlist').value = ''; }
+}
+
+async function ytUpload() {
+  if (!_ytFilePath) return;
+  const title = document.getElementById('yt-title').value.trim();
+  if (!title) { alert('Enter a title'); return; }
+  const privacy     = document.querySelector('input[name="yt-privacy"]:checked')?.value || 'unlisted';
+  const playlistId  = document.getElementById('yt-new-playlist').style.display !== 'none'
+                        ? null
+                        : (document.getElementById('yt-playlist').value || null);
+  const newPlaylist = document.getElementById('yt-new-playlist').value.trim() || null;
+
+  const btn    = document.getElementById('btn-yt-upload');
+  const status = document.getElementById('yt-status');
+  btn.disabled = true;
+  status.textContent = 'Uploading…';
+  status.style.color = 'var(--muted)';
+
+  const resp = await api.post('/api/youtube/upload', {
+    file_path:    _ytFilePath,
+    title,
+    description:  document.getElementById('yt-desc').value,
+    privacy,
+    playlist_id:  playlistId,
+    new_playlist: newPlaylist,
+  });
+
+  if (resp?.ok) {
+    status.innerHTML = `✓ <a href="${resp.url}" target="_blank" style="color:var(--accent)">${resp.url}</a>`;
+    status.style.color = 'var(--green)';
+    btn.textContent = '✓ Done';
+  } else {
+    status.textContent = 'Error: ' + (resp?.detail || resp?.message || 'upload failed');
+    status.style.color = 'var(--red)';
+    btn.disabled = false;
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
