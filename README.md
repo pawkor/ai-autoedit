@@ -80,6 +80,23 @@ Zakładka **Results** wyświetla gotowe pliki wideo. Kliknięcie otwiera wbudowa
 
 The **Results** tab lists finished video files. Clicking opens the built-in player. Each music rerun creates `highlight_final_music_v1.mp4`, `v2.mp4` etc. — previous versions are preserved.
 
+### Upload na YouTube / YouTube upload
+
+Przycisk **▲ YT** przy każdym pliku otwiera modal uploadu: tytuł (pre-filled z nazwy projektu), opis, prywatność (private / unlisted / public), wybór playlisty lub utworzenie nowej. Progres uploadu widoczny w czasie rzeczywistym.
+
+The **▲ YT** button next to each result file opens the upload modal: title (pre-filled from project name), description, privacy setting, playlist selection or new playlist creation. Upload progress is shown in real time.
+
+**Konfiguracja / Setup:**
+
+1. Utwórz projekt w [Google Cloud Console](https://console.cloud.google.com) → włącz **YouTube Data API v3**
+2. **APIs & Services → Credentials → + Create Credentials → OAuth client ID** → typ **Web application**
+3. Dodaj authorized redirect URI: `https://<twój-host>/api/youtube/callback`
+4. Pobierz JSON i zapisz jako `webapp/youtube_client_secrets.json`
+5. W OAuth consent screen dodaj swoje konto do **Test users**
+6. W UI: **⚙ Settings → YouTube → Connect**
+
+Token jest zapisywany w `webapp/youtube_token.json` i odświeżany automatycznie.
+
 ---
 
 ## Pipeline — jak działa / How it works
@@ -152,24 +169,11 @@ ANTHROPIC_API_KEY=sk-ant-...   # opcjonalne, do generowania promptów CLIP / opt
 LAST_FM_API_KEY=...            # opcjonalne, do enrichmentu gatunków muzycznych / optional, for music genre enrichment
 ```
 
-### Aktualizacja skryptów pipeline / Updating pipeline scripts
+### Aktualizacja / Live updates
 
-Webapp (`webapp/`) jest montowana na żywo — zmiany w HTML/JS/server.py działają od razu.
+Zarówno `webapp/` jak i `src/` są montowane na żywo — zmiany w HTML/JS/Python działają bez rebuildu obrazu. `docker compose up -d` nie nadpisuje zamontowanych katalogów.
 
-Skrypty pipeline (`pipeline.py`, `select_scenes.py`, itp.) wymagają skopiowania do kontenera:
-
-```bash
-docker compose cp pipeline.py autoframe:/app/pipeline.py
-docker compose cp select_scenes.py autoframe:/app/select_scenes.py
-```
-
-The webapp (`webapp/`) is live-mounted — HTML/JS/server.py changes take effect immediately.
-
-Pipeline scripts need copying to the container:
-
-```bash
-docker compose cp pipeline.py autoframe:/app/pipeline.py
-```
+Both `webapp/` and `src/` are live-mounted — changes to HTML/JS/Python take effect without rebuilding the image. `docker compose up -d` never overwrites mounted directories.
 
 ---
 

@@ -408,14 +408,24 @@ async def run(params: dict, work_dir: Path) -> AsyncIterator[str]:
                 yield f"\r  [{bar}] {pct:3d}%  {cur:.1f}/{total_s:.1f}s"
             except Exception:
                 pass
+    enc_stderr = await enc_proc2.stderr.read()
     await enc_proc2.wait()
     yield ""
 
     if not highlight.exists():
-        err = (await enc_proc2.stderr.read()).decode("utf-8", errors="replace")
+        err = enc_stderr.decode("utf-8", errors="replace")
         raise RuntimeError(f"Encoding failed: {err[:300]}")
 
     hl_dur = await _probe_duration(highlight, ffprobe) or 0.0
+
+    # Warn if output is significantly shorter than expected (truncated encode)
+    if concat_dur > 5 and hl_dur < concat_dur * 0.95:
+        gap = concat_dur - hl_dur
+        err_txt = enc_stderr.decode("utf-8", errors="replace").strip()
+        yield f"  ⚠ highlight.mp4 is {gap:.0f}s shorter than expected ({hl_dur:.0f}s / {concat_dur:.0f}s)"
+        if err_txt:
+            for ln in err_txt.splitlines()[-5:]:
+                yield f"    ffmpeg: {ln}"
 
     # ── Intro / Outro ─────────────────────────────────────────────────────────
     final: Path | None = None

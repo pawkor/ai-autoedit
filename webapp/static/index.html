@@ -1762,6 +1762,7 @@ async function ytUpload() {
       status.innerHTML = `✓ <a href="${s.url}" target="_blank" style="color:var(--accent)">${s.url}</a>`;
       status.style.color = 'var(--green)';
       btn.textContent = '✓ Done';
+      btn.onclick = ytModalClose;
     } else if (s.status === 'error') {
       clearInterval(poll);
       status.textContent = 'Error: ' + (s.error || 'upload failed');

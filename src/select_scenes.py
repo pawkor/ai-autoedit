@@ -185,7 +185,9 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     out = f"{TRIMMED_DIR}{scene}{suffix}.mp4"
 
     if os.path.exists(out):
-        return out
+        if get_duration(out) is not None:
+            return out
+        os.remove(out)  # corrupt (e.g. killed mid-encode) — re-encode
 
     ops = []
     if needs_trim: ops.append("trim")

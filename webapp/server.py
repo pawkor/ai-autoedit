@@ -879,9 +879,15 @@ async def job_result(job_id: str):
         m = re.search(r'_v(\d+)$', p.stem)
         return int(m.group(1)) if m else 0
 
+    auto_dir = work_dir / "_autoframe"
     for pat in ("highlight_final_music_v*.mp4", "highlight_music_v*.mp4"):
         for p in sorted(work_dir.glob(pat), key=_ver, reverse=True):
             _add(p)
+
+    # Fallback: no-music renders inside _autoframe/
+    if not files:
+        for name in ("highlight_final.mp4", "highlight.mp4"):
+            _add(auto_dir / name)
 
     return files
 

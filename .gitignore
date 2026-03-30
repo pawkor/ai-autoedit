@@ -18,6 +18,12 @@ ai-autoedit-env/
 webapp/jobs/
 **/manual_overrides.json
 
+# YouTube OAuth — never commit
+webapp/youtube_client_secrets.json
+webapp/youtube_token.json
+webapp/youtube_flow.json
+webapp/config.ini
+
 # OS
 .DS_Store
 Thumbs.db
