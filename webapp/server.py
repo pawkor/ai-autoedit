@@ -368,6 +368,8 @@ async def music_rebuild(payload: dict):
     if not music_dir:
         raise HTTPException(400, "dir required")
     d = Path(music_dir).expanduser().resolve()
+    if not str(d).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403, "Outside allowed root")
     if not d.is_dir():
         raise HTTPException(404, "Directory not found")
     cmd = [sys.executable, str(SCRIPT_DIR / "music_index.py"), str(d)]
@@ -385,6 +387,8 @@ async def music_rebuild(payload: dict):
 @app.get("/api/music-files")
 async def music_files_endpoint(dir: str = Query(...)):
     d = Path(dir).expanduser().resolve()
+    if not str(d).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403, "Outside allowed root")
     idx = d / "index.json"
     if idx.exists():
         tracks = json.loads(idx.read_text())
@@ -650,11 +654,21 @@ def _resolve_params(d: dict, work_dir: Path) -> dict:
     return d
 
 
+def _validate_cam(cam: Optional[str], work_dir: Path) -> None:
+    """Reject cam_a/cam_b values that escape work_dir via path traversal."""
+    if cam:
+        resolved = (work_dir / cam).resolve()
+        if not str(resolved).startswith(str(work_dir.resolve())):
+            raise HTTPException(400, f"Invalid camera path: {cam}")
+
+
 @app.post("/api/jobs")
 async def create_job(params: JobParams):
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
+    _validate_cam(params.cam_a, work_dir)
+    _validate_cam(params.cam_b, work_dir)
 
     d = _resolve_params(params.model_dump(), work_dir)
     d["work_dir"] = str(work_dir)
@@ -695,6 +709,8 @@ async def rerun_job(job_id: str, params: JobParams):
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
+    _validate_cam(params.cam_a, work_dir)
+    _validate_cam(params.cam_b, work_dir)
 
     d = _resolve_params(params.model_dump(), work_dir)
     d["work_dir"] = str(work_dir)
@@ -897,7 +913,8 @@ async def job_result(job_id: str):
 YT_SECRETS = WEBAPP_DIR / "youtube_client_secrets.json"
 YT_TOKEN   = WEBAPP_DIR / "youtube_token.json"
 YT_SCOPES  = ["https://www.googleapis.com/auth/youtube"]
-os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")  # allow http for local server
+if os.getenv("OAUTHLIB_INSECURE_TRANSPORT") is None and not os.getenv("HTTPS_ONLY"):
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # allow http; set HTTPS_ONLY=1 in prod
 
 
 def _yt_creds():

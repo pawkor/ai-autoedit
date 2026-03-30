@@ -307,11 +307,13 @@ async def run(params: dict, work_dir: Path) -> AsyncIterator[str]:
     yield "[5/6] CLIP scoring..."
 
     scores_csv = auto_dir / "scene_scores.csv"
+    _safe_env = {k: v for k, v in os.environ.items()
+                 if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
     if scores_csv.exists():
         yield f"  Cached (delete {scores_csv.name} to rescore)"
     else:
         clip_env = {
-            **os.environ,
+            **_safe_env,
             "FRAMES_DIR": str(auto_dir / "frames") + "/",
             "OUTPUT_CSV":  str(scores_csv),
         }
@@ -335,7 +337,7 @@ async def run(params: dict, work_dir: Path) -> AsyncIterator[str]:
     yield "[6/6] Selecting scenes and building highlight..."
 
     sel_env = {
-        **os.environ,
+        **_safe_env,
         "SCENES_DIR":  str(auto_dir / "autocut") + "/",
         "TRIMMED_DIR": str(auto_dir / "trimmed") + "/",
         "OUTPUT_CSV":  str(scores_csv),

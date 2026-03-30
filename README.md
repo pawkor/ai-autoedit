@@ -82,6 +82,8 @@ The **Results** tab lists finished video files. Clicking opens the built-in play
 
 ### Upload na YouTube / YouTube upload
 
+![YouTube upload modal](docs/img/AI-autoedit-youtube.png)
+
 Przycisk **▲ YT** przy każdym pliku otwiera modal uploadu: tytuł (pre-filled z nazwy projektu), opis, prywatność (private / unlisted / public), wybór playlisty lub utworzenie nowej. Progres uploadu widoczny w czasie rzeczywistym.
 
 The **▲ YT** button next to each result file opens the upload modal: title (pre-filled from project name), description, privacy setting, playlist selection or new playlist creation. Upload progress is shown in real time.
