@@ -1378,6 +1378,7 @@ const PROGRESS_RE = /^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|/;
 function appendLog(line) {
   const panel = document.getElementById('log-panel');
   const isProgress = PROGRESS_RE.test(line);
+  const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
 
   if (isProgress) {
     // Update existing progress line in place, or create one
@@ -1391,7 +1392,7 @@ function appendLog(line) {
       div.textContent = line;
       panel.appendChild(div);
     }
-    panel.scrollTop = panel.scrollHeight;
+    if (atBottom) panel.scrollTop = panel.scrollHeight;
     // Update render progress bar from progress lines
     if (jobPhase === 'rendering') {
       const pm = line.match(/\]\s*(\d+)%\s+([\d.]+)\//);
@@ -1419,7 +1420,6 @@ function appendLog(line) {
   else if (/error|failed/i.test(line))                  { div.classList.add('log-err'); }
   div.textContent = line;
   panel.appendChild(div);
-  const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
   if (atBottom) panel.scrollTop = panel.scrollHeight;
 
   if (jobPhase === 'rendering') {
@@ -2016,14 +2016,23 @@ function readJobSettings() {
   if (md) p.music_dir = md;
   if (musicSelected.size) p.music_files = [...musicSelected];
   const desc = gv('js-description'); if (desc) p.description = desc;
+  const pos = gv('js-positive'); if (pos) p.positive = pos;
+  const neg = gv('js-negative'); if (neg) p.negative = neg;
   return p;
 }
 
 async function rerunFromSettings() {
   const params = readJobSettings();
   if (!params.work_dir || !currentJobId) return;
-  const resp = await api.post(`/api/jobs/${currentJobId}/rerun`, params);
-  if (resp?.id) { refreshJobList(); openJob(resp.id); }
+  const btn = document.querySelector('[onclick="rerunFromSettings()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const resp = await api.post(`/api/jobs/${currentJobId}/rerun`, params);
+    if (resp?.id) { refreshJobList(); openJob(resp.id); }
+    else alert('Re-analyze failed: ' + JSON.stringify(resp));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Re-analyze with these settings'; }
+  }
 }
 
 async function rerunCurrentJob() {

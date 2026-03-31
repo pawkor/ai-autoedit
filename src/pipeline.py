@@ -243,21 +243,25 @@ async def run(params: dict, work_dir: Path,
         status = "✓" if csv.exists() else "✗"
         yield f"  [{i}/{total_detect}] {status} {sf.name}: {count} scenes"
 
-    # ── [3/6] Split scenes (parallel) ────────────────────────────────────────
+    # ── [3/6] Split scenes ───────────────────────────────────────────────────
     yield ""
-    yield "[3/6] Splitting scenes..."
+    total_split = len(source_files)
+    yield f"[3/6] Splitting scenes... (0/{total_split})"
 
-    async def _split(sf: Path) -> list[str]:
+    for split_i, sf in enumerate(source_files, 1):
         csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
         if not csv.exists():
-            return []
-        existing = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
+            yield f"  [{split_i}/{total_split}] ✗ {sf.name}: no CSV, skipping"
+            continue
         try:
             expected = max(0, sum(1 for _ in open(csv)) - 2)
         except Exception:
             expected = 0
+        existing = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
         if existing >= expected > 0:
-            return [f"  ✓ {sf.name} ({existing} scenes, cached)"]
+            yield f"  [{split_i}/{total_split}] ✓ {sf.name} ({existing} scenes, cached)"
+            continue
+        yield f"  [{split_i}/{total_split}] {sf.name} — splitting {expected} scenes..."
         proc = await asyncio.create_subprocess_exec(
             "scenedetect", "-i", str(sf),
             "load-scenes", "-i", str(csv),
@@ -268,11 +272,7 @@ async def run(params: dict, work_dir: Path,
         )
         await proc.wait()
         done = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
-        return [f"  → {sf.name} ({done} scenes)"]
-
-    for lines in await asyncio.gather(*[_split(sf) for sf in source_files]):
-        for line in lines:
-            yield line
+        yield f"  [{split_i}/{total_split}] ✓ {sf.name} ({done} scenes)"
 
     scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
     yield f"  Total: {len(scene_files)} scenes"

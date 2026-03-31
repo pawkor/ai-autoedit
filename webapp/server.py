@@ -292,7 +292,9 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
                 for part in raw_line.split('\r'):
                     line = part.rstrip('\n').rstrip()
                     if line:
-                        job.log.append(line)
+                        is_progress = bool(re.search(r'^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|', line))
+                        if not is_progress:
+                            job.log.append(line)
                         await job.broadcast({"type": "log", "line": line})
             if analyze_only:
                 job.status = "done"
