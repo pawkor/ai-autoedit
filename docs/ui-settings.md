@@ -33,6 +33,11 @@ PySceneDetect parameters — affect the cut detection stage. Changes require Re-
 |----------|--------------------|
 | Max scene sec | Maks. czas wycinany z jednej sceny (środek klipu). / Max seconds taken per scene (centred). |
 | Max per file sec | Maks. łączny czas z jednego pliku. Nadmiarowe sceny oznaczone jako „limit" w Gallery. / Max total seconds from one source file. Excess scenes shown as "limit" in Gallery. |
+| Target min | Docelowy czas highlight w minutach — używany przez przycisk ⟳ Fill. / Target highlight duration in minutes — used by the ⟳ Fill button. |
+
+Przycisk **⟳ Fill** oblicza Max scene sec i Max per file sec automatycznie na podstawie liczby plików źródłowych i docelowego czasu.
+
+The **⟳ Fill** button auto-calculates Max scene sec and Max per file sec from the source file count and target duration.
 
 Threshold CLIP ustawiany jest na żywo przez suwak w zakładce Gallery.
 
@@ -49,6 +54,17 @@ Ride description for Claude-based prompt generation. Details: [New project](ui-p
 Edytowalne bezpośrednio, jeden prompt na linię. Zapisywane automatycznie po opuszczeniu pola.
 
 Editable directly, one prompt per line. Saved automatically on blur.
+
+### CLIP scoring
+
+| Parametr | Domyślnie | Opis / Description |
+|----------|-----------|--------------------|
+| Batch size | `64` | Klatki przez GPU jednocześnie. Obniż do 32/16 przy błędach OOM. / Frames per GPU batch. Lower to 32/16 if OOM errors occur. |
+| Workers | `4` | Wątki ładowania klatek. / Frame-loading worker threads. |
+
+Wartości zapisywane automatycznie po opuszczeniu pola. Stosowane przy kolejnym Re-analyze.
+
+Values saved automatically on blur. Applied on the next Re-analyze run.
 
 ---
 

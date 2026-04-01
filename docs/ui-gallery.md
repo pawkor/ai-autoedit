@@ -49,6 +49,26 @@ Clicking a frame toggles its status:
 
 Overrides are saved server-side in `_autoframe/manual_overrides.json` and applied on every subsequent render.
 
+## Filter
+
+Dwa pola tekstowe obok przycisku Reset filtrują widoczne sceny:
+
+| Pole | Placeholder | Działanie |
+|------|-------------|-----------|
+| Score | `score` | Prefiks score — np. `0.8` pokazuje sceny 0.800–0.899 |
+| Time | `HH:MM` | Prefiks czasu — np. `09` pokazuje sceny z godziny 09:xx |
+
+Wciśnięcie Enter lub opuszczenie pola stosuje filtr. Oba filtry można łączyć.
+
+Two text inputs next to the Reset button filter the visible scenes:
+
+| Field | Placeholder | Behaviour |
+|-------|-------------|-----------|
+| Score | `score` | Score prefix — e.g. `0.8` shows scenes 0.800–0.899 |
+| Time | `HH:MM` | Timestamp prefix — e.g. `09` shows scenes with 09:xx timecodes |
+
+Press Enter or blur to apply. Both filters can be combined.
+
 ## ↺ Reset
 
 Przywraca threshold do wartości wyznaczonej automatycznie podczas analizy (top-10 scen) i usuwa wszystkie manualne overrides.

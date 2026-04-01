@@ -2,11 +2,33 @@
 
 ![Muzyka](img/AI-autoedit-music.png)
 
-Zakładka **Music** pokazuje zaindeksowane ścieżki z katalogu muzycznego (MP3/M4A) z wykonawcą, tytułem, BPM, energią i gatunkiem. Indeks ładuje się automatycznie przy otwieraniu projektu.
+Zakładka **Music** pokazuje zaindeksowane ścieżki z katalogu muzycznego (MP3/M4A) z wykonawcą, tytułem, gatunkiem, BPM i energią.
 
-The **Music** tab shows indexed tracks from the music directory (MP3/M4A) with artist, title, BPM, energy, and genre. The index loads automatically when a project is opened.
+The **Music** tab shows indexed tracks from the music directory (MP3/M4A) with artist, title, genre, BPM, and energy.
+
+U góry zakładki widoczny jest szacowany czas highlight i liczba wybranych scen — np. `Est. highlight: 6:00 [45 scenes]`. Przycisk **→ Summary** przenosi do zakładki Summary.
+
+At the top of the tab: estimated highlight duration and selected scene count — e.g. `Est. highlight: 6:00 [45 scenes]`. The **→ Summary** button navigates to the Summary tab.
 
 ---
+
+## Katalog muzyczny / Music directory
+
+Pole **Music dir** ustawia ścieżkę do biblioteki muzycznej. Przyciski:
+
+| Przycisk | Opis |
+|----------|------|
+| **Browse** | Otwiera przeglądarkę katalogów do wyboru ścieżki |
+| **Load** | Ładuje ścieżki z aktualnie wpisanego katalogu bez przebudowy indeksu |
+| **↺ Update index** | Przebudowuje indeks BPM/energii/gatunków (patrz niżej) |
+
+The **Music dir** field sets the path to the music library. Buttons:
+
+| Button | Description |
+|--------|-------------|
+| **Browse** | Opens a directory browser to pick the path |
+| **Load** | Loads tracks from the currently entered directory without rebuilding the index |
+| **↺ Update index** | Rebuilds the BPM/energy/genre index (see below) |
 
 ## Filtrowanie / Filtering
 
@@ -31,9 +53,9 @@ Checkboxes next to tracks mark them for use in the pipeline. Selection persists 
 
 ## ↺ Update index
 
-Przebudowuje indeks BPM/energii/gatunków. Rzeczywisty pasek postępu pokazuje analizę pliku po pliku.
+Przebudowuje indeks BPM/energii/gatunków. Rzeczywisty pasek postępu pokazuje analizę pliku po pliku. Po zakończeniu lista ścieżek odświeża się automatycznie.
 
-Rebuilds the BPM/energy/genre index. A real per-file progress bar tracks the analysis.
+Rebuilds the BPM/energy/genre index. A real per-file progress bar tracks the analysis. The track list refreshes automatically when done.
 
 | Checkbox | Działanie |
 |----------|-----------|
