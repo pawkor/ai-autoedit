@@ -14,9 +14,18 @@ Suwak **Threshold** (z przyciskami ▼/▲ po 0.001) filtruje które sceny wejd�
 
 The **Threshold** slider (with ▼/▲ buttons stepping 0.001) filters which scenes go into the highlight. Scenes above the threshold have an orange border (included), below — grey (excluded). The counter above the gallery shows how many scenes passed and the estimated duration.
 
-Zmiana threshold natychmiast przelicza szacowany czas w Summary bez potrzeby ponownego uruchamiania pipeline.
+### Szacowany czas / Duration estimate
 
-Changing the threshold immediately recalculates the estimated duration in Summary without rerunning the pipeline.
+Licznik pokazuje różne wartości w zależności od stanu:
+
+- **Po renderze** (threshold bez zmian, brak nowych overrides) — dokładny wynik ostatniego rendera.
+- **Po zmianie threshold lub overrides** — estymacja z dry-runu (dokładny Python, nie aproksymacja JS), aktualizowana po ok. 1s od zatrzymania suwaka.
+- **Dual-camera** — wynik uwzględnia sparowane sceny z drugiej kamery (`cam_ratio`).
+
+The counter reflects different states:
+- **After render** (same threshold, no new overrides) — exact result of the last render.
+- **After threshold/override change** — dry-run estimate (exact Python, not JS approximation), updated ~1s after the slider stops.
+- **Dual-camera** — result accounts for paired back-cam scenes (`cam_ratio`).
 
 ## Limit per file
 

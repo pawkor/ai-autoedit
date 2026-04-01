@@ -2,9 +2,9 @@
 
 ![Ustawienia](img/AI-autoedit-settings.png)
 
-Zakładka **Settings** pozwala zmieniać wszystkie parametry pipeline bez edytowania plików. Zmiany zapisywane są do `config.ini` projektu po kliknięciu **Re-analyze with these settings**.
+Zakładka **Settings** pozwala zmieniać wszystkie parametry pipeline bez edytowania plików. Każde pole zapisuje się do `config.ini` projektu automatycznie po opuszczeniu pola (Enter lub kliknięcie gdzie indziej).
 
-The **Settings** tab lets you change all pipeline parameters without editing files. Changes are saved to the project's `config.ini` on **Re-analyze with these settings**.
+The **Settings** tab lets you change all pipeline parameters without editing files. Every field saves to the project's `config.ini` automatically on blur or Enter.
 
 ---
 
@@ -12,37 +12,48 @@ The **Settings** tab lets you change all pipeline parameters without editing fil
 
 ### Sources / Working directory
 
-Katalog roboczy z plikami MP4 oraz katalog muzyczny. Zmiana katalogu i kliknięcie Rerun traktuje nowy katalog jako nowy projekt.
+Katalog roboczy z plikami MP4 oraz opcjonalna lista kamer (dla dual-camera).
 
-Working directory with MP4 files and music directory. Changing the directory and rerunning treats it as a new project.
+Working directory with MP4 files and optional camera list (for dual-camera).
+
+### Scene detection *(requires Re-analyze)*
+
+Parametry PySceneDetect — wpływają na etap detekcji cięć. Zmiana wymaga Re-analyze żeby przeliczyć sceny od nowa.
+
+PySceneDetect parameters — affect the cut detection stage. Changes require Re-analyze to reprocess scenes.
+
+| Parametr | Domyślnie | Opis / Description |
+|----------|-----------|---------------------|
+| Detect threshold | `20` | Czułość detektora. Wyższy = mniej cięć. Dla leśnego materiału zalecane 24–28. / Detector sensitivity. Higher = fewer cuts. For forest/lighting-heavy footage try 24–28. |
+| Min scene len | `8` | Minimalna długość sceny w sekundach. / Minimum scene duration in seconds. |
 
 ### Scene selection
 
-| Parametr | Opis |
-|----------|------|
-| Max scene sec | Maksymalny czas wycinany z jednej sceny (wyśrodkowany na środku klipu). |
-| Max per file sec | Maksymalny łączny czas z jednego pliku źródłowego. Sceny przekraczające ten limit oznaczone są w Gallery jako „limit". |
+| Parametr | Opis / Description |
+|----------|--------------------|
+| Max scene sec | Maks. czas wycinany z jednej sceny (środek klipu). / Max seconds taken per scene (centred). |
+| Max per file sec | Maks. łączny czas z jednego pliku. Nadmiarowe sceny oznaczone jako „limit" w Gallery. / Max total seconds from one source file. Excess scenes shown as "limit" in Gallery. |
 
-Threshold CLIP ustawiany jest na żywo przez suwak w zakładce Gallery — nie ma go w Settings.
+Threshold CLIP ustawiany jest na żywo przez suwak w zakładce Gallery.
 
-The CLIP threshold is set live via the Gallery slider — it is not in Settings.
+The CLIP threshold is set live via the Gallery slider — not in Settings.
 
-### CLIP / Music
+### CLIP prompts / About this ride
 
-Pola opisu wyjazdu, generowania promptów przez Claude API oraz konfiguracja muzyki (No music). Szczegóły generowania promptów: [Nowy projekt](ui-projects.md).
+Opis wyjazdu do generowania promptów przez Claude API. Szczegóły: [Nowy projekt](ui-projects.md).
 
-Ride description, Claude-based prompt generation, and music config (No music checkbox). Prompt generation details: [New project](ui-projects.md).
+Ride description for Claude-based prompt generation. Details: [New project](ui-projects.md).
 
 ### POSITIVE / NEGATIVE prompts
 
-Edytowalne bezpośrednio. Każdy prompt w osobnej linii. **Save prompts** zapisuje je niezależnie od Rerun.
+Edytowalne bezpośrednio, jeden prompt na linię. Zapisywane automatycznie po opuszczeniu pola.
 
-Editable directly. One prompt per line. **Save prompts** saves them independently of Rerun.
+Editable directly, one prompt per line. Saved automatically on blur.
 
 ---
 
 ## Re-analyze with these settings
 
-Zapisuje zmiany do `config.ini` projektu i uruchamia pipeline od etapu CLIP (pomija detekcję scen jeśli nie zmieniły się pliki).
+Uruchamia pipeline od nowa. Pomija detekcję scen jeśli pliki źródłowe i parametry `[scene_detection]` nie zmieniły się.
 
-Saves changes to the project's `config.ini` and reruns the pipeline from the CLIP stage (skips scene detection if source files haven't changed).
+Reruns the pipeline. Skips scene detection if source files and `[scene_detection]` parameters haven't changed.
