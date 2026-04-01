@@ -16,6 +16,7 @@ import pandas as pd
 from PIL import Image
 from pathlib import Path
 from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
 
 _cfg = configparser.ConfigParser()
 _script_dir = Path(__file__).resolve().parent
@@ -23,9 +24,12 @@ _cfg.read([_script_dir / "config.ini", Path.cwd() / "config.ini"])
 
 FRAMES_DIR  = os.environ.get("FRAMES_DIR", "frames/")
 OUTPUT_CSV  = os.environ.get("OUTPUT_CSV", "scene_scores.csv")
-TOP_PERCENT = _cfg.getint("clip_scoring",   "top_percent", fallback=25)
-NEG_WEIGHT  = _cfg.getfloat("clip_scoring", "neg_weight",  fallback=0.5)
-BATCH_SIZE  = _cfg.getint("clip_scoring",   "batch_size",  fallback=64)
+CAM_SOURCES = os.environ.get("CAM_SOURCES", "")
+AUDIO_CAM   = os.environ.get("AUDIO_CAM",   "")
+TOP_PERCENT = _cfg.getint("clip_scoring",   "top_percent",   fallback=25)
+NEG_WEIGHT  = _cfg.getfloat("clip_scoring", "neg_weight",    fallback=0.5)
+BATCH_SIZE  = int(os.environ.get("CLIP_BATCH_SIZE",  _cfg.get("clip_scoring", "batch_size",  fallback="64")))
+NUM_WORKERS = int(os.environ.get("CLIP_NUM_WORKERS", _cfg.get("clip_scoring", "num_workers", fallback=str(min(4, os.cpu_count() or 1)))))
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def _parse_prompts(raw: str) -> list:
@@ -62,33 +66,67 @@ with torch.no_grad():
     pos_features /= pos_features.norm(dim=-1, keepdim=True)
     neg_features /= neg_features.norm(dim=-1, keepdim=True)
 
-frames = sorted(Path(FRAMES_DIR).glob("*.jpg"))
-print(f"Scoring {len(frames)} frames (batch={BATCH_SIZE})...")
+class FrameDataset(Dataset):
+    def __init__(self, paths, transform):
+        self.paths = paths
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, idx):
+        path = self.paths[idx]
+        try:
+            img = self.transform(Image.open(path).convert('RGB'))
+            ok  = True
+        except Exception:
+            img = torch.zeros(3, 224, 224)
+            ok  = False
+        return img, str(path), ok
+
+
+# Build set of back-cam source prefixes to skip
+import re as _re
+_back_sources: set[str] = set()
+if CAM_SOURCES and os.path.exists(CAM_SOURCES) and AUDIO_CAM:
+    import csv as _csv
+    with open(CAM_SOURCES) as _f:
+        for row in _csv.DictReader(_f):
+            if row.get("camera") != AUDIO_CAM:
+                _back_sources.add(row["source"])
+
+def _is_main_cam(path: Path) -> bool:
+    if not _back_sources:
+        return True
+    src = _re.sub(r'-scene-\d+$', '', path.stem)
+    return src not in _back_sources
+
+all_frames = sorted(Path(FRAMES_DIR).glob("*.jpg"))
+frames = [f for f in all_frames if _is_main_cam(f)]
+skipped = len(all_frames) - len(frames)
+if skipped:
+    print(f"Skipping {skipped} back-cam frames (scoring main cam only)")
+print(f"Scoring {len(frames)} frames (batch={BATCH_SIZE}, workers={NUM_WORKERS})...")
+dataset = FrameDataset(frames, preprocess)
+loader  = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
+                     pin_memory=(DEVICE == "cuda"), prefetch_factor=2 if NUM_WORKERS > 0 else None)
 results = []
 
-for i in tqdm(range(0, len(frames), BATCH_SIZE)):
-    batch_paths = frames[i:i + BATCH_SIZE]
-    imgs, valid_paths = [], []
-
-    for frame_path in batch_paths:
-        try:
-            imgs.append(preprocess(Image.open(frame_path).convert('RGB')))
-            valid_paths.append(frame_path)
-        except Exception as e:
-            print(f"Error loading {frame_path}: {e}", file=sys.stderr)
-
-    if not imgs:
+for batch_imgs, batch_paths, batch_ok in tqdm(loader, total=len(loader)):
+    valid_mask = batch_ok.bool()
+    if not valid_mask.any():
         continue
 
-    batch_tensor = torch.stack(imgs).to(DEVICE)
+    batch_tensor = batch_imgs[valid_mask].to(DEVICE, non_blocking=True)
+    valid_paths  = [p for p, ok in zip(batch_paths, batch_ok.tolist()) if ok]
 
     with torch.no_grad(), torch.amp.autocast(device_type=DEVICE, enabled=(DEVICE == "cuda")):
         img_features = model.encode_image(batch_tensor)
         img_features /= img_features.norm(dim=-1, keepdim=True)
         pf = pos_features.to(img_features.dtype)
         nf = neg_features.to(img_features.dtype)
-        pos_scores  = (img_features @ pf.T).mean(dim=1)
-        neg_scores  = (img_features @ nf.T).mean(dim=1)
+        pos_scores   = (img_features @ pf.T).mean(dim=1)
+        neg_scores   = (img_features @ nf.T).mean(dim=1)
         final_scores = pos_scores - neg_scores * NEG_WEIGHT
 
     for path, pos, neg, final in zip(

@@ -1,10 +1,37 @@
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_certs:/etc/nginx/certs
+      - "${DATA_DIR}:/data:ro"
+    depends_on:
+      - autoframe
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/nginx/certs
+        if [ ! -f /etc/nginx/certs/cert.pem ]; then
+          apk add --no-cache openssl 2>/dev/null || true
+          openssl req -x509 -newkey rsa:4096 \
+            -keyout /etc/nginx/certs/key.pem \
+            -out /etc/nginx/certs/cert.pem \
+            -days 3650 -nodes -subj '/CN=autoframe'
+        fi
+        exec nginx -g 'daemon off;'
+
   autoframe:
     build: .
     image: autoframe:latest
     user: "${UID}:${GID}"
     ports:
       - "8000:8000"
+    shm_size: '2gb'
     security_opt:
       - apparmor:unconfined
     volumes:
@@ -25,3 +52,6 @@ services:
               count: all
               capabilities: [gpu, video, compute, utility]
     restart: unless-stopped
+
+volumes:
+  nginx_certs:

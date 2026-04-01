@@ -130,6 +130,17 @@ job_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 app = FastAPI(title="autoframe")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+_NO_CACHE_EXTS = {".html", ".js", ".css", ".json", ".txt", ".svg", ".ico"}
+
+@app.middleware("http")
+async def no_cache_middleware(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    ext  = path[path.rfind("."):].lower() if "." in path.split("/")[-1] else ""
+    if ext not in {".jpg", ".jpeg", ".png", ".mp4", ".webp"}:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 _rebuild_tasks: dict[str, dict] = {}  # task_id -> {progress, total, done, ok}
 
 
@@ -479,6 +490,47 @@ async def music_files_endpoint(dir: str = Query(...)):
     )
 
 
+@app.get("/api/count-sources")
+async def count_sources(dir: str = Query(...), cameras: str = Query(default="")):
+    """Count source MP4 files in camera subdirectories."""
+    work_dir = Path(dir).resolve()
+    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not work_dir.is_dir():
+        raise HTTPException(404)
+
+    def _is_source(f: Path) -> bool:
+        n = f.name.lower()
+        return n.endswith(".mp4") and not n.startswith("highlight") and not n.endswith(".lrv")
+
+    cam_list = [c.strip() for c in cameras.split(",") if c.strip()] if cameras else []
+    per_camera: dict[str, int] = {}
+    if cam_list:
+        for cam in cam_list:
+            cam_dir = (work_dir / cam).resolve()
+            if str(cam_dir).startswith(str(work_dir)) and cam_dir.is_dir():
+                per_camera[cam] = sum(1 for f in cam_dir.glob("*.mp4") if _is_source(f))
+    else:
+        per_camera[""] = sum(1 for f in work_dir.glob("*.mp4") if _is_source(f))
+
+    return {"total": sum(per_camera.values()), "per_camera": per_camera}
+
+
+@app.get("/api/subdirs")
+async def list_subdirs(dir: str = Query(...)):
+    """List immediate subdirectories of a path (for camera subfolder picker)."""
+    p = Path(dir).resolve()
+    if not str(p).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not p.is_dir():
+        raise HTTPException(404)
+    names = sorted(
+        d.name for d in p.iterdir()
+        if d.is_dir() and not d.name.startswith('.') and d.name != '_autoframe'
+    )
+    return names
+
+
 @app.get("/api/browse")
 async def browse(path: str = Query(default=None)):
     root = Path(path).resolve() if path else BROWSE_ROOT
@@ -511,8 +563,9 @@ class JobParams(BaseModel):
     max_scene:    Optional[float] = None
     per_file:     Optional[float] = None
     title:        Optional[str]   = None
-    cam_a:        Optional[str]   = None
-    cam_b:        Optional[str]   = None
+    cameras:      Optional[list[str]] = None  # ordered list: first = audio cam
+    cam_a:        Optional[str]   = None      # legacy; kept for backward compat
+    cam_b:        Optional[str]   = None      # legacy; kept for backward compat
     no_intro:     bool = False
     no_music:     bool = False
     music_genre:  Optional[str] = None
@@ -521,16 +574,25 @@ class JobParams(BaseModel):
     description:  Optional[str] = None
     positive:     Optional[str] = None
     negative:     Optional[str] = None
+    batch_size:    Optional[int]   = None
+    clip_workers:  Optional[int]   = None
+    sd_threshold:  Optional[float] = None
+    sd_min_scene:  Optional[str]   = None
 
 
 # ── Per-directory config.ini helpers ──────────────────────────────────────────
 # Maps JobParams fields → (section, key) in config.ini
 _JOB_CONFIG_MAP = {
-    "threshold":    ("scene_selection", "threshold"),
-    "max_scene":    ("scene_selection", "max_scene_sec"),
-    "per_file":     ("scene_selection", "max_per_file_sec"),
-    "cam_a":        ("job", "cam_a"),
-    "cam_b":        ("job", "cam_b"),
+    "threshold":       ("scene_selection", "threshold"),
+    "max_scene":       ("scene_selection", "max_scene_sec"),
+    "per_file":        ("scene_selection", "max_per_file_sec"),
+    "min_take":        ("scene_selection", "min_take_sec"),
+    "sd_threshold":    ("scene_detection", "threshold"),
+    "sd_min_scene":    ("scene_detection", "min_scene_len"),
+    "target_minutes":  ("job", "target_minutes"),
+    "cameras":      ("job", "cameras"),
+    "cam_a":        ("job", "cam_a"),   # legacy
+    "cam_b":        ("job", "cam_b"),   # legacy
     "title":        ("job", "title"),
     "no_intro":     ("job", "no_intro"),
     "no_music":     ("job", "no_music"),
@@ -539,6 +601,8 @@ _JOB_CONFIG_MAP = {
     "music_dir":    ("music", "dir"),
     "positive":     ("clip_prompts", "positive"),
     "negative":     ("clip_prompts", "negative"),
+    "batch_size":   ("clip_scoring", "batch_size"),
+    "clip_workers": ("clip_scoring", "num_workers"),
 }
 
 
@@ -559,14 +623,21 @@ def read_job_config(work_dir: Path) -> dict:
                 raw = cp.get(section, key)
                 if field in ("no_intro", "no_music"):
                     result[field] = raw.strip().lower() in ("true", "1", "yes")
-                elif field in ("threshold", "max_scene", "per_file"):
+                elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold"):
                     result[field] = float(raw)
+                elif field == "cameras":
+                    result[field] = [c.strip() for c in raw.split(",") if c.strip()]
                 else:
                     # Restore \n escapes to actual newlines for display in textarea
                     result[field] = raw.strip().replace("\\n", "\n")
                 break
             except (configparser.NoSectionError, configparser.NoOptionError):
                 continue
+    # Synthesize cameras from legacy cam_a/cam_b if not explicitly stored
+    if not result.get("cameras"):
+        legacy = [c for c in [result.get("cam_a"), result.get("cam_b")] if c]
+        if legacy:
+            result["cameras"] = legacy
     return result
 
 
@@ -623,11 +694,19 @@ def save_job_config(work_dir: Path, params: dict):
     """Persist form params back to work_dir/config.ini."""
     updates: dict[str, dict[str, str]] = {}
     for field, (section, key) in _JOB_CONFIG_MAP.items():
+        if section == "clip_prompts":
+            continue  # handled separately by save_prompts_to_config (multiline format)
         v = params.get(field)
-        if v is None or v == "":
+        if v is None or v == "" or v == []:
             continue
-        sv = str(v).lower() if isinstance(v, bool) else str(v)
-        # INI files can't have literal newlines in values — store as \n escape
+        if isinstance(v, list):
+            sv = ",".join(str(x) for x in v if x)
+            if not sv:
+                continue
+        elif isinstance(v, bool):
+            sv = str(v).lower()
+        else:
+            sv = str(v)
         sv = sv.replace("\n", "\\n")
         updates.setdefault(section, {})[key] = sv
 
@@ -652,11 +731,10 @@ def save_prompts_to_config(cfg_path: Path, positive: str, negative: str):
         return
 
     content = cfg_path.read_text()
-    replaced = re.sub(r'\[clip_prompts\].*?(?=\n\[|\Z)', new_section.rstrip(),
-                      content, flags=re.DOTALL)
-    if replaced == content:  # section didn't exist — append
-        replaced = content.rstrip() + "\n\n" + new_section
-    cfg_path.write_text(replaced)
+    # Remove ALL existing [clip_prompts] sections (handles duplicates)
+    cleaned = re.sub(r'\[clip_prompts\].*?(?=\n\[|\Z)', '', content, flags=re.DOTALL)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    cfg_path.write_text(new_section + ("\n\n" + cleaned if cleaned else "") + "\n")
 
 
 @app.get("/api/job-config")
@@ -734,12 +812,13 @@ def _resolve_params(d: dict, work_dir: Path) -> dict:
     return d
 
 
-def _validate_cam(cam: Optional[str], work_dir: Path) -> None:
-    """Reject cam_a/cam_b values that escape work_dir via path traversal."""
-    if cam:
-        resolved = (work_dir / cam).resolve()
-        if not str(resolved).startswith(str(work_dir.resolve())):
-            raise HTTPException(400, f"Invalid camera path: {cam}")
+def _validate_cameras(cameras, work_dir: Path) -> None:
+    """Reject camera paths that escape work_dir via path traversal."""
+    for cam in (cameras or []):
+        if cam:
+            resolved = (work_dir / cam).resolve()
+            if not str(resolved).startswith(str(work_dir.resolve())):
+                raise HTTPException(400, f"Invalid camera path: {cam}")
 
 
 @app.post("/api/jobs")
@@ -747,8 +826,8 @@ async def create_job(params: JobParams, analyze_only: bool = Query(default=True)
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
-    _validate_cam(params.cam_a, work_dir)
-    _validate_cam(params.cam_b, work_dir)
+    _validate_cameras(params.cameras, work_dir)
+    _validate_cameras([params.cam_a, params.cam_b], work_dir)
 
     d = _resolve_params(params.model_dump(), work_dir)
     d["work_dir"] = str(work_dir)
@@ -793,12 +872,14 @@ async def rerun_job(job_id: str, params: JobParams):
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
-    _validate_cam(params.cam_a, work_dir)
-    _validate_cam(params.cam_b, work_dir)
+    _validate_cameras(params.cameras, work_dir)
+    _validate_cameras([params.cam_a, params.cam_b], work_dir)
 
     d = _resolve_params(params.model_dump(), work_dir)
     d["work_dir"] = str(work_dir)
     save_job_config(work_dir, d)
+    if params.positive or params.negative:
+        save_prompts_to_config(work_dir / "config.ini", params.positive or "", params.negative or "")
 
     # Reset job in-place
     job.params         = d
@@ -817,12 +898,34 @@ async def rerun_job(job_id: str, params: JobParams):
     return {"id": job_id}
 
 
+@app.post("/api/jobs/{job_id}/estimate")
+async def estimate_job(job_id: str, body: dict = Body({})):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is running")
+    merged = {**job.params, **body}
+    result = await pipeline.estimate(merged, job.work_dir())
+    if not result:
+        raise HTTPException(400, "No scores CSV — run analysis first")
+    return result
+
+
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    return job.to_dict()
+    d = job.to_dict()
+    # Fill scene-selection defaults for jobs saved before _resolve_params was introduced
+    try:
+        work_dir = job.work_dir()
+        if work_dir and work_dir.is_dir():
+            d["params"] = _resolve_params(dict(d["params"]), work_dir)
+    except Exception:
+        pass
+    return d
 
 
 @app.get("/api/jobs/{job_id}/analyze-result")
@@ -830,15 +933,42 @@ async def get_analyze_result(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
+    result = {}
     if job.analyze_result:
-        return job.analyze_result
-    ar_path = job.auto_dir() / "analyze_result.json"
-    if ar_path.exists():
-        try:
-            return json.loads(ar_path.read_text())
-        except Exception:
-            pass
-    # Fallback: parse what we can from the job log
+        result = dict(job.analyze_result)
+    else:
+        ar_path = job.auto_dir() / "analyze_result.json"
+        if ar_path.exists():
+            try:
+                result = json.loads(ar_path.read_text())
+            except Exception:
+                pass
+    # Always overlay actual selection results from log (select_scenes.py output).
+    # These are more accurate than the analysis-phase estimates.
+    # Parse ALL matching lines so we get the LAST occurrence (most recent run).
+    _actual_thr = None
+    _actual_scenes = None
+    _actual_dur = None
+    for line in job.log:
+        m = re.search(r'Threshold:\s*([\d.]+)', line)
+        if m:
+            _actual_thr = float(m.group(1))
+            result.setdefault("auto_threshold", _actual_thr)
+        m = re.search(r'Selected:\s*(\d+)\s*scenes', line)
+        if m:
+            _actual_scenes = int(m.group(1))
+        m = re.search(r'Total:\s*([\d.]+)s', line)
+        if m:
+            _actual_dur = float(m.group(1))
+    if _actual_scenes is not None:
+        result["actual_selected_scenes"] = _actual_scenes
+    if _actual_dur is not None:
+        result["actual_duration_sec"] = _actual_dur
+    if _actual_thr is not None:
+        result["actual_threshold"] = _actual_thr
+    if result:
+        return result
+    # Last-resort fallback: parse what we can from scores CSV
     result = {}
     for line in job.log:
         m = re.search(r'Threshold:\s*([\d.]+)', line)
@@ -886,6 +1016,8 @@ async def get_analyze_result(job_id: str):
 class RenderParams(BaseModel):
     selected_track: Optional[str] = None
     threshold: Optional[float] = None
+    max_scene: Optional[float] = None
+    per_file: Optional[float] = None
 
 
 @app.post("/api/jobs/{job_id}/render")
@@ -898,6 +1030,11 @@ async def render_job(job_id: str, params: RenderParams):
 
     if params.threshold is not None:
         job.params["threshold"] = params.threshold
+    if params.max_scene is not None:
+        job.params["max_scene"] = params.max_scene
+    if params.per_file is not None:
+        job.params["per_file"] = params.per_file
+    if params.threshold is not None or params.max_scene is not None or params.per_file is not None:
         job.save()
 
     track = params.selected_track
@@ -945,7 +1082,7 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v
@@ -1057,16 +1194,34 @@ async def job_frames(job_id: str):
                 pass
 
     df = pd.read_csv(scores_csv).sort_values("scene")
+    df = df.dropna(subset=["score"])
+
+    # Normalize scores per-camera if dual-cam (mirrors select_scenes.py)
+    cam_sources_csv = job.auto_dir() / "camera_sources.csv"
+    if cam_sources_csv.exists():
+        cdf = pd.read_csv(cam_sources_csv)
+        cam_map = dict(zip(cdf["source"], cdf["camera"]))
+        df["_source"] = df["scene"].str.replace(r"-scene-\d+$", "", regex=True)
+        df["_camera"] = df["_source"].map(cam_map).fillna("default")
+        if df["_camera"].nunique() > 1:
+            for _, idx in df.groupby("_camera").groups.items():
+                lo, hi = df.loc[idx, "score"].min(), df.loc[idx, "score"].max()
+                if hi > lo:
+                    df.loc[idx, "score"] = (df.loc[idx, "score"] - lo) / (hi - lo)
+                else:
+                    df.loc[idx, "score"] = 1.0
+        df = df.rename(columns={"_camera": "camera"}).drop(columns=["_source"])
+
     return [
         {
             "scene":     row["scene"],
-            "score":     None if pd.isna(row["score"]) else round(float(row["score"]), 4),
+            "score":     round(float(row["score"]), 4),
             "duration":  durations.get(row["scene"]),
-            "frame_url": f"/api/file?path={frames_dir / (row['scene'] + '.jpg')}"
+            "camera":    row.get("camera") if "camera" in df.columns else None,
+            "frame_url": str(frames_dir / (row['scene'] + '.jpg'))
                          if (frames_dir / (row["scene"] + ".jpg")).exists() else None,
         }
         for _, row in df.iterrows()
-        if not pd.isna(row["score"])
     ]
 
 
@@ -1406,3 +1561,45 @@ async def serve_file(request: Request, path: str = Query(...)):
 
     return StreamingResponse(full_stream(), media_type=mime,
         headers={**base_headers, "Content-Length": str(file_size)})
+
+
+@app.get("/api/thumb")
+async def serve_thumb(request: Request, path: str = Query(...), w: int = Query(320)):
+    """Serve a resized JPEG thumbnail, cached alongside the original as .thumbNNN.jpg"""
+    from PIL import Image
+    import io
+
+    p = Path(path).resolve()
+    if not str(p).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not p.exists():
+        raise HTTPException(404)
+    if p.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "Not an image")
+
+    w = max(32, min(w, 1920))
+    thumb_path = p.with_suffix(f".thumb{w}.jpg")
+
+    # Regenerate if missing or stale
+    if not thumb_path.exists() or thumb_path.stat().st_mtime < p.stat().st_mtime:
+        def _resize():
+            with Image.open(p) as img:
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
+                ratio = w / img.width
+                h = int(img.height * ratio)
+                img = img.resize((w, h), Image.LANCZOS)
+                img.save(thumb_path, "JPEG", quality=82, optimize=True)
+        await asyncio.get_event_loop().run_in_executor(None, _resize)
+
+    stat      = thumb_path.stat()
+    etag      = f'"{stat.st_mtime:.6f}-{stat.st_size}"'
+    last_mod  = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(stat.st_mtime))
+    headers   = {"ETag": etag, "Last-Modified": last_mod, "Cache-Control": "public, max-age=604800"}
+
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+
+    data = thumb_path.read_bytes()
+    return Response(content=data, media_type="image/jpeg",
+                    headers={**headers, "Content-Length": str(len(data))})

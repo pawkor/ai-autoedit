@@ -38,6 +38,26 @@ def _i(cp, sec, key, fb=0):      return cp.getint(sec, key, fallback=fb)
 
 # ── Subprocess helpers ────────────────────────────────────────────────────────
 
+async def _probe_fps(path: Path, ffprobe: str) -> float | None:
+    """Return avg_frame_rate as float, falling back to r_frame_rate."""
+    proc = await asyncio.create_subprocess_exec(
+        ffprobe, "-v", "quiet", "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate,r_frame_rate",
+        "-of", "csv=p=0", str(path),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    for token in out.decode().split():
+        try:
+            parts = token.strip().split("/")
+            val = float(parts[0]) / float(parts[1]) if len(parts) == 2 else float(parts[0])
+            if 1.0 < val < 300.0:
+                return round(val, 3)
+        except Exception:
+            continue
+    return None
+
+
 async def _probe_duration(path: Path, ffprobe: str) -> float | None:
     proc = await asyncio.create_subprocess_exec(
         ffprobe, "-v", "quiet", "-show_entries", "format=duration",
@@ -80,6 +100,102 @@ def _next_version(path: Path) -> Path:
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
+import csv as _csv_mod
+import re  as _re_mod
+
+def _back_cam_sources(cam_src_csv: Path, main_cam: str) -> set[str]:
+    """Return set of source stems that belong to non-main cameras."""
+    if not main_cam or not cam_src_csv.exists():
+        return set()
+    with open(cam_src_csv) as _f:
+        return {r["source"] for r in _csv_mod.DictReader(_f)
+                if r.get("camera") != main_cam}
+
+
+async def estimate(params: dict, work_dir: Path) -> dict:
+    """
+    Run select_scenes.py with DRY_RUN=1 and return
+    { scenes, duration_sec, main_scenes, cam_ratio, threshold }.
+    Updates analyze_result.json in the auto_dir.
+    """
+    cp          = _load_cfg(work_dir)
+    threshold   = float(params.get("threshold") or _f(cp, "scene_selection", "threshold",        0.148))
+    max_scene   = float(params.get("max_scene") or _f(cp, "scene_selection", "max_scene_sec",    10))
+    per_file    = float(params.get("per_file")  or _f(cp, "scene_selection", "max_per_file_sec", 45))
+    _raw_cams   = params.get("cameras") or []
+    if isinstance(_raw_cams, str):
+        _raw_cams = [c.strip() for c in _raw_cams.split(",") if c.strip()]
+    if not _raw_cams:
+        _ca = str(params.get("cam_a") or "")
+        _cb = str(params.get("cam_b") or "")
+        _raw_cams = [c for c in [_ca, _cb] if c]
+    cam_a       = _raw_cams[0] if _raw_cams else ""
+    work_subdir = _s(cp, "paths", "work_subdir", "_autoframe")
+    auto_dir    = work_dir / work_subdir
+    scores_csv  = auto_dir / "scene_scores.csv"
+
+    if not scores_csv.exists():
+        return {}
+
+    safe_env = {k: v for k, v in os.environ.items()
+                if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
+    dry_env = {
+        **safe_env,
+        "SCENES_DIR":       str(auto_dir / "autocut") + "/",
+        "TRIMMED_DIR":      str(auto_dir / "trimmed") + "/",
+        "OUTPUT_CSV":       str(scores_csv),
+        "OUTPUT_LIST":      str(auto_dir / "selected_scenes.txt"),
+        "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
+        "CSV_DIR":          str(auto_dir / "csv"),
+        "AUDIO_CAM":        cam_a,
+        "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
+        "DRY_RUN":          "1",
+    }
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(SCRIPT_DIR / "select_scenes.py"),
+        str(threshold), str(max_scene), str(per_file),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        cwd=str(work_dir), env=dry_env,
+    )
+    out, _ = await proc.communicate()
+    lines = out.decode("utf-8", errors="replace").splitlines()
+
+    scenes, dur, main = None, None, None
+    for ln in lines:
+        m = re.search(r'^Selected:\s*(\d+)', ln)
+        if m: scenes = int(m.group(1))
+        m = re.search(r'^Total:\s*([\d.]+)s', ln)
+        if m: dur = float(m.group(1))
+        m = re.search(r'Main cam \([^)]+\):\s*(\d+)\s*scenes', ln)
+        if m: main = int(m.group(1))
+
+    cam_ratio = round(scenes / main, 4) if (scenes and main and main > 0) else 1.0
+    result = {
+        "scenes":       scenes or 0,
+        "duration_sec": round(dur, 1) if dur is not None else 0,
+        "main_scenes":  main if main is not None else (scenes or 0),
+        "cam_ratio":    cam_ratio,
+        "threshold":    threshold,
+    }
+
+    # Update analyze_result.json
+    ar_path = auto_dir / "analyze_result.json"
+    try:
+        ar = json.loads(ar_path.read_text()) if ar_path.exists() else {}
+        ar.update({
+            "auto_threshold":         threshold,
+            "estimated_scenes":       result["scenes"],
+            "estimated_duration_sec": result["duration_sec"],
+            "estimated_main_scenes":  result["main_scenes"],
+            "cam_ratio":              cam_ratio,
+        })
+        ar_path.write_text(json.dumps(ar, indent=2))
+    except Exception:
+        pass
+
+    return result
+
+
 async def run(params: dict, work_dir: Path,
               analyze_only: bool = False,
               selected_track: Optional[str] = None) -> AsyncIterator[str]:
@@ -96,8 +212,16 @@ async def run(params: dict, work_dir: Path,
     per_file    = float(params.get("per_file")   or _f(cp, "scene_selection", "max_per_file_sec", 45))
     no_intro    = bool(params.get("no_intro",  False))
     no_music    = bool(params.get("no_music",  False))
-    cam_a       = str(params.get("cam_a")  or "")
-    cam_b       = str(params.get("cam_b")  or "")
+    # cameras: ordered list, first = audio cam; falls back to legacy cam_a/cam_b
+    _raw_cams = params.get("cameras") or []
+    if isinstance(_raw_cams, str):
+        _raw_cams = [c.strip() for c in _raw_cams.split(",") if c.strip()]
+    if not _raw_cams:
+        _ca = str(params.get("cam_a") or "")
+        _cb = str(params.get("cam_b") or "")
+        _raw_cams = [c for c in [_ca, _cb] if c]
+    cameras = _raw_cams
+    cam_a   = cameras[0] if cameras else ""  # first cam = audio source
     music_genre  = str(params.get("music_genre")  or "")
     music_artist = str(params.get("music_artist") or "")
     music_files_filter = params.get("music_files") or []
@@ -137,8 +261,9 @@ async def run(params: dict, work_dir: Path,
     x264_preset   = _s(cp, "video", "x264_preset",  "fast")
 
     # Scene detection
-    sd_threshold = _s(cp, "scene_detection", "threshold",    "20")
-    sd_min_scene = _s(cp, "scene_detection", "min_scene_len","8s")
+    sd_threshold = str(params.get("sd_threshold") or _s(cp, "scene_detection", "threshold",    "20"))
+    _sdm_raw     = str(params.get("sd_min_scene")  or _s(cp, "scene_detection", "min_scene_len","8s"))
+    sd_min_scene = _sdm_raw if _sdm_raw.endswith("s") else _sdm_raw + "s"
 
     # Intro/outro
     intro_dur    = _s(cp, "intro_outro", "duration",         "3")
@@ -183,10 +308,11 @@ async def run(params: dict, work_dir: Path,
         n = f.name.lower()
         return n.endswith(".mp4") and not n.startswith("highlight") and not n.endswith(".lrv")
 
-    if cam_a and cam_b:
+    if cameras:
         source_files = sorted(
-            [f for f in (work_dir / cam_a).glob("*.mp4") if _is_source(f)] +
-            [f for f in (work_dir / cam_b).glob("*.mp4") if _is_source(f)]
+            f for cam in cameras
+            for f in (work_dir / cam).glob("*.mp4")
+            if _is_source(f)
         )
     else:
         source_files = sorted(f for f in work_dir.glob("*.mp4") if _is_source(f))
@@ -196,14 +322,14 @@ async def run(params: dict, work_dir: Path,
     if not source_files:
         raise RuntimeError(f"No MP4 files found in {work_dir}")
 
-    if cam_a and cam_b:
+    if cameras:
         cam_csv = auto_dir / "camera_sources.csv"
         with open(cam_csv, "w") as fh:
             fh.write("source,camera\n")
             for sf in source_files:
-                cam = cam_a if f"/{cam_a}/" in str(sf) else cam_b
-                fh.write(f"{sf.stem},{cam}\n")
-        yield f"  Dual-cam: {cam_a} / {cam_b}"
+                matched = next((cam for cam in cameras if f"/{cam}/" in str(sf)), cameras[-1])
+                fh.write(f"{sf.stem},{matched}\n")
+        yield f"  {len(cameras)}-cam: {' / '.join(cameras)}"
 
     # ── [2/6] Scene detection (sequential with progress) ─────────────────────
     yield ""
@@ -218,8 +344,10 @@ async def run(params: dict, work_dir: Path,
             continue
 
         yield f"  [{i}/{total_detect}] ▶ {sf.name}..."
+        fps = await _probe_fps(sf, ffprobe)
+        fps_args = ["-f", str(fps)] if fps else ["-f", "3"]
         proc = await asyncio.create_subprocess_exec(
-            "scenedetect", "-f", "3", "-i", str(sf),
+            "scenedetect", *fps_args, "-i", str(sf),
             "detect-content", "--threshold", sd_threshold,
             "--min-scene-len", sd_min_scene,
             "list-scenes", "-o", str(auto_dir / "csv"),
@@ -375,6 +503,25 @@ async def run(params: dict, work_dir: Path,
     yield ""
     yield "[4/6] Extracting key frames..."
 
+    # Filter to main-cam scenes only (back cam is not scored, no point extracting frames)
+    _cam_src_csv  = auto_dir / "camera_sources.csv"
+    _back_srcs_fe = _back_cam_sources(_cam_src_csv, cam_a)
+    if _back_srcs_fe:
+        scene_files_main = [sf for sf in scene_files
+                            if _re_mod.sub(r'-scene-\d+$', '', sf.stem) not in _back_srcs_fe]
+        if len(scene_files_main) < len(scene_files):
+            yield f"  Skipping {len(scene_files) - len(scene_files_main)} back-cam scenes"
+    else:
+        scene_files_main = scene_files
+
+    # Remove stale frames from previous runs that no longer have a matching scene clip
+    _valid_stems = {sf.stem for sf in scene_files_main}
+    _stale = [p for p in (auto_dir / "frames").glob("*.jpg") if p.stem not in _valid_stems]
+    if _stale:
+        for p in _stale:
+            p.unlink(missing_ok=True)
+        yield f"  Removed {len(_stale)} stale frame(s) from previous runs"
+
     async def _extract_frame(sf: Path) -> None:
         out_jpg = auto_dir / "frames" / f"{sf.stem}.jpg"
         if out_jpg.exists() or sf.stat().st_size < 5_000_000:
@@ -384,15 +531,15 @@ async def run(params: dict, work_dir: Path,
             return
         proc = await asyncio.create_subprocess_exec(
             ffmpeg, *hwaccel, "-ss", f"{dur / 2:.3f}", "-i", str(sf),
-            "-vframes", "1", "-q:v", "2", "-update", "1",
+            "-vframes", "1", "-vf", "scale=640:-2", "-q:v", "4", "-update", "1",
             str(out_jpg), "-y", "-loglevel", "quiet",
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()
 
     batch_size = os.cpu_count() or 4
-    for i in range(0, len(scene_files), batch_size):
-        await asyncio.gather(*[_extract_frame(sf) for sf in scene_files[i:i + batch_size]])
+    for i in range(0, len(scene_files_main), batch_size):
+        await asyncio.gather(*[_extract_frame(sf) for sf in scene_files_main[i:i + batch_size]])
 
     frame_count = len(list((auto_dir / "frames").glob("*.jpg")))
     yield f"  Frames: {frame_count}"
@@ -403,26 +550,55 @@ async def run(params: dict, work_dir: Path,
     yield ""
     yield "[5/6] CLIP scoring..."
 
-    scores_csv = auto_dir / "scene_scores.csv"
+    scores_csv   = auto_dir / "scene_scores.csv"
+    prompts_hash_file = auto_dir / "scores_prompts.hash"
     _safe_env = {k: v for k, v in os.environ.items()
                  if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
+
+    import hashlib as _hashlib
+    _cur_hash = _hashlib.sha256(
+        (params.get("positive", "") + "\n---\n" + params.get("negative", "")).encode()
+    ).hexdigest()
+
     if scores_csv.exists():
         try:
             _check_df = pd.read_csv(scores_csv)
             _nan_count = int(_check_df["score"].isna().sum())
+            _all_frames = list((auto_dir / "frames").glob("*.jpg"))
+            # Count only main-cam frames (same filter as clip_score.py)
+            _back_srcs = _back_cam_sources(_cam_src_csv, cam_a)
+            if _back_srcs:
+                _frame_count = sum(
+                    1 for f in _all_frames
+                    if _re_mod.sub(r'-scene-\d+$', '', f.stem) not in _back_srcs
+                )
+            else:
+                _frame_count = len(_all_frames)
+            _csv_count   = len(_check_df)
+            _saved_hash  = prompts_hash_file.read_text().strip() if prompts_hash_file.exists() else None
             if _nan_count:
                 scores_csv.unlink()
                 yield f"  {_nan_count} scene(s) with missing scores — rescoring..."
+            elif _frame_count != _csv_count:
+                scores_csv.unlink()
+                yield f"  Frame count mismatch ({_frame_count} frames vs {_csv_count} scored) — rescoring..."
+            elif _saved_hash != _cur_hash:
+                scores_csv.unlink()
+                yield "  Prompts changed — rescoring..."
             else:
-                yield f"  Cached (delete {scores_csv.name} to rescore)"
+                yield f"  Cached ({_csv_count} scenes, delete {scores_csv.name} to rescore)"
         except Exception:
             scores_csv.unlink()
             yield "  Corrupt scores CSV — rescoring..."
     if not scores_csv.exists():
         clip_env = {
             **_safe_env,
-            "FRAMES_DIR": str(auto_dir / "frames") + "/",
+            "FRAMES_DIR":  str(auto_dir / "frames") + "/",
             "OUTPUT_CSV":  str(scores_csv),
+            "CAM_SOURCES": str(auto_dir / "camera_sources.csv"),
+            "AUDIO_CAM":   cam_a,
+            **({"CLIP_BATCH_SIZE":   str(params["batch_size"])}   if params.get("batch_size")   else {}),
+            **({"CLIP_NUM_WORKERS":  str(params["clip_workers"])}  if params.get("clip_workers")  else {}),
         }
         clip_proc = await asyncio.create_subprocess_exec(
             sys.executable, str(SCRIPT_DIR / "clip_score.py"),
@@ -449,6 +625,7 @@ async def run(params: dict, work_dir: Path,
             raise
         except Exception:
             pass
+        prompts_hash_file.write_text(_cur_hash)
 
     # ── Auto-threshold from top-10 (first analysis only, no user threshold set)
     if analyze_only and not params.get("threshold"):
@@ -462,29 +639,52 @@ async def run(params: dict, work_dir: Path,
         except Exception:
             pass
 
-    # ── Write analyze_result.json ─────────────────────────────────────────────
+    # ── Write analyze_result.json (dry-run select_scenes.py for exact numbers) ──
     try:
         _ar_df = pd.read_csv(scores_csv).dropna(subset=["score"])
-        _est_scenes = int((_ar_df["score"] >= threshold).sum())
-        _avg_dur = 0.0
-        _dur_count = 0
-        for _csv_path in (auto_dir / "csv").glob("*-Scenes.csv"):
-            try:
-                _sdf = pd.read_csv(_csv_path, skiprows=1)
-                for _, _row in _sdf.iterrows():
-                    _d = float(_row.get("Length (seconds)", 0) or 0)
-                    if _d > 0:
-                        _avg_dur += _d
-                        _dur_count += 1
-            except Exception:
-                pass
-        _avg_dur = (_avg_dur / _dur_count) if _dur_count else max_scene * 0.6
-        _est_dur = round(_est_scenes * min(_avg_dur, max_scene), 1)
+        _dry_env = {
+            **_safe_env,
+            "SCENES_DIR":       str(auto_dir / "autocut") + "/",
+            "TRIMMED_DIR":      str(auto_dir / "trimmed") + "/",
+            "OUTPUT_CSV":       str(scores_csv),
+            "OUTPUT_LIST":      str(auto_dir / "selected_scenes.txt"),
+            "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
+            "CSV_DIR":          str(auto_dir / "csv"),
+            "AUDIO_CAM":        cam_a,
+            "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
+            "DRY_RUN":          "1",
+        }
+        _dry_args = [str(threshold), str(max_scene), str(per_file)]
+        _dry_proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(SCRIPT_DIR / "select_scenes.py"), *_dry_args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            cwd=str(work_dir), env=_dry_env,
+        )
+        _dry_out, _ = await _dry_proc.communicate()
+        _dry_lines = _dry_out.decode("utf-8", errors="replace").splitlines()
+
+        _est_scenes, _est_dur, _est_main = None, None, None
+        for _ln in _dry_lines:
+            _m = re.search(r'^Selected:\s*(\d+)', _ln)
+            if _m:
+                _est_scenes = int(_m.group(1))
+            _m = re.search(r'^Total:\s*([\d.]+)s', _ln)
+            if _m:
+                _est_dur = float(_m.group(1))
+            _m = re.search(r'Main cam \([^)]+\):\s*(\d+)\s*scenes', _ln)
+            if _m:
+                _est_main = int(_m.group(1))
+
+        _cam_ratio = round(_est_scenes / _est_main, 4) \
+            if (_est_scenes and _est_main and _est_main > 0) else 1.0
+
         _ar = {
-            "scene_count":          int(len(_ar_df)),
-            "auto_threshold":       threshold,
-            "estimated_scenes":     _est_scenes,
-            "estimated_duration_sec": _est_dur,
+            "scene_count":            int(len(_ar_df)),
+            "auto_threshold":         threshold,
+            "estimated_scenes":       _est_scenes if _est_scenes is not None else 0,
+            "estimated_duration_sec": round(_est_dur, 1) if _est_dur is not None else 0,
+            "estimated_main_scenes":  _est_main if _est_main is not None else (_est_scenes or 0),
+            "cam_ratio":              _cam_ratio,
         }
         (auto_dir / "analyze_result.json").write_text(json.dumps(_ar, indent=2))
     except Exception as _ar_err:
@@ -506,6 +706,7 @@ async def run(params: dict, work_dir: Path,
         "OUTPUT_CSV":  str(scores_csv),
         "OUTPUT_LIST": str(auto_dir / "selected_scenes.txt"),
         "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
+        "CSV_DIR":          str(auto_dir / "csv"),
         "AUDIO_CAM":        cam_a,
         "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
     }
@@ -623,6 +824,7 @@ async def run(params: dict, work_dir: Path,
         hl_faded  = auto_dir / "highlight_faded.mp4"
         final     = auto_dir / "highlight_final.mp4"
 
+        yield "  intro/outro [1/3] intro card..."
         # Intro card
         vf_intro = (
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
@@ -645,6 +847,7 @@ async def run(params: dict, work_dir: Path,
             str(intro_mp4), "-y", "-loglevel", "quiet",
         ])
 
+        yield "  intro/outro [2/3] fading highlight..."
         # Faded highlight
         fade_out_hl = hl_dur - fade_dur
         await _run([
@@ -654,6 +857,7 @@ async def run(params: dict, work_dir: Path,
             str(hl_faded), "-y", "-loglevel", "quiet",
         ])
 
+        yield "  intro/outro [3/3] outro + merge..."
         # Outro card
         vf_outro = (
             f"drawtext=text='{outro_text}':fontfile={font}:fontsize={fsize_outro}:"
@@ -681,9 +885,13 @@ async def run(params: dict, work_dir: Path,
             "-c", "copy", "-movflags", "+faststart",
             str(final), "-y", "-loglevel", "quiet",
         ])
+        highlight.unlink(missing_ok=True)
+        hl_faded.unlink(missing_ok=True)
+        intro_mp4.unlink(missing_ok=True)
+        outro_mp4.unlink(missing_ok=True)
+        concat_list.unlink(missing_ok=True)
 
         final_dur = await _probe_duration(final, ffprobe) or 0
-        yield f"  highlight_final.mp4: {int(final_dur // 60)}m{int(final_dur % 60)}s"
 
     # ── Music mix ─────────────────────────────────────────────────────────────
     if not no_music and (music_dir.is_dir() or selected_track):
@@ -714,7 +922,8 @@ async def run(params: dict, work_dir: Path,
                     "-movflags", "+faststart",
                     str(output_music), "-y", "-loglevel", "quiet",
                 ])
-                yield f"  → {output_music.name}"
+                _om_dur = await _probe_duration(output_music, ffprobe) or 0
+                yield f"  → {output_music.name}  {int(_om_dur//60)}:{int(_om_dur%60):02d}"
             else:
                 yield f"  ⚠ Pinned track not found: {selected_track}, skipping music"
         else:
@@ -811,7 +1020,11 @@ async def run(params: dict, work_dir: Path,
                             "-movflags", "+faststart",
                             str(output_music), "-y", "-loglevel", "quiet",
                         ])
-                        yield f"  → {output_music.name}"
+                        _om_dur = await _probe_duration(output_music, ffprobe) or 0
+                        yield f"  → {output_music.name}  {int(_om_dur//60)}:{int(_om_dur%60):02d}"
+
+    # Clean up highlight.mp4 if still present (no_intro path — music used it directly)
+    highlight.unlink(missing_ok=True)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed    = time.time() - t_start

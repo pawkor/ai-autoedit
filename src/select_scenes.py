@@ -25,9 +25,12 @@ TRIMMED_DIR = os.environ.get("TRIMMED_DIR", "trimmed/")
 SCORES_CSV  = os.environ.get("OUTPUT_CSV",  "scene_scores.csv")
 OUTPUT_LIST = os.environ.get("OUTPUT_LIST", "selected_scenes.txt")
 CAM_SOURCES      = os.environ.get("CAM_SOURCES",      "")
+CSV_DIR          = os.environ.get("CSV_DIR",          "")
 AUDIO_CAM        = os.environ.get("AUDIO_CAM",        "")
 MANUAL_OVERRIDES = os.environ.get("MANUAL_OVERRIDES", "")
+TIMESTAMP_MATCH_SEC = _cfg.getfloat("scene_selection", "timestamp_match_sec", fallback=30.0)
 
+import re as _re
 import json as _json
 _ov = {}
 if MANUAL_OVERRIDES and os.path.exists(MANUAL_OVERRIDES):
@@ -47,7 +50,11 @@ if CAM_SOURCES and os.path.exists(CAM_SOURCES):
     cam_map = dict(zip(cdf['source'], cdf['camera']))
 
 df['camera'] = df['source'].map(cam_map).fillna('default')
-dual_cam = len(cam_map) > 0 and df['camera'].nunique() > 1
+dual_cam = len(set(cam_map.values())) > 1
+
+# Normalization only made sense when both cameras were scored — skip it now
+# (scores CSV contains main cam only; back cam is selected by timestamp, not score)
+
 df_all = df.copy()  # keep full df (with camera) for force-include lookups
 
 # Apply force-exclude before selection
@@ -127,35 +134,144 @@ if force_include:
         all_selected.append((scene, scene_file, dur, take, score, camera))
         print(f"  Force-include: {scene} ({take:.0f}s, score {score:.3f})")
 
-# ── Interleave cameras if dual-cam mode ──────────────────────────────────────
+def _scene_timestamp(scene_tuple):
+    """Sortable key: (file_prefix, scene_number) from scene name."""
+    name = scene_tuple[0]
+    m = _re.search(r'(\d{8}_\d{6}[^-]*)-scene-(\d+)', name)
+    if m:
+        return (m.group(1), int(m.group(2)))
+    return (name, 0)
+
+
+# ── Dual-cam: timestamp-based pairing ────────────────────────────────────────
 cam_a_name = None
-cam_b_name = None
 
 if dual_cam:
-    cameras = df['camera'].unique().tolist()
-    if AUDIO_CAM and AUDIO_CAM in cameras:
-        cam_a_name = AUDIO_CAM
-        cam_b_name = next(c for c in cameras if c != AUDIO_CAM)
-    else:
-        cam_a_name = cameras[0]
-        cam_b_name = cameras[1]
+    # Build cam list from cam_map (not df — back cam no longer appears in scores CSV)
+    all_cam_names = sorted(set(cam_map.values()))
+    if AUDIO_CAM and AUDIO_CAM in all_cam_names:
+        all_cam_names = [AUDIO_CAM] + [c for c in all_cam_names if c != AUDIO_CAM]
+    cam_a_name  = all_cam_names[0]
+    other_cams  = all_cam_names[1:]
 
-    cam_a = sorted([s for s in all_selected if s[5] == cam_a_name], key=lambda x: x[0])
-    cam_b = sorted([s for s in all_selected if s[5] == cam_b_name], key=lambda x: x[0])
-    other = sorted([s for s in all_selected if s[5] not in (cam_a_name, cam_b_name)], key=lambda x: x[0])
+    # ── Build absolute timestamp map from PySceneDetect CSVs ─────────────────
+    # ts_map[scene_name] = seconds since midnight (day-relative)
+    ts_map: dict[str, float] = {}
+    if os.path.isdir(CSV_DIR):
+        for csv_path in Path(CSV_DIR).glob("*-Scenes.csv"):
+            stem = csv_path.stem[:-len("-Scenes")]
+            m = _re.search(r'_(\d{6})(?:_\d+)*$', stem)
+            if not m:
+                continue
+            hms = m.group(1)
+            file_start = int(hms[0:2]) * 3600 + int(hms[2:4]) * 60 + int(hms[4:6])
+            try:
+                sdf = pd.read_csv(csv_path, skiprows=1)
+                for _, row in sdf.iterrows():
+                    snum = int(row["Scene Number"])
+                    key  = f"{stem}-scene-{snum:03d}"
+                    secs = float(row.get("Start Time (seconds)", 0) or 0)
+                    ts_map[key] = file_start + secs
+            except Exception:
+                pass
 
-    interleaved = []
-    for i in range(max(len(cam_a), len(cam_b))):
-        if i < len(cam_a): interleaved.append(cam_a[i])
-        if i < len(cam_b): interleaved.append(cam_b[i])
-    selected = interleaved + other
+    ts_coverage = sum(1 for s in all_selected if ts_map.get(s[0]) is not None)
+    if not ts_map:
+        print(f"  Warning: no timestamps available (CSV_DIR={CSV_DIR!r}), using score-only order")
 
-    print(f"Dual-cam interleave: {cam_a_name}={len(cam_a)} scenes, {cam_b_name}={len(cam_b)} scenes")
+    # ── Select from main cam only; back cam matched by timestamp ─────────────
+    main_sel = sorted([s for s in all_selected if s[5] == cam_a_name],
+                      key=_scene_timestamp)
+    print(f"  Main cam ({cam_a_name}): {len(main_sel)} scenes selected")
+
+    # Build back-cam scene list from filesystem (not scores CSV — back cam isn't scored)
+    back_sources = {src for src, cam in cam_map.items() if cam in other_cams}
+    back_rows = []
+    for sc_file in sorted(Path(SCENES_DIR).glob("*.mp4")):
+        stem = sc_file.stem
+        src  = _re.sub(r'-scene-\d+$', '', stem)
+        if src in back_sources:
+            back_rows.append({'scene': stem, 'source': src,
+                              'camera': cam_map[src], 'score': 0.0})
+    back_df = pd.DataFrame(back_rows) if back_rows else pd.DataFrame(
+        columns=['scene', 'source', 'camera', 'score'])
+
+    # Pre-fetch durations for all back-cam scenes (they weren't all fetched above)
+    missing_scenes = [row['scene'] for _, row in back_df.iterrows()
+                      if row['scene'] not in duration_map
+                      and os.path.exists(f"{SCENES_DIR}{row['scene']}.mp4")]
+    if missing_scenes:
+        with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            futs = {ex.submit(get_duration, f"{SCENES_DIR}{sc}.mp4"): sc
+                    for sc in missing_scenes}
+            for fut in as_completed(futs):
+                duration_map[futs[fut]] = fut.result()
+
+    # Build back-cam entry list with timestamps, sorted by timestamp for fast scan
+    back_entries = []
+    for _, row in back_df.iterrows():
+        sc  = row['scene']
+        dur = duration_map.get(sc)
+        if not dur:
+            continue
+        take = min(dur, MAX_SCENE_SEC)
+        if take < MIN_TAKE_SEC:
+            continue
+        fp = f"{SCENES_DIR}{sc}.mp4"
+        if not os.path.exists(fp):
+            continue
+        back_entries.append({
+            "tuple": (sc, fp, dur, take, float(row['score']), row['camera']),
+            "ts":    ts_map.get(sc),
+        })
+    back_entries.sort(key=lambda e: (e["ts"] or 0))
+
+    # ── Pair each main-cam scene with closest back-cam scene ─────────────────
+    used_back: set[str] = set()
+    paired: list[tuple] = []   # (main_tuple, back_tuple | None)
+    no_match = 0
+
+    for ms in main_sel:
+        main_ts = ts_map.get(ms[0])
+        best, best_dist = None, float("inf")
+        for be in back_entries:
+            if be["tuple"][0] in used_back:
+                continue
+            if main_ts is None or be["ts"] is None:
+                continue
+            dist = abs(be["ts"] - main_ts)
+            if dist <= TIMESTAMP_MATCH_SEC and dist < best_dist:
+                best_dist = dist
+                best = be
+        if best:
+            paired.append((ms, best["tuple"]))
+            used_back.add(best["tuple"][0])
+        else:
+            paired.append((ms, None))
+            no_match += 1
+
+    paired_count = len(paired) - no_match
+    other_str    = "/".join(other_cams)
+    print(f"  Timestamp match (→{other_str}): {paired_count}/{len(paired)} paired "
+          f"(±{TIMESTAMP_MATCH_SEC:.0f}s)")
+    if no_match:
+        print(f"  {no_match} main-cam scene(s) had no back-cam match within ±{TIMESTAMP_MATCH_SEC:.0f}s")
+
+    # ── Interleave: main[0], back[0], main[1], back[1], … ───────────────────
+    selected = []
+    for ms, bs in paired:
+        selected.append(ms)
+        if bs:
+            selected.append(bs)
+
+    final_counts = {}
+    for s in selected:
+        final_counts[s[5]] = final_counts.get(s[5], 0) + 1
+    print(f"Multi-cam ({len(all_cam_names)} cams): " +
+          ", ".join(f"{c}={final_counts.get(c, 0)}" for c in all_cam_names))
+
 else:
-    selected = sorted(all_selected, key=lambda x: x[0])
-
-audio_cam = cam_a_name if dual_cam else None
-
+    selected = sorted(all_selected, key=_scene_timestamp)
 
 _prep_counter = 0
 _prep_lock = threading.Lock()
@@ -164,12 +280,8 @@ _prep_total = 0
 
 def prepare_clip(scene, scene_file, duration, take, camera):
     needs_trim = duration > take
-    needs_mute = dual_cam and camera != audio_cam
 
-    suffix  = f"_t{take:.1f}" if needs_trim else ""
-    suffix += "_muted"       if needs_mute else ""
-    if not suffix:
-        suffix = "_enc"
+    suffix = f"_t{take:.1f}" if needs_trim else "_enc"
     out = f"{TRIMMED_DIR}{scene}{suffix}.mp4"
 
     if os.path.exists(out):
@@ -177,40 +289,38 @@ def prepare_clip(scene, scene_file, duration, take, camera):
             return out
         os.remove(out)  # corrupt (e.g. killed mid-encode) — re-encode
 
-    ops = []
-    if needs_trim: ops.append("trim")
-    if needs_mute: ops.append("mute")
-    if not ops:    ops.append("enc")
     global _prep_counter
     with _prep_lock:
         _prep_counter += 1
         n = _prep_counter
-    print(f"  [{n}/{_prep_total}] {scene} ({', '.join(ops)})", flush=True)
+    op = "trim" if needs_trim else "enc"
+    print(f"  [{n}/{_prep_total}] {scene} ({op})", flush=True)
 
     cmd = ["ffmpeg"]
     if needs_trim:
         start = duration / 2 - take / 2
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", scene_file]
-
-    if needs_mute:
-        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    if needs_trim:
         cmd += ["-t", f"{take:.3f}"]
-        cmd += ["-map", "0:v", "-map", "1:a",
-                "-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
-                "-bf", "0",
-                "-c:a", "aac", "-ar", "48000", "-ac", "2"]
-    else:
-        if needs_trim:
-            cmd += ["-t", f"{take:.3f}"]
-        cmd += ["-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
-                "-bf", "0",
-                "-c:a", "copy"]
+    cmd += ["-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
+            "-bf", "0",
+            "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+            "-vsync", "cfr"]
 
     cmd += ["-avoid_negative_ts", "make_zero", out, "-y", "-loglevel", "quiet"]
     subprocess.run(cmd)
     return out
 
+
+total = sum(t for _, _, _, t, _, _ in selected)
+print(f"Threshold: {THRESHOLD}")
+print(f"Selected: {len(selected)} scenes")
+print(f"Total: {total:.1f}s ({total/60:.1f} min)")
+
+DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
+if DRY_RUN:
+    sys.exit(0)
 
 # ── Prepare clips in parallel, preserve order ─────────────────────────────────
 _prep_total = len(selected)
@@ -225,11 +335,6 @@ with ThreadPoolExecutor(max_workers=WORKERS) as ex:
 with open(OUTPUT_LIST, "w") as f:
     for clip in clips:
         f.write(f"file '{clip}'\n")
-
-total = sum(t for _, _, _, t, _, _ in selected)
-print(f"Threshold: {THRESHOLD}")
-print(f"Selected: {len(selected)} scenes")
-print(f"Total: {total:.1f}s ({total/60:.1f} min)")
 for scene, _, duration, take, score, camera in selected:
     cam_tag = f"[{camera}] " if dual_cam else ""
     print(f"  {score:.3f}  {take:.0f}s  {cam_tag}{scene}")

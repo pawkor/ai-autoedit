@@ -74,9 +74,15 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
   padding:5px 7px; font-family:var(--font); font-size:12px; border-radius:3px; outline:none;
 }
 .ff input:focus,.ff select:focus,.ff textarea:focus { border-color:var(--accent); }
+.ff input[type=number]::-webkit-outer-spin-button, .ff input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+.ff input[type=number] { -moz-appearance:textfield; }
 .ff textarea { resize:vertical; min-height:70px; }
 .dir-pick { display:flex; gap:5px; }
 .dir-pick input { flex:1; }
+.cam-row { display:flex; gap:6px; align-items:center; margin-bottom:3px; }
+.cam-label { font-size:11px; color:var(--muted); width:44px; flex-shrink:0; }
+.cam-select { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:4px 7px; font-family:var(--font); font-size:12px; border-radius:3px; outline:none; min-width:140px; }
+.cam-select:focus { border-color:var(--accent); }
 .btn-sm { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:5px 9px; cursor:pointer; font-family:var(--font); font-size:12px; border-radius:3px; white-space:nowrap; }
 .btn-sm:hover { border-color:var(--accent); color:var(--accent); }
 .chk-row { display:flex; gap:14px; flex-wrap:wrap; }
@@ -170,6 +176,9 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #threshold-val { font-size:13px; color:var(--accent); width:60px; background:transparent; border:none; border-bottom:1px solid var(--accent); outline:none; font-family:var(--font); text-align:center; padding:0 2px; cursor:text; -moz-appearance:textfield; }
 #threshold-val:focus { background:var(--bg2); border-bottom-color:var(--yellow); }
 #threshold-val::-webkit-outer-spin-button, #threshold-val::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+.gf-filter-input { font-size:12px; font-family:var(--font); background:transparent; border:none; border-bottom:1px solid var(--border); outline:none; color:var(--fg); width:56px; padding:0 2px; text-align:center; }
+.gf-filter-input:focus { border-bottom-color:var(--yellow); background:var(--bg2); }
+.gf-filter-input::placeholder { color:var(--muted); font-size:11px; }
 .thresh-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text); width:22px; height:22px; cursor:pointer; font-size:12px; border-radius:3px; display:flex; align-items:center; justify-content:center; padding:0; line-height:1; flex-shrink:0; }
 .thresh-btn:hover { border-color:var(--accent); color:var(--accent); }
 #gallery-status { display:flex; align-items:center; gap:10px; padding:6px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; font-size:11px; }
@@ -304,17 +313,32 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           </div>
         </div>
       </div>
+      <div class="frow" style="flex-direction:column;gap:4px">
+        <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.cam_subfolders">Camera subfolders (A = audio source)</label>
+        <div id="f-cam-list"></div>
+        <button class="btn-sm" style="align-self:flex-start" onclick="addCamRow('f-cam-list')">+ Add camera</button>
+      </div>
+    </div>
+
+    <div class="fsec">
+      <h3 data-i18n="sec.scene_detect">Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(requires Re-analyze)</span></h3>
       <div class="frow">
-        <div class="ff"><label data-i18n="lbl.cam_a">Cam A subfolder</label><input type="text" id="f-cam-a" placeholder="helmet"></div>
-        <div class="ff"><label data-i18n="lbl.cam_b">Cam B subfolder</label><input type="text" id="f-cam-b" placeholder="mirror"></div>
+        <div class="ff"><label data-i18n-tip="sd_threshold" data-i18n="lbl.sd_threshold">Detect threshold</label><input type="number" id="f-sd-threshold" placeholder="20" min="5" max="100" step="1"></div>
+        <div class="ff"><label data-i18n-tip="sd_min_scene" data-i18n="lbl.sd_min_scene">Min scene len</label><input type="number" id="f-sd-min-scene" placeholder="8" min="1" max="120" step="1" style="width:60px"></div>
       </div>
     </div>
 
     <div class="fsec">
       <h3 data-i18n="sec.scene_sel">Scene selection</h3>
       <div class="frow">
-        <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="f-max-scene" placeholder="10" min="1" max="120"></div>
-        <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="f-per-file" placeholder="45" min="5" max="300"></div>
+        <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="f-max-scene" placeholder="10" min="1" max="120" oninput="markManual('f')"></div>
+        <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="f-per-file" placeholder="45" min="5" max="300" oninput="markManual('f')"></div>
+        <div class="ff" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:5px;flex-wrap:nowrap">
+          <span id="f-src-info" style="font-size:10px;color:var(--muted);white-space:nowrap;align-self:center"></span>
+          <input type="number" id="f-target-min" value="6" min="1" max="120" style="width:42px" title="Target highlight duration (minutes)">
+          <span style="font-size:11px;color:var(--muted);align-self:center">min</span>
+          <button class="btn-sm" onclick="fillSceneParams('f')" title="Calculate from file count">⟳ Fill</button>
+        </div>
       </div>
     </div>
 
@@ -402,27 +426,42 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           <div class="frow">
             <div class="ff wide"><label data-i18n="lbl.working_dir">Working directory</label><input type="text" id="js-workdir" readonly style="color:var(--muted)"></div>
           </div>
-          <div class="frow">
-            <div class="ff"><label data-i18n="lbl.cam_a_short">Cam A</label><input type="text" id="js-cam-a"></div>
-            <div class="ff"><label data-i18n="lbl.cam_b_short">Cam B</label><input type="text" id="js-cam-b"></div>
+          <div class="frow" style="flex-direction:column;gap:4px">
+            <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.cam_subfolders">Camera subfolders (A = audio source)</label>
+            <div id="js-cam-list"></div>
+            <button class="btn-sm" style="align-self:flex-start" onclick="addCamRow('js-cam-list')">+ Add camera</button>
           </div>
         </div>
         <div class="fsec">
+          <h3 data-i18n="sec.scene_detect">Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(requires Re-analyze)</span></h3>
+          <div class="frow">
+            <div class="ff"><label data-i18n-tip="sd_threshold" data-i18n="lbl.sd_threshold">Detect threshold</label><input type="number" id="js-sd-threshold" placeholder="20" min="5" max="100" step="1" onchange="saveSettingsField()"></div>
+            <div class="ff"><label data-i18n-tip="sd_min_scene" data-i18n="lbl.sd_min_scene">Min scene len</label><input type="number" id="js-sd-min-scene" placeholder="8" min="1" max="120" step="1" style="width:60px" onchange="saveSettingsField()"></div>
+          </div>
+        </div>
+
+        <div class="fsec">
           <h3 data-i18n="sec.scene_sel">Scene selection</h3>
           <div class="frow">
-            <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="js-max-scene"></div>
-            <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="js-per-file"></div>
+            <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="js-max-scene" oninput="markManual('js')" onchange="saveSettingsField()"></div>
+            <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="js-per-file" oninput="markManual('js')" onchange="saveSettingsField()"></div>
+            <div class="ff" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:5px;flex-wrap:nowrap">
+              <span id="js-src-info" style="font-size:10px;color:var(--muted);white-space:nowrap;align-self:center"></span>
+              <input type="number" id="js-target-min" value="6" min="1" max="120" style="width:42px" title="Target highlight duration (minutes)" onchange="saveSettingsField()">
+              <span style="font-size:11px;color:var(--muted);align-self:center">min</span>
+              <button class="btn-sm" onclick="fillSceneParams('js')" title="Calculate from file count">⟳ Fill</button>
+            </div>
           </div>
         </div>
         <div class="fsec">
           <h3 data-i18n="sec.intro_music">Intro / music</h3>
           <div class="frow">
-            <div class="ff"><label data-i18n="lbl.title_short">Title</label><textarea id="js-title" rows="5" style="resize:none;width:64ch;font-size:12px"></textarea></div>
+            <div class="ff"><label data-i18n="lbl.title_short">Title</label><textarea id="js-title" rows="5" style="resize:none;width:64ch;font-size:12px" onchange="saveSettingsField()"></textarea></div>
           </div>
           <div class="frow">
             <div class="chk-row">
-              <label class="chk"><input type="checkbox" id="js-no-intro"><span data-i18n="lbl.no_intro"> No intro/outro</span></label>
-              <label class="chk"><input type="checkbox" id="js-no-music"><span data-i18n="lbl.no_music"> No music</span></label>
+              <label class="chk"><input type="checkbox" id="js-no-intro" onchange="saveSettingsField()"><span data-i18n="lbl.no_intro"> No intro/outro</span></label>
+              <label class="chk"><input type="checkbox" id="js-no-music" onchange="saveSettingsField()"><span data-i18n="lbl.no_music"> No music</span></label>
             </div>
           </div>
         </div>
@@ -442,19 +481,41 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           <div class="frow" style="gap:12px;align-items:flex-start">
             <div style="flex:1;display:flex;flex-direction:column;gap:4px">
               <label data-i18n="lbl.positive">POSITIVE</label>
-              <textarea id="js-positive" rows="14" style="resize:vertical;width:100%;font-size:11px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none"></textarea>
+              <textarea id="js-positive" rows="14" style="resize:vertical;width:100%;font-size:13px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none" onchange="savePromptsField()"></textarea>
             </div>
             <div style="flex:1;display:flex;flex-direction:column;gap:4px">
               <label data-i18n="lbl.negative">NEGATIVE</label>
-              <textarea id="js-negative" rows="14" style="resize:vertical;width:100%;font-size:11px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none"></textarea>
+              <textarea id="js-negative" rows="14" style="resize:vertical;width:100%;font-size:13px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none" onchange="savePromptsField()"></textarea>
             </div>
           </div>
         </div>
-        <button class="btn-primary" data-i18n="btn.rerun" onclick="rerunFromSettings()">▶ Re-analyze with these settings</button>
+        <div style="display:flex;align-items:stretch;gap:10px;margin-top:4px">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <label style="width:90px;font-size:13px;color:#c8c8c8">Batch size</label>
+              <input id="js-batch-size" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="64"
+                style="width:60px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:3px;font-size:14px;font-family:var(--font);outline:none"
+                onkeydown="if(event.key==='Enter'){saveClipScoring();this.blur()}"
+                onblur="saveClipScoring()">
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <label style="width:90px;font-size:13px;color:#c8c8c8">Workers</label>
+              <input id="js-clip-workers" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="4"
+                style="width:60px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:3px;font-size:14px;font-family:var(--font);outline:none"
+                onkeydown="if(event.key==='Enter'){saveClipScoring();this.blur()}"
+                onblur="saveClipScoring()">
+            </div>
+          </div>
+          <button class="btn-primary" onclick="rerunFromSettings()"
+            style="align-self:stretch;font-size:15px;padding:0 10px;white-space:nowrap;line-height:1.2">Re-analyze</button>
+        </div>
       </div>
 
       <!-- Log tab: split log + stats -->
       <div id="log-split">
+        <div id="log-kill-bar" style="display:none;padding:6px 14px;background:var(--bg2);border-bottom:1px solid var(--border)">
+          <button id="btn-kill-log" onclick="killJob()" style="background:transparent;border:1px solid var(--red);color:var(--red);padding:3px 12px;cursor:pointer;font-family:var(--font);font-size:12px;border-radius:3px">■ Stop job</button>
+        </div>
         <div id="log-panel"></div>
         <div id="stats-panel">
           <div>
@@ -499,8 +560,15 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               onchange="onThresholdEdit()" onkeydown="if(event.key==='Enter'){onThresholdEdit();this.blur()}">
             <button class="thresh-btn" onclick="stepThreshold(+0.001)" title="+0.001">▲</button>
             <button class="thresh-btn" onclick="resetThreshold()" title="Reset to auto threshold" style="margin-left:4px;width:auto;padding:0 6px;font-size:11px">↺ Reset</button>
+            <span style="margin-left:10px;color:var(--muted);font-size:11px">Filter:</span>
+            <input class="gf-filter-input" id="filter-score" type="text" placeholder="score" title="Score prefix — Enter to apply (e.g. 0.8 → 0.800–0.899)"
+              onkeydown="if(event.key==='Enter'){onGalleryFilter();this.blur()}"
+              onblur="onGalleryFilter()">
+            <input class="gf-filter-input" id="filter-time" type="text" placeholder="HH:MM" title="Time prefix — Enter to apply (e.g. 09 → 09:xx, 09:2 → 09:2x)"
+              onkeydown="if(event.key==='Enter'){onGalleryFilter();this.blur()}"
+              onblur="onGalleryFilter()">
           </div>
-          <div id="gallery-status">
+          <div id="gallery-status" style="margin-top:2px">
             <span id="gallery-stats-text">—</span>
             <button id="btn-gallery-to-music" class="btn-sm" style="display:none;margin-left:auto" data-i18n="btn.to_music" onclick="switchTab('music')">→ Music</button>
           </div>
@@ -558,6 +626,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           <h3 data-i18n="sec.analysis_results">ANALYSIS RESULTS</h3>
           <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
             <div>Scenes detected: <span id="sum-scene-count" style="color:var(--accent)">—</span></div>
+            <div>Scenes selected: <span id="sum-scene-selected" style="color:var(--accent)">—</span></div>
             <div>Threshold:       <span id="sum-threshold"   style="color:var(--accent)">—</span></div>
             <div>Est. duration:   <span id="sum-duration"    style="color:var(--accent)">—</span></div>
           </div>
@@ -692,6 +761,8 @@ const TRANS = {
   en: {
     tips: {
       threshold:    'CLIP similarity cutoff (0–1).\nLower = more scenes included. Default 0.148.\nSteps of ±0.005 make a noticeable difference.',
+      sd_threshold: 'PySceneDetect sensitivity (default 20).\nHigher = less sensitive = fewer scenes.\nRecommended range: 20–40.',
+      sd_min_scene: 'Minimum scene length (default 8s).\nShorter scenes are merged with the next.\nExamples: 8s, 15s, 30s.',
       max_scene:    'Max seconds taken from a single scene.\nLonger scenes are trimmed to their middle N seconds.',
       per_file:     'Max total seconds selected from one source file.\nPrevents one recording from dominating the highlight.',
       force_audio:  'Re-analyze BPM/energy for all tracks (slow).',
@@ -715,10 +786,7 @@ const TRANS = {
       'sec.clip_prompts_sub':'(optional — generate via Claude or edit directly)',
       // labels
       'lbl.working_dir':     'Working directory',
-      'lbl.cam_a':           'Cam A subfolder',
-      'lbl.cam_b':           'Cam B subfolder',
-      'lbl.cam_a_short':     'Cam A',
-      'lbl.cam_b_short':     'Cam B',
+      'lbl.cam_subfolders':  'Camera subfolders (A = audio source)',
       'lbl.threshold':       'Threshold',
       'lbl.max_scene':       'Max scene sec',
       'lbl.per_file':        'Max per file sec',
@@ -740,7 +808,7 @@ const TRANS = {
       'btn.new':             '+ New',
       'btn.browse':          'Browse',
       'btn.start':           '▶ Analyze',
-      'btn.rerun':           '▶ Re-analyze with these settings',
+      'btn.rerun':           'Re-analyze',
       'btn.render':          '▶ Render Highlight',
       'btn.to_music':        '→ Music',
       'btn.to_summary':      '→ Summary',
@@ -790,6 +858,8 @@ const TRANS = {
   pl: {
     tips: {
       threshold:    'Próg podobieństwa CLIP (0–1).\nNiżej = więcej scen. Domyślnie 0.148.\nKrok ±0.005 daje odczuwalną różnicę.',
+      sd_threshold: 'Czułość PySceneDetect (domyślnie 20).\nWyżej = mniej czuły = mniej scen.\nZalecany zakres: 20–40.',
+      sd_min_scene: 'Minimalna długość sceny (domyślnie 8s).\nKrótsze sceny są łączone z następną.\nPrzykłady: 8s, 15s, 30s.',
       max_scene:    'Max sekundy pobrane z jednej sceny.\nDłuższe sceny są przycinane do środkowych N sekund.',
       per_file:     'Max łączny czas z jednego pliku źródłowego.\nZapobiega dominacji jednego nagrania w highlight.',
       force_audio:  'Ponowna analiza BPM/energii dla wszystkich ścieżek (wolno).',
@@ -813,10 +883,7 @@ const TRANS = {
       'sec.clip_prompts_sub':'(opcjonalne — generuj przez Claude lub edytuj ręcznie)',
       // labels
       'lbl.working_dir':     'Katalog roboczy',
-      'lbl.cam_a':           'Podfolder kamery A',
-      'lbl.cam_b':           'Podfolder kamery B',
-      'lbl.cam_a_short':     'Kamera A',
-      'lbl.cam_b_short':     'Kamera B',
+      'lbl.cam_subfolders':  'Podfoldery kamer (A = źródło audio)',
       'lbl.threshold':       'Próg',
       'lbl.max_scene':       'Max czas sceny (s)',
       'lbl.per_file':        'Max czas z pliku (s)',
@@ -838,7 +905,7 @@ const TRANS = {
       'btn.new':             '+ Nowe',
       'btn.browse':          'Przeglądaj',
       'btn.start':           '▶ Analizuj',
-      'btn.rerun':           '▶ Re-analizuj',
+      'btn.rerun':           'Re-analyze',
       'btn.render':          '▶ Renderuj highlight',
       'btn.to_music':        '→ Muzyka',
       'btn.to_summary':      '→ Podsumowanie',
@@ -928,8 +995,11 @@ const api = {
 
 let currentJobId=null, jobWs=null, statsWs=null, elapsedTimer=null;
 let browsePath=null, framesData=[], manualOverrides={};
-let jobSortNewest=true, currentJobMaxScene=null, currentJobPerFile=null;
+let jobSortNewest=true, currentJobMaxScene=null, currentJobPerFile=null, currentJobMinTake=0.5;
+let _overridesChangedSinceRender = false;
 let _perFileCuts = new Set();
+let _balancedScenes = null; // Set<scene> when dual-cam active, null = single-cam / not needed
+let _filterScore = '', _filterTime = '';
 let _ytFilePath = null;
 let _refreshing=false;
 let musicTracks=[], musicSelected=new Set();
@@ -1066,9 +1136,10 @@ async function startJob() {
   const p = { work_dir: workDir };
   const ms = document.getElementById('f-max-scene').value; if (ms) p.max_scene = parseFloat(ms);
   const pf = document.getElementById('f-per-file').value;  if (pf) p.per_file  = parseFloat(pf);
+  const sdt = document.getElementById('f-sd-threshold').value.trim(); if (sdt) p.sd_threshold = parseFloat(sdt);
+  const sdm = document.getElementById('f-sd-min-scene').value.trim(); if (sdm) p.sd_min_scene  = sdm;
   const ti = document.getElementById('f-title').value.trim(); if (ti) p.title = ti;
-  const ca = document.getElementById('f-cam-a').value.trim(); if (ca) p.cam_a = ca;
-  const cb = document.getElementById('f-cam-b').value.trim(); if (cb) p.cam_b = cb;
+  const cameras = readCamsList('f-cam-list'); if (cameras.length) p.cameras = cameras;
   const md = document.getElementById('f-music-dir').value.trim(); if (md) p.music_dir = md;
   p.no_intro = document.getElementById('f-no-intro').checked;
   p.no_music = document.getElementById('f-no-music').checked;
@@ -1160,9 +1231,15 @@ async function openJob(jobId) {
   _galleryThreshold = null;
   currentJobMaxScene = null;
   currentJobPerFile  = null;
+  currentJobMinTake  = 0.5;
   _perFileCuts = new Set();
+  _balancedScenes = null;
+  _filterScore = ''; _filterTime = '';
+  const _fsi = document.getElementById('filter-score'); if (_fsi) _fsi.value = '';
+  const _fti = document.getElementById('filter-time');  if (_fti) _fti.value = '';
   musicTracks = [];
   musicSelected = new Set();
+  document.getElementById('js-cam-list').innerHTML = '';
   document.getElementById('music-list').innerHTML = '';
   document.getElementById('music-count').textContent = '—';
   document.getElementById('gallery-stats-text').textContent = '—';
@@ -1178,6 +1255,7 @@ async function openJob(jobId) {
   document.getElementById('frames-grid').innerHTML = '';
   document.getElementById('rf-files').innerHTML = '';
   document.getElementById('btn-kill').style.display = 'none';
+  document.getElementById('log-kill-bar').style.display = 'none';
   document.getElementById('jh-path').textContent = '…';
   document.getElementById('jh-status').textContent = '';
   document.getElementById('jh-elapsed').textContent = '';
@@ -1189,21 +1267,22 @@ async function openJob(jobId) {
   jobPhase = job.phase || 'done';
   document.getElementById('jh-path').textContent = trimPath(job.params.work_dir);
   setStatusDot(job.status);
-  currentJobMaxScene = job.params.max_scene ?? null;
+  currentJobMaxScene = job.params.max_scene != null ? parseFloat(job.params.max_scene) : null;
+  currentJobPerFile  = job.params.per_file  != null ? parseFloat(job.params.per_file)  : null;
+  _overridesChangedSinceRender = false;
   await populateJobSettings(job.params);
   updatePhaseUI();
 
   // Tab selection on open
   if (job.status === 'running' || job.status === 'queued') {
     switchTab('log');
-  } else if (jobPhase === 'analyzed') {
-    switchTab('gallery');
   } else {
     switchTab('settings');
   }
 
   if (job.status === 'running') {
     document.getElementById('btn-kill').style.display = '';
+  document.getElementById('log-kill-bar').style.display = '';
     startElapsedTimer(job.started_at);
   } else if (job.status === 'queued') {
     document.getElementById('jh-status').textContent = 'queued';
@@ -1256,15 +1335,16 @@ function connectJobWs(jobId, startedAt) {
       setStatusDot(msg.status);
       if (msg.status==='running') {
         document.getElementById('btn-kill').style.display = '';
+  document.getElementById('log-kill-bar').style.display = '';
         document.getElementById('jh-status').textContent = '';
         startElapsedTimer(startedAt);
       } else {
         document.getElementById('btn-kill').style.display = 'none';
+  document.getElementById('log-kill-bar').style.display = 'none';
         if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
         if (msg.phase === 'analyzed') {
           loadFrames(jobId);
           loadAnalyzeResult(jobId);
-          switchTab('gallery');
         } else if (msg.status==='done' || msg.status==='failed') {
           loadFrames(jobId);
           loadResults(jobId);
@@ -1327,16 +1407,30 @@ async function loadAnalyzeResult(jobId) {
   const data = await api.get(`/api/jobs/${jobId}/analyze-result`);
   if (!data || currentJobId !== jobId) return;
   analyzeResult = data;
+  _overridesChangedSinceRender = false;
   document.getElementById('sum-scene-count').textContent = data.scene_count ?? '—';
-  // Threshold and Est. duration come from live _galleryThreshold if available
-  if (_galleryThreshold !== null) {
+
+  // If actual render results are available, show them directly (no threshold needed).
+  // This ensures the Summary tab always reflects the most recent completed render.
+  if (data.actual_selected_scenes != null && data.actual_duration_sec != null) {
+    const durStr = fmtDur(data.actual_duration_sec);
+    const thr = data.actual_threshold ?? data.auto_threshold;
+    document.getElementById('sum-threshold').textContent = thr != null ? parseFloat(thr).toFixed(3) : '—';
+    document.getElementById('sum-duration').textContent = durStr;
+    document.getElementById('sum-scene-selected').textContent = data.actual_selected_scenes;
+    document.getElementById('music-est-duration').textContent = durStr;
+    document.getElementById('music-est-scenes').textContent = data.actual_selected_scenes;
+  } else if (_galleryThreshold !== null) {
+    // Threshold loaded → use live balanced estimate from gallery
     _syncThresholdDisplay();
+    calculateGalleryStats();
   } else {
+    // Analysis phase, threshold not yet set → use crude analysis estimate
     document.getElementById('sum-threshold').textContent = data.auto_threshold ?? '—';
     const dur = data.estimated_duration_sec || 0;
-    const m = Math.floor(dur / 60), s = String(Math.round(dur % 60)).padStart(2, '0');
-    const durStr = dur ? `~${m}:${s}` : '—';
+    const durStr = dur ? fmtDur(dur, '~') : '—';
     document.getElementById('sum-duration').textContent = durStr;
+    document.getElementById('sum-scene-selected').textContent = data.estimated_scenes ?? '—';
     document.getElementById('music-est-duration').textContent = durStr;
     document.getElementById('music-est-scenes').textContent = data.estimated_scenes ?? data.scene_count ?? '—';
   }
@@ -1354,6 +1448,8 @@ async function startRender() {
   const resp = await api.post(`/api/jobs/${currentJobId}/render`, {
     selected_track: pinnedTrack || null,
     threshold: _galleryThreshold,
+    max_scene: currentJobMaxScene || null,
+    per_file:  currentJobPerFile  || null,
   });
   if (!resp?.id) {
     alert('Render failed to start: ' + JSON.stringify(resp));
@@ -1397,7 +1493,7 @@ function appendLog(line) {
     if (jobPhase === 'rendering') {
       const pm = line.match(/\]\s*(\d+)%\s+([\d.]+)\//);
       if (pm) {
-        const pct = parseInt(pm[1]);
+        const pct = 50 + Math.round(parseInt(pm[1]) / 2);
         const cur = parseFloat(pm[2]);
         document.getElementById('render-progress-bar').style.width = pct + '%';
         document.getElementById('render-pct').textContent = pct + '%';
@@ -1413,28 +1509,49 @@ function appendLog(line) {
   const div = document.createElement('div');
   div.className = 'log-line';
   const stepM = line.match(/^\[(\d+[a-z]?)(?:\/\d+)?\]/);
-  if (stepM)                            { div.classList.add('log-step'); activateStep(parseInt(stepM[1])); }
-  else if (/✓|cached/i.test(line))                     { div.classList.add('log-ok'); }
-  else if (/→.*highlight_final_music/.test(line))      { div.classList.add('log-ok'); }
-  else if (/\[\d+\/\d+\] checked/.test(line))          { div.classList.add('log-ok'); }
-  else if (/error|failed/i.test(line))                  { div.classList.add('log-err'); }
-  div.textContent = line;
+  if (stepM) {
+    div.classList.add('log-step');
+    activateStep(parseInt(stepM[1]));
+    const ts = new Date().toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    div.textContent = `${ts}  ${line}`;
+  } else if (/✓|cached/i.test(line))                   { div.classList.add('log-ok'); div.textContent = line; }
+  else if (/→.*highlight_final_music/.test(line))      { div.classList.add('log-ok'); div.textContent = line; }
+  else if (/\[\d+\/\d+\] checked/.test(line))          { div.classList.add('log-ok'); div.textContent = line; }
+  else if (/error|failed/i.test(line))                  { div.classList.add('log-err'); div.textContent = line; }
+  else { div.textContent = line; }
   panel.appendChild(div);
   if (atBottom) panel.scrollTop = panel.scrollHeight;
 
   if (jobPhase === 'rendering') {
+    // Intro/outro sub-steps (90/93/96%)
+    const ioM = line.match(/intro\/outro \[(\d)\/3\]/);
+    if (ioM) {
+      const pct = 87 + parseInt(ioM[1]) * 3;
+      document.getElementById('render-progress-bar').style.width = pct + '%';
+      document.getElementById('render-pct').textContent = pct + '%';
+      document.getElementById('render-eta').textContent = '';
+    }
+    // Phase 1 (0→50%): clip prep — [N/M] scene (trim/enc)
+    const clipM = line.match(/\[(\d+)\/(\d+)\]\s+\S.*\((trim|enc)\)/);
+    if (clipM) {
+      const n = parseInt(clipM[1]), tot = parseInt(clipM[2]);
+      const pct = Math.round(n / tot * 50);
+      document.getElementById('render-progress-bar').style.width = pct + '%';
+      document.getElementById('render-pct').textContent = pct + '%';
+      document.getElementById('render-eta').textContent = `clips ${n}/${tot}`;
+    }
     // Capture total duration from "Encoding highlight (Xs)..."
     const totM = line.match(/Encoding highlight \(([\d.]+)s\)/);
     if (totM) _renderTotalSec = parseFloat(totM[1]);
-    // Parse progress bar line: [████░░░]  XX%  cur/total_s
+    // Phase 2 (50→100%): ffmpeg encode progress
     const pm = line.match(/\]\s*(\d+)%\s+([\d.]+)\//);
     if (pm) {
-      const pct = parseInt(pm[1]);
+      const pct = 50 + Math.round(parseInt(pm[1]) / 2);
       const cur = parseFloat(pm[2]);
       document.getElementById('render-progress-bar').style.width = pct + '%';
       document.getElementById('render-pct').textContent = pct + '%';
       const total = _renderTotalSec || 1;
-      const remSec = Math.max(0, Math.round(total - cur));
+      const remSec = Math.max(0, Math.round((total - cur) / 2)); // encoding ~2× real-time
       const etaStr = remSec > 0 ? `ETA ${remSec < 60 ? remSec + 's' : Math.floor(remSec/60) + 'm' + String(remSec%60).padStart(2,'0') + 's'}` : '';
       document.getElementById('render-eta').textContent = etaStr;
     }
@@ -1469,6 +1586,7 @@ async function killJob() {
   if (!currentJobId || !confirm('Kill running job?')) return;
   await api.del(`/api/jobs/${currentJobId}`);
   document.getElementById('btn-kill').style.display = 'none';
+  document.getElementById('log-kill-bar').style.display = 'none';
 }
 
 async function removeJob(jobId) {
@@ -1525,6 +1643,10 @@ async function loadFrames(jobId) {
   // Guard: ignore stale response if user switched to another job
   if (currentJobId !== jobId) return;
   framesData = data;
+  // Ensure caps are set from job params (guards against populateJobSettings race)
+  if (job?.params?.max_scene != null) currentJobMaxScene = parseFloat(job.params.max_scene);
+  if (job?.params?.per_file  != null) currentJobPerFile  = parseFloat(job.params.per_file);
+  if (job?.params?.min_take  != null) currentJobMinTake  = parseFloat(job.params.min_take);
   await loadOverrides();
   document.getElementById('gallery-stats-text').textContent = '—';
 
@@ -1550,9 +1672,12 @@ async function loadFrames(jobId) {
 
 function _computePerFileCuts() {
   _perFileCuts = new Set();
-  if (!currentJobPerFile || _galleryThreshold === null) return;
-  const maxSec = currentJobMaxScene ? parseFloat(currentJobMaxScene) : Infinity;
-  const perFile = currentJobPerFile;
+  if (_galleryThreshold === null) return;
+  const perFile = currentJobPerFile ||
+    parseFloat(document.getElementById('js-per-file')?.value || '0') || 0;
+  if (!perFile) return;
+  const maxSec = currentJobMaxScene ||
+    parseFloat(document.getElementById('js-max-scene')?.value || '0') || Infinity;
   const groups = new Map();
   for (const f of framesData) {
     const ov = manualOverrides[f.scene];
@@ -1567,6 +1692,7 @@ function _computePerFileCuts() {
     let total = 0;
     for (const f of scenes) {
       const take = Math.min(f.duration ?? maxSec, maxSec);
+      if (take < currentJobMinTake) continue;
       if (total >= perFile || total + take - perFile > 0.5) {
         _perFileCuts.add(f.scene);
       } else {
@@ -1574,12 +1700,103 @@ function _computePerFileCuts() {
       }
     }
   }
+  _computeBalancedScenes();
+}
+
+// Passes threshold + per-file budget checks (no camera balance). Used as input for balancing.
+function _passesPreBalance(f) {
+  const ov = manualOverrides[f.scene];
+  if (ov === 'include') return true;
+  if (ov === 'exclude') return false;
+  if (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value)) return false;
+  return !_perFileCuts.has(f.scene);
+}
+
+// Compute the camera-balanced scene set. Mirrors select_scenes.py balancing algorithm.
+// Result stored in _balancedScenes (Set<scene name>) or null for single-cam.
+function _computeBalancedScenes() {
+  _balancedScenes = null;
+  const base = framesData.filter(f => _passesPreBalance(f));
+  const hasCams = base.some(f => f.camera && f.camera !== 'default');
+  if (!hasCams || base.length === 0) return;
+
+  const SLACK = 2;
+  const maxSec = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
+  const perFile = currentJobPerFile || parseFloat(document.getElementById('js-per-file')?.value || '0') || 0;
+
+  const buckets = new Map();
+  for (const f of base) {
+    const cam = f.camera || 'default';
+    if (!buckets.has(cam)) buckets.set(cam, []);
+    buckets.get(cam).push(f);
+  }
+  if (buckets.size <= 1) return;
+
+  const cams = [...buckets.keys()];
+  const counts = cams.map(c => buckets.get(c).length);
+  if (Math.max(...counts) - Math.min(...counts) <= SLACK) return; // already balanced
+
+  const target = Math.round(counts.reduce((a, b) => a + b, 0) / cams.length);
+
+  // Step 1: trim over-represented cameras
+  for (const cam of cams) {
+    const g = buckets.get(cam);
+    const maxAllowed = target + SLACK;
+    if (g.length > maxAllowed)
+      buckets.set(cam, [...g].sort((a, b) => b.score - a.score).slice(0, maxAllowed));
+  }
+
+  // Step 2: boost under-represented cameras with scenes just below threshold
+  if (perFile > 0 && _galleryThreshold !== null) {
+    const boostFloor = Math.max(0, _galleryThreshold - 0.15);
+    const allUsed = new Set([...buckets.values()].flat().map(f => f.scene));
+    for (const cam of cams) {
+      const g = buckets.get(cam);
+      const targetMin = target - SLACK;
+      if (g.length >= targetMin) continue;
+      const srcUsed = new Map();
+      for (const f of g) {
+        const src = f.scene.replace(/-scene-\d+$/, '');
+        srcUsed.set(src, (srcUsed.get(src) || 0) + Math.min(f.duration ?? maxSec, maxSec));
+      }
+      const candidates = framesData
+        .filter(f => f.camera === cam && f.score >= boostFloor &&
+                     f.score < _galleryThreshold && !allUsed.has(f.scene) &&
+                     manualOverrides[f.scene] !== 'exclude')
+        .sort((a, b) => b.score - a.score);
+      for (const f of candidates) {
+        if (g.length >= targetMin) break;
+        if (f.duration == null) continue;
+        const src = f.scene.replace(/-scene-\d+$/, '');
+        const used = srcUsed.get(src) || 0;
+        if (used >= perFile) continue;
+        const take = Math.min(f.duration, maxSec, perFile - used);
+        if (take < currentJobMinTake) continue;
+        g.push(f);
+        srcUsed.set(src, used + take);
+        allUsed.add(f.scene);
+      }
+    }
+  }
+
+  // Final trim pass
+  const finalMin = Math.min(...cams.map(c => buckets.get(c).length));
+  for (const cam of cams) {
+    const g = buckets.get(cam);
+    const maxFinal = finalMin + SLACK;
+    if (g.length > maxFinal)
+      buckets.set(cam, [...g].sort((a, b) => b.score - a.score).slice(0, maxFinal));
+  }
+
+  _balancedScenes = new Set([...buckets.values()].flat().map(f => f.scene));
 }
 
 function isIncluded(f) {
   const ov = manualOverrides[f.scene];
   if (ov === 'include') return true;
   if (ov === 'exclude') return false;
+  // In dual-cam mode use the pre-computed balanced set (includes boosted below-threshold scenes)
+  if (_balancedScenes !== null) return _balancedScenes.has(f.scene);
   if (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value)) return false;
   return !_perFileCuts.has(f.scene);
 }
@@ -1605,19 +1822,23 @@ function toggleFrame(scene) {
   } else {
     delete manualOverrides[scene];
   }
+  _overridesChangedSinceRender = true;
   saveOverrides();
   // Update only this card in-place — no full grid re-render
   const card = document.querySelector(`[data-scene="${CSS.escape(scene)}"]`);
   if (card) {
     const newOv = manualOverrides[scene];
-    const limited = !newOv && f.score != null && f.score >= _galleryThreshold && _perFileCuts.has(f.scene);
     const included = isIncluded(f);
+    const aboveThreshold = f.score != null && _galleryThreshold !== null && f.score >= _galleryThreshold;
+    const limited = !newOv && !included && aboveThreshold;
     card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + (newOv ? ' manual' : '');
+    const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
     card.title = newOv ? `Score: ${f.score.toFixed(3)} (manual — click to reset)`
-      : limited ? `Score: ${f.score.toFixed(3)} (cut by max per-file limit — click to force include)`
+      : limited ? `Score: ${f.score.toFixed(3)} (cut by ${limitReason} — click to force include)`
       : `Score: ${f.score.toFixed(3)} (click to toggle)`;
   }
   _syncThresholdDisplay();
+  calculateGalleryStats();
 }
 
 function _cachedSrc(url) {
@@ -1630,19 +1851,49 @@ function _cachedSrc(url) {
   return url; // use original URL on first load
 }
 
+function _sceneMatchesFilters(f) {
+  if (_filterScore) {
+    const s = f.score != null ? f.score.toFixed(3) : '';
+    if (!s.startsWith(_filterScore)) return false;
+  }
+  if (_filterTime) {
+    // Extract HHMMSS from scene name e.g. VID_20250421_092049_001-scene-008 → 092049
+    const m = f.scene.match(/\d{8}_(\d{6})/);
+    if (!m) return false;
+    const needle = _filterTime.replace(/:/g, ''); // strip colons typed by user
+    if (!m[1].startsWith(needle)) return false;
+  }
+  return true;
+}
+
+function _applyGalleryFilter() {
+  document.querySelectorAll('#frames-grid .fc').forEach(card => {
+    const f = framesData.find(x => x.scene === card.dataset.scene);
+    card.style.display = (f && _sceneMatchesFilters(f)) ? '' : 'none';
+  });
+}
+
+function onGalleryFilter() {
+  _filterScore = (document.getElementById('filter-score')?.value ?? '').trim();
+  _filterTime  = (document.getElementById('filter-time')?.value  ?? '').trim();
+  _applyGalleryFilter();
+}
+
 function renderGallery() {
   const grid = document.getElementById('frames-grid');
   const frag = document.createDocumentFragment();
   for (const f of [...framesData].sort((a,b)=>a.scene<b.scene?-1:a.scene>b.scene?1:0)) {
     const ov = manualOverrides[f.scene];
-    const limited = !ov && f.score != null && f.score >= _galleryThreshold && _perFileCuts.has(f.scene);
     const included = isIncluded(f);
+    const aboveThreshold = f.score != null && _galleryThreshold !== null && f.score >= _galleryThreshold;
+    const limited = !ov && !included && aboveThreshold;
     const card = document.createElement('div');
     card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + (ov ? ' manual' : '');
     card.style.cursor = 'pointer';
     card.dataset.scene = f.scene;
+    const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
     card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)`
-      : limited ? `Score: ${f.score.toFixed(3)} (cut by max per-file limit — click to force include)`
+      : limited ? `Score: ${f.score.toFixed(3)} (cut by ${limitReason} — click to force include)`
       : `Score: ${f.score.toFixed(3)} (click to toggle)`;
     card.onclick = ()=>toggleFrame(f.scene);
     const sceneLabel = (s => {
@@ -1657,26 +1908,142 @@ function renderGallery() {
   grid.innerHTML = '';
   grid.appendChild(frag);
   _galleryDirty = false;
+  _applyGalleryFilter();
+}
+
+function _refreshGalleryClasses() {
+  // Fast path: update only CSS classes/badges on existing cards without re-creating DOM
+  const sceneMap = new Map(framesData.map(f => [f.scene, f]));
+  document.querySelectorAll('#frames-grid .fc').forEach(card => {
+    const f = sceneMap.get(card.dataset.scene);
+    if (!f) return;
+    const ov = manualOverrides[f.scene];
+    const included = isIncluded(f);
+    const aboveThreshold = f.score != null && _galleryThreshold !== null && f.score >= _galleryThreshold;
+    const limited = !ov && !included && aboveThreshold;
+    card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + (ov ? ' manual' : '');
+    const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
+    card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)`
+      : limited ? `Score: ${f.score.toFixed(3)} (cut by ${limitReason} — click to force include)`
+      : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+    const badge = card.querySelector('.fc-limit-badge');
+    if (limited && !badge) {
+      card.querySelector('.fc-info')?.insertAdjacentHTML('beforeend', '<span class="fc-limit-badge">limit</span>');
+    } else if (!limited && badge) {
+      badge.remove();
+    }
+  });
+  _applyGalleryFilter();
+}
+
+function _estimateDuration(scenes) {
+  // Mirrors select_scenes.py: max_scene cap per scene + per_file cap per source file
+  const maxSec = currentJobMaxScene ||
+    parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
+  const perFile = currentJobPerFile ||
+    parseFloat(document.getElementById('js-per-file')?.value || '0') || null;
+  const bySource = new Map();
+  for (const f of scenes) {
+    if (f.duration == null) continue;
+    const src = f.scene.replace(/-scene-\d+$/, '');
+    if (!bySource.has(src)) bySource.set(src, []);
+    bySource.get(src).push(f);
+  }
+  let total = 0;
+  for (const group of bySource.values()) {
+    let fileTot = 0;
+    for (const f of group.sort((a,b) => (b.score??0)-(a.score??0))) {
+      let take = Math.min(f.duration, maxSec);
+      if (perFile != null) take = Math.min(take, perFile - fileTot);
+      if (take < currentJobMinTake) continue;
+      total   += take;
+      fileTot += take;
+      if (perFile != null && fileTot >= perFile) break;
+    }
+  }
+  return total;
+}
+
+function _balancedEstimate() {
+  // _computeBalancedScenes() already ran (called from _computePerFileCuts).
+  // isIncluded() now reflects camera balance, so just filter directly.
+  const balanced = framesData.filter(f => isIncluded(f));
+  const camRatio = analyzeResult?.cam_ratio ?? 1.0;
+
+  // Scale duration/count from exact dry-run values proportionally to current threshold.
+  // This avoids multiplying JS per-file-cap inaccuracies by cam_ratio.
+  const estMain = analyzeResult?.estimated_main_scenes || 0;
+  const estDur  = analyzeResult?.estimated_duration_sec || 0;
+  const estAll  = analyzeResult?.estimated_scenes || 0;
+  let duration, scaledCount;
+  if (estMain > 0 && estDur > 0) {
+    const factor = balanced.length / estMain;
+    duration    = estDur  * factor;
+    scaledCount = Math.round(estAll * factor);
+  } else {
+    duration    = _estimateDuration(balanced) * camRatio;
+    scaledCount = Math.round(balanced.length  * camRatio);
+  }
+  return { scenes: balanced, duration, scaledCount, camRatio };
 }
 
 function calculateGalleryStats() {
-  const included = framesData.filter(f=>isIncluded(f));
-  const maxSec = currentJobMaxScene ? parseFloat(currentJobMaxScene) : null;
-  let totalSec = 0;
-  let hasDur = false;
-  for (const f of included) {
-    if (f.duration != null) {
-      hasDur = true;
-      totalSec += maxSec ? Math.min(f.duration, maxSec) : f.duration;
-    }
+  // If actual render data matches current threshold and no overrides, show actual values
+  const v = _galleryThreshold;
+  const actualThr = analyzeResult?.actual_threshold ?? analyzeResult?.auto_threshold;
+  const useActual = v !== null && analyzeResult?.actual_selected_scenes != null &&
+                    analyzeResult?.actual_duration_sec != null && !_overridesChangedSinceRender &&
+                    actualThr != null && Math.abs(v - actualThr) < 0.0015;
+  const useEstimated = !useActual && analyzeResult?.estimated_scenes > 0 &&
+                       analyzeResult?.estimated_duration_sec > 0 &&
+                       actualThr != null && Math.abs(v - actualThr) < 0.0015;
+  if (useActual) {
+    document.getElementById('gallery-stats-text').textContent =
+      `${analyzeResult.actual_selected_scenes} / ${framesData.length} scenes · ${fmtDur(analyzeResult.actual_duration_sec)}`;
+    return;
   }
-  const countTxt = `${included.length} / ${framesData.length} scenes`;
+  if (useEstimated) {
+    document.getElementById('gallery-stats-text').textContent =
+      `${analyzeResult.estimated_scenes} / ${framesData.length} scenes · ${fmtDur(analyzeResult.estimated_duration_sec, '~')} est.`;
+    return;
+  }
+  const est = _balancedEstimate();
+  const hasDur = est.scenes.some(f => f.duration != null);
+  const countTxt = `${est.scaledCount} / ${framesData.length} scenes`;
   let durTxt = '';
   if (hasDur) {
-    const m = Math.floor(totalSec/60), s = Math.round(totalSec%60);
-    durTxt = ` · ~${m}:${String(s).padStart(2,'0')} est.`;
+    durTxt = ` · ${fmtDur(est.duration, '~')} est.`;
   }
   document.getElementById('gallery-stats-text').textContent = countTxt + durTxt;
+}
+
+function saveSettingsField() {
+  if (!currentJobId) return;
+  const gv = id => document.getElementById(id)?.value.trim();
+  const gc = id => document.getElementById(id)?.checked;
+  const workDir = gv('js-workdir');
+  if (!workDir) return;
+  const data = { work_dir: workDir };
+  const sdt = gv('js-sd-threshold'); if (sdt) data.sd_threshold = parseFloat(sdt);
+  const sdm = gv('js-sd-min-scene'); if (sdm) data.sd_min_scene = sdm;
+  const ms  = gv('js-max-scene');    if (ms)  data.max_scene     = parseFloat(ms);
+  const pf  = gv('js-per-file');     if (pf)  data.per_file      = parseFloat(pf);
+  const tm  = gv('js-target-min');   if (tm)  data.target_minutes = parseFloat(tm);
+  const ti  = gv('js-title');        if (ti)  data.title          = ti;
+  data.no_intro = gc('js-no-intro') || false;
+  data.no_music = gc('js-no-music') || false;
+  const bs  = gv('js-batch-size');   if (bs)  data.batch_size    = parseInt(bs);
+  const cw  = gv('js-clip-workers'); if (cw)  data.clip_workers  = parseInt(cw);
+  api.put('/api/job-config', data);
+}
+
+function savePromptsField() {
+  if (!currentJobId) return;
+  const workDir = document.getElementById('js-workdir')?.value.trim();
+  if (!workDir) return;
+  const positive = document.getElementById('js-positive')?.value.trim() || '';
+  const negative = document.getElementById('js-negative')?.value.trim() || '';
+  api.post('/api/save-prompts', { work_dir: workDir, positive, negative });
 }
 
 function _saveThreshold() {
@@ -1687,31 +2054,68 @@ function _saveThreshold() {
   }, 600);
 }
 
+let _estimateTimer = null;
+function _scheduleEstimate() {
+  if (!currentJobId || !analyzeResult) return;
+  clearTimeout(_estimateTimer);
+  _estimateTimer = setTimeout(async () => {
+    const thr = _galleryThreshold;
+    const ms  = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value) || 10;
+    const pf  = currentJobPerFile  || parseFloat(document.getElementById('js-per-file')?.value)  || 45;
+    const res = await api.post(`/api/jobs/${currentJobId}/estimate`,
+                               { threshold: thr, max_scene: ms, per_file: pf });
+    if (res?.scenes != null && analyzeResult) {
+      analyzeResult.estimated_scenes        = res.scenes;
+      analyzeResult.estimated_duration_sec  = res.duration_sec;
+      analyzeResult.estimated_main_scenes   = res.main_scenes;
+      analyzeResult.cam_ratio               = res.cam_ratio;
+      analyzeResult.auto_threshold          = res.threshold;
+      _syncThresholdDisplay();
+      calculateGalleryStats();
+    }
+  }, 900);
+}
+
 function _syncThresholdDisplay() {
   if (_galleryThreshold === null) return;
   _computePerFileCuts();
   const v = _galleryThreshold;
-  // Update Summary threshold + recompute Est. duration from live framesData
   document.getElementById('sum-threshold').textContent = v.toFixed(3);
-  if (framesData.length) {
-    const maxSec = currentJobMaxScene ? parseFloat(currentJobMaxScene) : null;
-    let estScenes = 0, totalSec = 0, hasDur = false;
-    for (const f of framesData) {
-      if (isIncluded(f)) {
-        estScenes++;
-        if (f.duration != null) { hasDur = true; totalSec += maxSec ? Math.min(f.duration, maxSec) : f.duration; }
-      }
-    }
-    const estDur = Math.round(totalSec);
-    const m = Math.floor(estDur / 60), s = String(estDur % 60).padStart(2, '0');
-    const durStr = (hasDur && estScenes) ? `~${m}:${s}` : '—';
-    document.getElementById('sum-duration').textContent = durStr;
-    const mEst = document.getElementById('music-est-duration');
-    if (mEst) mEst.textContent = durStr;
-    const mScenes = document.getElementById('music-est-scenes');
-    if (mScenes) mScenes.textContent = estScenes || '—';
-    if (analyzeResult) { analyzeResult._live_est_scenes = estScenes; analyzeResult._live_est_dur = estDur; }
+  if (!framesData.length) return;
+
+  // If threshold matches the last actual run and overrides haven't changed since, show actual output.
+  // Otherwise fall back to the live estimate (simulates what a re-run would produce).
+  const actualThr = analyzeResult?.actual_threshold ?? analyzeResult?.auto_threshold;
+  const useActual = analyzeResult?.actual_selected_scenes != null &&
+                    analyzeResult?.actual_duration_sec   != null &&
+                    !_overridesChangedSinceRender &&
+                    actualThr != null && Math.abs(v - actualThr) < 0.0015;
+
+  const useEstimated = !useActual && analyzeResult?.estimated_scenes > 0 &&
+                       analyzeResult?.estimated_duration_sec > 0 &&
+                       actualThr != null && Math.abs(v - actualThr) < 0.0015;
+  let scenes, durStr;
+  if (useActual) {
+    scenes  = analyzeResult.actual_selected_scenes;
+    durStr  = fmtDur(analyzeResult.actual_duration_sec);
+  } else if (useEstimated) {
+    scenes  = analyzeResult.estimated_scenes;
+    durStr  = fmtDur(analyzeResult.estimated_duration_sec, '~');
+  } else {
+    const est = _balancedEstimate();
+    scenes  = est.scaledCount;
+    const hasDur = est.scenes.some(f => f.duration != null);
+    const estDur = Math.round(est.duration);
+    durStr  = (hasDur && scenes) ? fmtDur(estDur, '~') : '—';
+    if (analyzeResult) { analyzeResult._live_est_scenes = scenes; analyzeResult._live_est_dur = estDur; }
   }
+
+  document.getElementById('sum-duration').textContent = durStr;
+  document.getElementById('sum-scene-selected').textContent = scenes || '—';
+  const mEst = document.getElementById('music-est-duration');
+  if (mEst) mEst.textContent = durStr;
+  const mScenes = document.getElementById('music-est-scenes');
+  if (mScenes) mScenes.textContent = scenes || '—';
 }
 
 function resetThreshold() {
@@ -1722,10 +2126,21 @@ function resetThreshold() {
   _galleryThreshold = parseFloat(auto);
   manualOverrides = {};
   saveOverrides();
+  _applyThreshold(_galleryThreshold);
+}
+
+let _thresholdRafId = null;
+function _applyThreshold(v) {
+  _galleryThreshold = v;
   _syncThresholdDisplay();
   _saveThreshold();
-  renderGallery();
-  calculateGalleryStats();
+  _scheduleEstimate();
+  calculateGalleryStats(); // update count/est immediately (pure JS, no DOM mutation)
+  if (_thresholdRafId) cancelAnimationFrame(_thresholdRafId);
+  _thresholdRafId = requestAnimationFrame(() => {
+    _thresholdRafId = null;
+    _refreshGalleryClasses(); // slow DOM class updates deferred to next frame
+  });
 }
 
 function stepThreshold(delta) {
@@ -1733,11 +2148,7 @@ function stepThreshold(delta) {
   let v = parseFloat(inp.value) + delta;
   v = Math.max(0, Math.round(v * 1000) / 1000);
   inp.value = v.toFixed(3);
-  _galleryThreshold = v;
-  _syncThresholdDisplay();
-  _saveThreshold();
-  renderGallery();
-  calculateGalleryStats();
+  _applyThreshold(v);
 }
 
 function onThresholdEdit() {
@@ -1746,11 +2157,7 @@ function onThresholdEdit() {
   if (isNaN(v)) return;
   v = Math.max(0, Math.min(1, v));
   inp.value = v.toFixed(3);
-  _galleryThreshold = v;
-  _syncThresholdDisplay();
-  _saveThreshold();
-  renderGallery();
-  calculateGalleryStats();
+  _applyThreshold(v);
 }
 
 
@@ -1758,6 +2165,10 @@ function onThresholdEdit() {
 async function loadMusicTracks() {
   const dir = document.getElementById('music-dir-input').value.trim();
   if (!dir) return;
+  // Persist music dir immediately (before API call, so it's saved even if API fails)
+  const wd = document.getElementById('js-workdir').value.trim();
+  if (wd) api.put('/api/job-config', { work_dir: wd, music_dir: dir });
+  if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { music_dir: dir });
   const data = await api.get(`/api/music-files?dir=${encodeURIComponent(dir)}`);
   if (!data) return;
   musicTracks = data;
@@ -1853,7 +2264,7 @@ function renderMusicList() {
     const titleText = document.createElement('span');
     titleText.textContent = t.title;
     titleWrap.appendChild(titleText);
-    const dur = t.duration ? `${Math.floor(t.duration/60)}:${String(Math.round(t.duration%60)).padStart(2,'0')}` : '?';
+    const dur = t.duration ? fmtDur(t.duration) : '?';
     const meta = document.createElement('span');
     meta.className = 'mt-meta';
     meta.textContent = `${t.genre || '—'} · ${dur}`;
@@ -1893,7 +2304,7 @@ function renderMusicList() {
 function updateMusicCount(shown) {
   const s = musicSelected.size, t = musicTracks.length;
   const minDur = analyzeResult?._live_est_dur ?? analyzeResult?.estimated_duration_sec ?? 0;
-  const durFilter = minDur ? ` ~${Math.floor(minDur/60)}:${String(Math.round(minDur%60)).padStart(2,'0')}±${MUSIC_DUR_TOL}s` : '';
+  const durFilter = minDur ? ` ~${fmtDur(minDur)}±${MUSIC_DUR_TOL}s` : '';
   const shownTxt = (shown != null && shown !== t) ? ` · ${shown} shown${durFilter}` : '';
   const allTxt = s === 0 && t > 0 ? ' (no filter = all)' : '';
   document.getElementById('music-count').textContent = `${s} / ${t} selected${shownTxt}${allTxt}`;
@@ -1969,12 +2380,11 @@ async function populateJobSettings(params) {
   const sc = (id, v) => { if (v != null) document.getElementById(id).checked = !!v; };
 
   sv('js-workdir',  params.work_dir);
-  sv('js-cam-a',    params.cam_a);
-  sv('js-cam-b',    params.cam_b);
+  await setCamsList('js-cam-list', params.cameras || [params.cam_a, params.cam_b].filter(Boolean));
   sv('js-title',    params.title);
   sc('js-no-intro', params.no_intro);
   sc('js-no-music', params.no_music);
-  // Music tab state
+  // Music tab state (set from params first; cfg.music_dir will override below if set)
   if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
   if (params.music_files?.length) musicSelected = new Set(params.music_files);
   else musicSelected = new Set();
@@ -1986,16 +2396,32 @@ async function populateJobSettings(params) {
     if (th == null) th = cfg.threshold;
     if (ms == null) ms = cfg.max_scene;
     if (pf == null) pf = cfg.per_file;
+    // cfg.music_dir only as fallback when params doesn't have it
     if (!params.music_dir && cfg.music_dir) document.getElementById('music-dir-input').value = cfg.music_dir;
     if (cfg.positive) document.getElementById('js-positive').value = cfg.positive;
     if (cfg.negative) document.getElementById('js-negative').value = cfg.negative;
+    if (cfg.batch_size)   document.getElementById('js-batch-size').value   = cfg.batch_size;
+    if (cfg.clip_workers) document.getElementById('js-clip-workers').value = cfg.clip_workers;
   }
   document.getElementById('js-description').value = params.description ||
     'Motorcycle ride on winding mountain roads, scenic landscapes, sweeping curves and technical sections. Sunny weather, good visibility, beautiful surroundings.';
-  sv('js-max-scene', ms);
-  sv('js-per-file',  pf);
+  sv('js-max-scene',    ms);
+  sv('js-per-file',     pf);
+  sv('js-sd-threshold', params.sd_threshold ?? cfg?.sd_threshold);
+  sv('js-sd-min-scene', params.sd_min_scene  ?? cfg?.sd_min_scene);
   if (ms != null) currentJobMaxScene = parseFloat(ms);
   if (pf != null) currentJobPerFile  = parseFloat(pf);
+  const mt = params.min_take ?? cfg?.min_take;
+  if (mt != null) currentJobMinTake = parseFloat(mt); else currentJobMinTake = 0.5;
+  // Target minutes
+  const tm = params.target_minutes ?? cfg?.target_minutes;
+  if (tm != null) document.getElementById('js-target-min').value = tm;
+  // Auto-count source files (non-blocking); restore saved values after
+  _sceneParamManual['js'] = false;
+  fillSceneParams('js').then(() => {
+    if (ms != null) { document.getElementById('js-max-scene').value = ms; _sceneParamManual['js'] = false; }
+    if (pf != null) { document.getElementById('js-per-file').value  = pf; _sceneParamManual['js'] = false; }
+  });
   // Auto-load music index if dir is known
   if (document.getElementById('music-dir-input').value.trim()) loadMusicTracks();
 }
@@ -2007,8 +2433,9 @@ function readJobSettings() {
   if (_galleryThreshold !== null) p.threshold = _galleryThreshold;
   const ms = gv('js-max-scene'); if (ms) p.max_scene = parseFloat(ms);
   const pf = gv('js-per-file');  if (pf) p.per_file  = parseFloat(pf);
-  const ca = gv('js-cam-a');     if (ca) p.cam_a = ca;
-  const cb = gv('js-cam-b');     if (cb) p.cam_b = cb;
+  const sdt = gv('js-sd-threshold'); if (sdt) p.sd_threshold = parseFloat(sdt);
+  const sdm = gv('js-sd-min-scene'); if (sdm) p.sd_min_scene  = sdm;
+  const cameras = readCamsList('js-cam-list'); if (cameras.length) p.cameras = cameras;
   const ti = gv('js-title');     if (ti) p.title = ti;
   p.no_intro = gc('js-no-intro');
   p.no_music  = gc('js-no-music');
@@ -2018,7 +2445,22 @@ function readJobSettings() {
   const desc = gv('js-description'); if (desc) p.description = desc;
   const pos = gv('js-positive'); if (pos) p.positive = pos;
   const neg = gv('js-negative'); if (neg) p.negative = neg;
+  const bs = gv('js-batch-size'); if (bs) p.batch_size = parseInt(bs);
+  const cw = gv('js-clip-workers'); if (cw) p.clip_workers = parseInt(cw);
   return p;
+}
+
+function saveClipScoring() {
+  const wd = document.getElementById('js-workdir').value.trim();
+  if (!wd) return;
+  const bs = document.getElementById('js-batch-size').value.trim();
+  const cw = document.getElementById('js-clip-workers').value.trim();
+  const p  = {};
+  if (bs) p.batch_size   = parseInt(bs);
+  if (cw) p.clip_workers = parseInt(cw);
+  if (!Object.keys(p).length) return;
+  api.put('/api/job-config', { work_dir: wd, ...p });
+  if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, p);
 }
 
 async function rerunFromSettings() {
@@ -2031,7 +2473,7 @@ async function rerunFromSettings() {
     if (resp?.id) { refreshJobList(); openJob(resp.id); }
     else alert('Re-analyze failed: ' + JSON.stringify(resp));
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '▶ Re-analyze with these settings'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Re-analyze'; }
   }
 }
 
@@ -2135,6 +2577,125 @@ function selectCurrentDir() {
   if (_dirSelectCb) _dirSelectCb(browsePath);
   closeDirBrowser();
 }
+// ── Scene parameter calculator ───────────────────────────────────────────────
+const _sceneParamManual = { f: false, js: false };
+
+function markManual(prefix) {
+  _sceneParamManual[prefix] = true;
+  const info = document.getElementById(prefix + '-src-info');
+  if (info && info.dataset.count) info.textContent = info.dataset.count + ' · manual';
+  if (prefix === 'js') {
+    const ms = parseFloat(document.getElementById('js-max-scene')?.value || '0');
+    const pf = parseFloat(document.getElementById('js-per-file')?.value  || '0');
+    if (ms > 0) currentJobMaxScene = ms;
+    if (pf > 0) currentJobPerFile  = pf;
+    _syncThresholdDisplay();
+    _scheduleEstimate();
+  }
+}
+
+async function fillSceneParams(prefix) {
+  const workdir = document.getElementById(prefix === 'js' ? 'js-workdir' : 'f-workdir').value.trim();
+  if (!workdir) return;
+  const cameras = readCamsList(prefix + '-cam-list');
+  const targetMin = parseFloat(document.getElementById(prefix + '-target-min').value) || 6;
+
+  const camsParam = cameras.length ? cameras.join(',') : '';
+  const data = await api.get(
+    `/api/count-sources?dir=${encodeURIComponent(workdir)}` +
+    (camsParam ? `&cameras=${encodeURIComponent(camsParam)}` : '')
+  );
+  if (!data) return;
+
+  const total = data.total || 0;
+  const nCams = Math.max(cameras.length, 1);
+  const filesPerCam = total / nCams;
+
+  const info = document.getElementById(prefix + '-src-info');
+  const countStr = `${total} files / ${nCams} cam${nCams > 1 ? 's' : ''}`;
+  if (info) { info.textContent = countStr; info.dataset.count = countStr; }
+
+  // Formula: max_per_file = (target_s × n_cams) / (files_per_cam × 0.5 hit-rate)
+  const targetSec = targetMin * 60;
+  const maxPerFile = Math.max(5, Math.round((targetSec * nCams) / (filesPerCam * 0.5)));
+  const maxScene   = Math.min(maxPerFile, Math.max(4, Math.round(maxPerFile * 0.2)));
+
+  document.getElementById(prefix + '-max-scene').value = maxScene;
+  document.getElementById(prefix + '-per-file').value  = maxPerFile;
+  _sceneParamManual[prefix] = false;
+  if (info) info.textContent = countStr;
+
+  // Save target to config
+  const wd = prefix === 'js'
+    ? document.getElementById('js-workdir').value.trim()
+    : workdir;
+  if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: targetMin });
+}
+
+// ── Camera subfolder picker ───────────────────────────────────────────────────
+const _CAM_LETTERS = ['A','B','C','D','E','F','G','H'];
+
+async function _fetchCamSubdirs(workdir) {
+  if (!workdir) return [];
+  const data = await api.get(`/api/subdirs?dir=${encodeURIComponent(workdir)}`);
+  return data || [];
+}
+
+function _camOptions(subdirs, selected) {
+  const frag = document.createDocumentFragment();
+  const none = document.createElement('option'); none.value = ''; none.textContent = '— none —';
+  frag.appendChild(none);
+  for (const d of subdirs) {
+    const o = document.createElement('option'); o.value = o.textContent = d;
+    if (d === selected) o.selected = true;
+    frag.appendChild(o);
+  }
+  return frag;
+}
+
+function _relabelCams(container) {
+  container.querySelectorAll('.cam-row').forEach((row, i) => {
+    row.querySelector('.cam-label').textContent = 'Cam ' + (_CAM_LETTERS[i] || String.fromCharCode(65+i));
+  });
+}
+
+async function addCamRow(containerId, value, subdirs) {
+  const container = document.getElementById(containerId);
+  if (!subdirs) {
+    const wd = containerId.startsWith('f-')
+      ? document.getElementById('f-workdir').value.trim()
+      : document.getElementById('js-workdir').value.trim();
+    subdirs = await _fetchCamSubdirs(wd);
+  }
+  const row = document.createElement('div'); row.className = 'cam-row';
+  const lbl = document.createElement('span'); lbl.className = 'cam-label'; lbl.textContent = 'Cam ?';
+  const sel = document.createElement('select'); sel.className = 'cam-select';
+  sel.appendChild(_camOptions(subdirs, value || ''));
+  const btn = document.createElement('button'); btn.className = 'btn-sm'; btn.textContent = '−';
+  btn.title = 'Remove camera'; btn.style.flexShrink = '0';
+  btn.onclick = () => { row.remove(); _relabelCams(container); };
+  row.append(lbl, sel, btn);
+  container.appendChild(row);
+  _relabelCams(container);
+}
+
+async function setCamsList(containerId, cameras) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  const wd = containerId.startsWith('f-')
+    ? document.getElementById('f-workdir').value.trim()
+    : document.getElementById('js-workdir').value.trim();
+  const subdirs = await _fetchCamSubdirs(wd);
+  const list = (cameras || []).filter(Boolean);
+  for (const cam of list) await addCamRow(containerId, cam, subdirs);
+  if (!list.length) await addCamRow(containerId, '', subdirs);
+}
+
+function readCamsList(containerId) {
+  return [...document.getElementById(containerId).querySelectorAll('.cam-select')]
+    .map(s => s.value.trim()).filter(Boolean);
+}
+
 // Project working dir
 function openFormDirBrowser()      { openDirBrowser(document.getElementById('f-workdir').value, p => { document.getElementById('f-workdir').value = p; loadDirConfig(p); }); }
 // Music dir (form)
@@ -2151,6 +2712,7 @@ function openMusicDirBrowser() {
     document.getElementById('music-dir-input').value = p;
     const wd = document.getElementById('js-workdir').value.trim();
     if (wd) api.put('/api/job-config', { work_dir: wd, music_dir: p });
+    if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { music_dir: p });
     loadMusicTracks();
   });
 }
@@ -2176,12 +2738,19 @@ async function loadDirConfig(dir) {
   const chk = (id, v) => { if (v !== undefined && v !== null) document.getElementById(id).checked = !!v; };
   set('f-max-scene',    data.max_scene);
   set('f-per-file',     data.per_file);
-  set('f-cam-a',        data.cam_a);
-  set('f-cam-b',        data.cam_b);
+  await setCamsList('f-cam-list', data.cameras || [data.cam_a, data.cam_b].filter(Boolean));
   set('f-title',        data.title);
   set('f-music-dir',    data.music_dir);
   chk('f-no-intro',     data.no_intro);
   chk('f-no-music',     data.no_music);
+  if (data.target_minutes) document.getElementById('f-target-min').value = data.target_minutes;
+  // Auto-count source files (non-blocking)
+  _sceneParamManual['f'] = false;
+  fillSceneParams('f').then(() => {
+    // Restore manually-overridden values if user already has them set
+    if (data.max_scene) { document.getElementById('f-max-scene').value = data.max_scene; _sceneParamManual['f'] = false; }
+    if (data.per_file)  { document.getElementById('f-per-file').value  = data.per_file;  _sceneParamManual['f'] = false; }
+  });
 }
 async function dirUp() {
   const data = await api.get(`/api/browse?path=${encodeURIComponent(browsePath)}`);
@@ -2407,6 +2976,10 @@ async function ytUpload() {
 function formatDur(sec) {
   const s=Math.floor(sec), m=Math.floor(s/60);
   return m>0?`${m}m${s%60}s`:`${s}s`;
+}
+function fmtDur(sec, prefix='') {
+  const d = Math.round(sec);
+  return `${prefix}${Math.floor(d/60)}:${String(d%60).padStart(2,'0')}`;
 }
 </script>
 </body>
