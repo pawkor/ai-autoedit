@@ -1074,6 +1074,8 @@ _JOB_CONFIG_MAP = {
     "negative":     ("clip_prompts", "negative"),
     "batch_size":   ("clip_scoring", "batch_size"),
     "clip_workers": ("clip_scoring", "num_workers"),
+    "yt_title":     ("youtube", "title"),
+    "yt_desc":      ("youtube", "description"),
 }
 
 
@@ -1885,6 +1887,61 @@ async def save_yt_url(job_id: str, payload: dict):
         raise HTTPException(400, "filename and url required")
     auto_dir = job.work_dir() / "_autoframe"
     _write_yt_url(auto_dir, filename, url)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/generate-yt-meta")
+async def generate_yt_meta(job_id: str, data: dict):
+    """Generate YouTube title and description via Claude API."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    project_name = data.get("project_name", "").strip()
+    description  = job.params.get("description", "").strip() or ""
+    footer       = data.get("footer", "").strip()   # hashtags/links to preserve
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        ride_info = description if description else "a motorcycle ride"
+        user_msg = (
+            f"Project: {project_name}\n"
+            f"Ride description: {ride_info}\n\n"
+            "Write a YouTube title and a 2–3 sentence description body for this motorcycle highlight reel.\n"
+            "Format: first line = title (max 100 chars), then blank line, then description body.\n"
+            "No hashtags, no URLs, no quotes around the title."
+        )
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = msg.content[0].text.strip()
+        parts = text.split("\n\n", 1)
+        title    = parts[0].strip().lstrip("#").strip()
+        body     = parts[1].strip() if len(parts) > 1 else ""
+        full_desc = (body + "\n" + footer) if footer else body
+        return {"ok": True, "title": title, "description": full_desc}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/jobs/{job_id}/save-yt-meta")
+async def save_yt_meta(job_id: str, data: dict):
+    """Persist YouTube title / description to work_dir/config.ini."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    work_dir = job.work_dir()
+    title = data.get("title", "").strip()
+    desc  = data.get("desc",  "").strip()
+    updates: dict[str, dict[str, str]] = {}
+    if title:
+        updates.setdefault("youtube", {})["title"] = title
+    if desc:
+        updates.setdefault("youtube", {})["description"] = desc.replace("\n", "\\n")
+    if updates:
+        update_config_ini(work_dir / "config.ini", updates)
     return {"ok": True}
 
 

@@ -34,6 +34,7 @@ AI-autoedit solves this: a CLIP model scores each scene semantically — underst
 - [Instalacja / Installation](docs/installation.md)
 - [Konfiguracja / Configuration reference](docs/configuration.md)
 - [Biblioteka muzyczna / Music library](docs/music.md)
+- [Roadmap funkcji / Feature roadmap](docs/features.md)
 
 ---
 
