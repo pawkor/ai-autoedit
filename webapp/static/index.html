@@ -39,6 +39,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .s-failed  { background:var(--red); }
 .s-killed  { background:var(--muted); }
 .s-queued  { background:var(--blue); }
+.s-idle    { background:var(--border); }
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 #main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
@@ -51,8 +52,6 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #welcome .wt h2 { font-size:18px; color:var(--accent); margin-bottom:8px; }
 
 /* ── Form ── */
-#form-view { padding:20px; overflow-y:auto; }
-#form-view h2 { font-size:13px; color:var(--accent); margin-bottom:16px; letter-spacing:1px; }
 .fsec { margin-bottom:20px; }
 .fsec h3 { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; }
 .frow { display:flex; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
@@ -88,8 +87,6 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .chk-row { display:flex; gap:14px; flex-wrap:wrap; }
 .chk { display:flex; align-items:center; gap:5px; cursor:pointer; font-size:12px; }
 .chk input { width:13px; height:13px; cursor:pointer; accent-color:var(--accent); }
-#btn-start { background:var(--accent); color:#000; border:none; padding:9px 24px; cursor:pointer; font-family:var(--font); font-size:13px; font-weight:bold; border-radius:3px; margin-top:6px; }
-#btn-start:hover { opacity:.85; }
 
 /* ── Dir browser modal ── */
 #dir-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
@@ -104,6 +101,45 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .de .name { flex:1; font-size:12px; }
 .de .badge { font-size:10px; color:var(--green); }
 #dir-footer { padding:9px 11px; border-top:1px solid var(--border); display:flex; gap:7px; justify-content:flex-end; }
+
+/* ── Confirm modal ── */
+#confirm-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:110; align-items:center; justify-content:center; }
+#confirm-modal.open { display:flex; }
+#confirm-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:340px; }
+#confirm-files { color:var(--muted); font-size:11px; margin-top:8px; max-height:160px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; border:1px solid var(--border); border-radius:3px; padding:6px 8px; }
+
+/* ── S3 modal ── */
+#s3-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#s3-modal.open { display:flex; }
+#s3-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:440px; }
+/* S3 music list */
+#music-s3-list { max-height:180px; overflow-y:auto; border:1px solid var(--border); border-radius:3px; margin-top:4px; font-size:12px; }
+.s3-item { display:flex; align-items:center; gap:7px; padding:5px 8px; border-bottom:1px solid var(--border); }
+.s3-item:last-child { border-bottom:none; }
+.s3-item .s3-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.s3-item .s3-size { color:var(--muted); font-size:11px; white-space:nowrap; }
+
+/* ── Files modal ── */
+#files-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#files-modal.open { display:flex; }
+#files-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:520px; max-height:65vh; display:flex; flex-direction:column; }
+#files-path { padding:9px 11px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); display:flex; gap:7px; align-items:center; }
+#files-path span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#files-list-wrap { flex:1; overflow-y:auto; }
+#files-footer { padding:9px 11px; border-top:1px solid var(--border); display:flex; gap:7px; align-items:center; }
+#files-footer label { font-size:11px; color:var(--muted); display:flex; align-items:center; gap:4px; cursor:pointer; margin-right:auto; }
+
+/* ── File list browser ── */
+.flist { max-height:220px; overflow-y:auto; border:1px solid var(--border); border-radius:3px; font-size:12px; }
+.fitem { display:flex; align-items:center; gap:7px; padding:5px 8px; border-bottom:1px solid var(--border); cursor:default; }
+.fitem:last-child { border-bottom:none; }
+.fitem:hover { background:var(--bg3); }
+.fitem .fname { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fitem .fsize { color:var(--muted); font-size:11px; white-space:nowrap; flex-shrink:0; }
+.fitem .fdel { background:none; border:none; color:var(--muted); cursor:pointer; padding:0 3px; font-size:13px; flex-shrink:0; line-height:1; }
+.fitem .fdel:hover { color:var(--red); }
+#file-tip { position:fixed; z-index:300; display:none; pointer-events:none; border:1px solid var(--border); border-radius:4px; overflow:hidden; background:#000; box-shadow:0 4px 16px rgba(0,0,0,.6); }
+#file-tip video { display:block; width:240px; height:135px; object-fit:contain; }
 
 /* ── Settings modal ── */
 #settings-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
@@ -199,7 +235,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#111; transition:opacity .15s; }
 .fc-info { padding:3px 6px; display:flex; justify-content:space-between; align-items:baseline; font-size:12px; background:var(--bg2); }
 .fc-score { color:var(--accent); flex-shrink:0; }
-.fc-name  { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; text-align:right; }
+.fc-dur   { color:var(--muted); font-size:10px; flex-shrink:0; margin-left:4px; }
+.fc-name  { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; text-align:right; flex:1; }
 
 /* ── Music tab ── */
 #music-panel { flex:1; overflow:hidden; display:none; flex-direction:column; }
@@ -219,14 +256,15 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #music-list-header span:hover { color:var(--accent); }
 #music-list-header span.sort-active { color:var(--accent); }
 #music-list-header .mh-cb { width:13px; flex-shrink:0; }
+#music-list-header .mh-play { width:16px; flex-shrink:0; }
 #music-list-header .mh-title { flex:1; min-width:0; }
-#music-list-header .mh-meta { width:90px; }
-#music-list-header .mh-bpm { width:52px; text-align:right; }
-#music-list-header .mh-energy { width:36px; text-align:right; }
+#music-list-header .mh-meta { flex-shrink:0; }
+#music-list-header .mh-bpm { flex-shrink:0; min-width:48px; text-align:right; }
+#music-list-header .mh-energy { width:36px; flex-shrink:0; text-align:right; }
 .mt { display:flex; align-items:center; gap:9px; padding:7px 14px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
 .mt:hover { background:var(--bg3); }
 .mt input[type=checkbox] { accent-color:var(--accent); cursor:pointer; flex-shrink:0; width:13px; height:13px; }
-.mt-play { background:none; border:none; color:var(--muted); cursor:pointer; font-size:13px; padding:0 1px; flex-shrink:0; line-height:1; }
+.mt-play { background:none; border:none; color:var(--muted); cursor:pointer; font-size:13px; padding:0; width:16px; flex-shrink:0; line-height:1; text-align:center; }
 .mt-play:hover { color:var(--accent); }
 .mt-playing .mt-play { color:var(--accent); }
 .mt-title { flex:1; display:flex; flex-direction:column; font-size:12px; min-width:0; overflow-x:hidden; overflow-y:hidden; }
@@ -235,8 +273,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .mt-seek { display:none; width:100%; max-width:100%; box-sizing:border-box; accent-color:var(--accent); cursor:pointer; height:16px; margin-top:2px; padding:0; }
 .mt-playing .mt-title { overflow-y:visible; }
 .mt-playing .mt-seek { display:block; }
-.mt-meta { font-size:10px; color:var(--muted); white-space:nowrap; width:90px; }
-.mt-bpm  { font-size:10px; color:var(--muted); white-space:nowrap; width:52px; text-align:right; }
+.mt-meta { font-size:10px; color:var(--muted); white-space:nowrap; flex-shrink:0; }
+.mt-bpm  { font-size:10px; color:var(--muted); white-space:nowrap; flex-shrink:0; min-width:48px; text-align:right; }
 .mt-energy { width:36px; height:4px; background:var(--border); border-radius:2px; flex-shrink:0; }
 .mt-energy-fill { height:100%; border-radius:2px; background:var(--accent); }
 #music-genre { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:3px 5px; font-family:var(--font); font-size:11px; border-radius:3px; outline:none; max-width:130px; }
@@ -284,7 +322,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
     <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
   </div>
   <div id="sidebar-new-row">
-    <button id="btn-new" data-i18n="btn.new" onclick="showForm()">+ New project</button>
+    <button id="btn-new" data-i18n="btn.new" onclick="openDirBrowser(null, p => loadDirConfig(p))">+ New project</button>
   </div>
   <div id="job-list"></div>
 </div>
@@ -296,100 +334,6 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
     <div class="wt"><h2>AI-autoedit</h2><p data-i18n="misc.welcome_sub">AI highlight reel pipeline</p>
       <p style="margin-top:14px;font-size:11px;"><span data-i18n="misc.welcome_hint">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</span></p>
     </div>
-  </div>
-
-  <!-- Form -->
-  <div id="form-view" class="view">
-    <h2 data-i18n="misc.new_job">NEW JOB</h2>
-
-    <div class="fsec">
-      <h3 data-i18n="sec.source">Source</h3>
-      <div class="frow">
-        <div class="ff wide">
-          <label data-i18n="lbl.working_dir">Working directory</label>
-          <div class="dir-pick">
-            <input type="text" id="f-workdir" placeholder="/home/pawkor/moto/2025/..." onblur="loadDirConfig(this.value)">
-            <button class="btn-sm" data-i18n="btn.browse" onclick="openFormDirBrowser()">Browse</button>
-          </div>
-        </div>
-      </div>
-      <div class="frow" style="flex-direction:column;gap:4px">
-        <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.cam_subfolders">Camera subfolders (A = audio source)</label>
-        <div id="f-cam-list"></div>
-        <button class="btn-sm" style="align-self:flex-start" onclick="addCamRow('f-cam-list')">+ Add camera</button>
-      </div>
-    </div>
-
-    <div class="fsec">
-      <h3 data-i18n="sec.scene_detect">Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(requires Re-analyze)</span></h3>
-      <div class="frow">
-        <div class="ff"><label data-i18n-tip="sd_threshold" data-i18n="lbl.sd_threshold">Detect threshold</label><input type="number" id="f-sd-threshold" placeholder="20" min="5" max="100" step="1"></div>
-        <div class="ff"><label data-i18n-tip="sd_min_scene" data-i18n="lbl.sd_min_scene">Min scene len</label><input type="number" id="f-sd-min-scene" placeholder="8" min="1" max="120" step="1" style="width:60px"></div>
-      </div>
-    </div>
-
-    <div class="fsec">
-      <h3 data-i18n="sec.scene_sel">Scene selection</h3>
-      <div class="frow">
-        <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="f-max-scene" placeholder="10" min="1" max="120" oninput="markManual('f')"></div>
-        <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="f-per-file" placeholder="45" min="5" max="300" oninput="markManual('f')"></div>
-        <div class="ff" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:5px;flex-wrap:nowrap">
-          <span id="f-src-info" style="font-size:10px;color:var(--muted);white-space:nowrap;align-self:center"></span>
-          <input type="number" id="f-target-min" value="6" min="1" max="120" style="width:42px" title="Target highlight duration (minutes)">
-          <span style="font-size:11px;color:var(--muted);align-self:center">min</span>
-          <button class="btn-sm" onclick="fillSceneParams('f')" title="Calculate from file count">⟳ Fill</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="fsec">
-      <h3 data-i18n="sec.intro_music">Intro / music</h3>
-      <div class="frow">
-        <div class="ff"><label data-i18n="lbl.title_long">Title (each line = one text line on intro card)</label><textarea id="f-title" rows="5" placeholder="auto" style="resize:none;width:64ch;font-size:12px"></textarea></div>
-      </div>
-      <div class="frow">
-        <div class="ff wide">
-          <label data-i18n="lbl.music_dir_label">Music directory</label>
-          <div class="dir-pick">
-            <input type="text" id="f-music-dir" placeholder="~/moto/music">
-            <button class="btn-sm" data-i18n="btn.browse" onclick="openFormMusicDirBrowser()">Browse</button>
-          </div>
-        </div>
-      </div>
-      <div class="frow">
-        <div class="chk-row">
-          <label class="chk"><input type="checkbox" id="f-no-intro"><span data-i18n="lbl.no_intro"> No intro/outro</span></label>
-          <label class="chk"><input type="checkbox" id="f-no-music"><span data-i18n="lbl.no_music"> No music</span></label>
-        </div>
-      </div>
-    </div>
-
-    <div class="fsec">
-      <h3><span data-i18n="sec.about_ride">About this ride</span> <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0" data-i18n="sec.about_ride_sub">(optional — generates CLIP prompts via Claude)</span></h3>
-      <div class="frow">
-        <div class="ff wide">
-          <label data-i18n="lbl.describe_ride">Describe today's ride, location, conditions...</label>
-          <textarea id="f-about">Motorcycle ride on winding mountain roads, scenic landscapes, sweeping curves and technical sections. Sunny weather, good visibility, beautiful surroundings.</textarea>
-        </div>
-      </div>
-      <div class="frow">
-        <button class="btn-sm" data-i18n="btn.gen_prompts_form" onclick="generateAbout()">✦ Generate CLIP prompts</button>
-        <button class="btn-sm" onclick="saveFormPrompts()">Save prompts</button>
-        <span id="about-status" style="font-size:11px;color:var(--muted);align-self:center"></span>
-      </div>
-      <div class="frow" style="gap:12px;align-items:flex-start">
-        <div style="flex:1;display:flex;flex-direction:column;gap:4px">
-          <label data-i18n="lbl.positive">POSITIVE</label>
-          <textarea id="f-positive" rows="10" style="resize:vertical;width:100%;font-size:11px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none"></textarea>
-        </div>
-        <div style="flex:1;display:flex;flex-direction:column;gap:4px">
-          <label data-i18n="lbl.negative">NEGATIVE</label>
-          <textarea id="f-negative" rows="10" style="resize:vertical;width:100%;font-size:11px;font-family:var(--font);background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;outline:none"></textarea>
-        </div>
-      </div>
-    </div>
-
-    <button id="btn-start" data-i18n="btn.start" onclick="startJob()">▶ Analyze</button>
   </div>
 
   <!-- Job view -->
@@ -424,12 +368,45 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
         <div class="fsec">
           <h3 data-i18n="sec.source">Source</h3>
           <div class="frow">
-            <div class="ff wide"><label data-i18n="lbl.working_dir">Working directory</label><input type="text" id="js-workdir" readonly style="color:var(--muted)"></div>
+            <div class="ff wide">
+            <label data-i18n="lbl.working_dir">Working directory</label>
+            <div class="dir-pick">
+              <input type="text" id="js-workdir" readonly size="32" style="color:var(--muted);flex:0 0 auto">
+              <button id="js-workdir-browse-btn" class="btn-sm" title="Browse files" onclick="_openWorkdirFileBrowser()">📁</button>
+            </div>
+          </div>
           </div>
           <div class="frow" style="flex-direction:column;gap:4px">
             <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.cam_subfolders">Camera subfolders (A = audio source)</label>
             <div id="js-cam-list"></div>
             <button class="btn-sm" style="align-self:flex-start" onclick="addCamRow('js-cam-list')">+ Add camera</button>
+          </div>
+        </div>
+        <div id="js-s3-section" class="fsec" style="display:none">
+          <h3>S3 source
+            <button class="btn-sm" style="font-weight:normal;text-transform:none;letter-spacing:0;margin-left:8px" title="Refresh file list" onclick="s3LoadFileList()">↺</button>
+          </h3>
+          <div id="js-s3-list-wrap" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;margin-bottom:6px;background:var(--bg2)">
+            <div id="js-s3-list" style="padding:6px 8px;font-size:11px;color:var(--muted)">—</div>
+          </div>
+          <div id="js-s3-fetch-progress" style="display:none;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
+              <span id="js-s3-fetch-file" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+              <span id="js-s3-fetch-speed" style="color:var(--muted)"></span>
+              <span id="js-s3-fetch-pct" style="color:var(--accent);font-weight:600;min-width:5ch;text-align:right"></span>
+            </div>
+            <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
+              <div id="js-s3-fetch-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.2s"></div>
+            </div>
+          </div>
+          <div class="frow" style="gap:6px;align-items:center">
+            <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+              <input type="checkbox" id="js-s3-all" onchange="_s3ToggleAll(this.checked)">
+              <span style="color:var(--muted)">All missing</span>
+            </label>
+            <button class="btn-sm" id="btn-s3-fetch" onclick="s3FetchSources()">↓ Fetch selected</button>
+            <span id="js-s3-fetch-status" style="font-size:11px;color:var(--muted);align-self:center"></span>
+            <button class="btn-sm" style="margin-left:auto;color:var(--red);border-color:var(--red)" onclick="s3PurgeLocal()">✕ Purge local</button>
           </div>
         </div>
         <div class="fsec">
@@ -447,9 +424,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
             <div class="ff"><label data-i18n-tip="per_file" data-i18n="lbl.per_file">Max per file sec</label><input type="number" id="js-per-file" oninput="markManual('js')" onchange="saveSettingsField()"></div>
             <div class="ff" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:5px;flex-wrap:nowrap">
               <span id="js-src-info" style="font-size:10px;color:var(--muted);white-space:nowrap;align-self:center"></span>
-              <input type="number" id="js-target-min" value="6" min="1" max="120" style="width:42px" title="Target highlight duration (minutes)" onchange="saveSettingsField()">
-              <span style="font-size:11px;color:var(--muted);align-self:center">min</span>
-              <button class="btn-sm" onclick="fillSceneParams('js')" title="Calculate from file count">⟳ Fill</button>
+              <button class="btn-sm" onclick="fillSceneParams('js')" title="Calculate max_scene / max_per_file from file count and target minutes">⟳ Fill</button>
             </div>
           </div>
         </div>
@@ -560,7 +535,16 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               onchange="onThresholdEdit()" onkeydown="if(event.key==='Enter'){onThresholdEdit();this.blur()}">
             <button class="thresh-btn" onclick="stepThreshold(+0.001)" title="+0.001">▲</button>
             <button class="thresh-btn" onclick="resetThreshold()" title="Reset to auto threshold" style="margin-left:4px;width:auto;padding:0 6px;font-size:11px">↺ Reset</button>
-            <span style="margin-left:10px;color:var(--muted);font-size:11px">Filter:</span>
+            <span style="font-size:11px;color:var(--muted);margin-left:8px">Target dur.</span>
+            <input type="text" id="gallery-target-min" value="6:00" inputmode="numeric"
+              title="Target highlight duration (M:SS or minutes) — Enter or blur to find matching threshold"
+              style="width:44px;margin-left:4px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:2px 4px;border-radius:3px;font-size:12px;font-family:var(--font);outline:none;text-align:center"
+              onkeydown="if(event.key==='Enter'){_applyTargetMin(this);this.blur()}"
+              onblur="_applyTargetMin(this)"
+              onfocus="this.select()">
+            <span style="font-size:11px;color:var(--muted)">min</span>
+            <span id="target-dur-warn" style="font-size:11px;margin-left:6px;display:none"></span>
+            <span style="margin-left:8px;color:var(--muted);font-size:11px">Filter:</span>
             <input class="gf-filter-input" id="filter-score" type="text" placeholder="score" title="Score prefix — Enter to apply (e.g. 0.8 → 0.800–0.899)"
               onkeydown="if(event.key==='Enter'){onGalleryFilter();this.blur()}"
               onblur="onGalleryFilter()">
@@ -588,12 +572,32 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           </div>
           <div id="music-dir-row">
             <label data-i18n="lbl.music_dir_header">Music dir</label>
-            <input type="text" id="music-dir-input" placeholder="~/moto/music">
+            <input type="text" id="music-dir-input" placeholder="~/moto/music" onblur="loadMusicTracks()">
             <button class="btn-sm" data-i18n="btn.browse" onclick="openMusicDirBrowser()">Browse</button>
-            <button class="btn-sm" data-i18n="btn.load" onclick="loadMusicTracks()">Load</button>
             <button class="btn-sm" id="btn-music-rebuild" data-i18n="btn.rebuild_index" onclick="rebuildMusicIndex()">↺ Update index</button>
             <label class="cb-label"><input type="checkbox" id="music-force"> <span data-i18n="lbl.force_audio" data-i18n-tip="force_audio">re-analyze</span></label>
             <label class="cb-label"><input type="checkbox" id="music-force-genres"> <span data-i18n="lbl.force_genres" data-i18n-tip="force_genres">re-genres</span></label>
+          </div>
+          <div id="music-yt-row" style="display:flex;gap:6px;align-items:center">
+            <label style="font-size:11px;color:var(--muted);white-space:nowrap;width:52px">YouTube</label>
+            <input type="text" id="music-yt-url" placeholder="https://youtu.be/…"
+              style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none"
+              onkeydown="if(event.key==='Enter')ytdlDownload()">
+            <button class="btn-sm" onclick="ytdlDownload()">↓ Download</button>
+            <span id="music-yt-msg" style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+            <span id="music-yt-pct" style="font-size:11px;color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
+          </div>
+          <div id="music-s3-row" style="display:flex;gap:6px;align-items:center">
+            <label style="font-size:11px;color:var(--muted);white-space:nowrap;width:52px">S3</label>
+            <input type="text" id="music-s3-prefix" placeholder="music/" value="music/"
+              style="width:100px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none"
+              onkeydown="if(event.key==='Enter')s3MusicBrowse()">
+            <button class="btn-sm" onclick="s3MusicBrowse()">Browse S3</button>
+            <span id="music-s3-status" style="font-size:11px;color:var(--muted)"></span>
+            <button class="btn-sm" id="btn-music-s3-close" style="display:none;margin-left:auto" onclick="document.getElementById('music-s3-wrap').style.display='none';this.style.display='none'">✕ Close</button>
+          </div>
+          <div id="music-s3-wrap" style="display:none">
+            <div id="music-s3-list"></div>
           </div>
           <div id="music-controls">
             <input type="text" id="music-filter" data-i18n-ph="ph.filter_tracks" placeholder="Filter tracks..." oninput="renderMusicList()">
@@ -611,7 +615,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
         <div id="music-list-scroll">
           <div id="music-list-header">
             <span class="mh-cb"></span>
-            <span class="mh-title" onclick="sortMusic('title')" style="padding-left:20px">Title / Artist</span>
+            <span class="mh-play"></span>
+            <span class="mh-title" onclick="sortMusic('title')">Title / Artist</span>
             <span class="mh-meta" onclick="sortMusic('genre')">Genre · Dur</span>
             <span class="mh-bpm"  onclick="sortMusic('bpm')">BPM</span>
             <span class="mh-energy" onclick="sortMusic('energy')">Nrg</span>
@@ -664,13 +669,92 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 </div><!-- /main -->
 </div><!-- /app -->
 
+<!-- Files browser modal -->
+<div id="files-modal">
+  <div id="files-box">
+    <div id="files-path">
+      <span id="files-path-txt"></span>
+      <button class="btn-sm" style="padding:1px 6px" title="Refresh" onclick="_refreshFilesModal()">↺</button>
+      <button class="icon-btn" onclick="closeFileBrowser()" title="Close" style="margin-left:auto">✕</button>
+    </div>
+    <div id="files-list-wrap">
+      <div id="files-list"></div>
+    </div>
+    <div id="files-upload-wrap" style="display:none;padding:7px 11px;border-top:1px solid var(--border);background:var(--bg2)">
+      <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
+        <span id="files-upload-name" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <span id="files-upload-speed" style="color:var(--muted)"></span>
+        <span id="files-upload-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
+      </div>
+      <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
+        <div id="files-upload-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.15s"></div>
+      </div>
+    </div>
+    <div id="files-footer">
+      <label><input type="checkbox" id="files-all" onchange="_toggleAllFilesModal(this.checked)"> All</label>
+      <button class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_deleteCheckedFilesModal()">✕ Delete selected</button>
+      <button class="btn-sm" onclick="_createFolderInFiles()">+ New folder</button>
+      <button class="btn-sm" onclick="document.getElementById('files-upload-input').click()">⬆ Upload</button>
+      <input type="file" id="files-upload-input" multiple style="display:none" onchange="startUploadModal(this)">
+      <button class="btn-sm" onclick="closeFileBrowser()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm modal -->
+<div id="confirm-modal">
+  <div id="confirm-box">
+    <div class="modal-header"><span id="confirm-heading" style="color:var(--red)"></span><button class="icon-btn" onclick="_confirmCancel()">✕</button></div>
+    <div class="modal-body">
+      <div id="confirm-msg" style="font-size:12px;line-height:1.5"></div>
+      <div id="confirm-files" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-sm" onclick="_confirmCancel()">Cancel</button>
+      <button id="btn-confirm-ok" class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_confirmOk()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- S3 upload modal -->
+<div id="s3-modal">
+  <div id="s3-box">
+    <div class="modal-header">
+      <span>▲ Upload to S3</span>
+      <button class="icon-btn" onclick="s3ModalClose()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+      <div class="ff"><label>File</label><div id="s3-file-name" style="font-size:11px;color:var(--muted)"></div></div>
+      <div class="ff"><label>S3 key</label><input type="text" id="s3-key" style="width:100%;box-sizing:border-box"></div>
+      <div id="s3-progress-wrap" style="display:none">
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
+          <span id="s3-status" style="color:var(--muted);flex:1"></span>
+          <span id="s3-speed" style="color:var(--muted)"></span>
+          <span id="s3-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
+        </div>
+        <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
+          <div id="s3-bar" style="background:var(--accent);height:100%;width:0%;transition:width .15s"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-sm" onclick="s3ModalClose()">Cancel</button>
+      <button class="btn-primary" id="btn-s3-upload" onclick="s3ModalUpload()">▲ Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- Video preview tooltip -->
+<div id="file-tip"><video id="file-tip-video" muted playsinline preload="none"></video></div>
+
 <!-- Dir browser modal -->
 <div id="dir-modal">
   <div id="dir-box">
-    <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" data-i18n="btn.dir_up" onclick="dirUp()">↑ Up</button></div>
+    <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" data-i18n="btn.dir_up" onclick="dirUp()">↑ Up</button><button class="icon-btn" onclick="closeDirBrowser()" title="Close" style="margin-left:auto">✕</button></div>
     <div id="dir-list"></div>
     <div id="dir-footer">
       <button class="btn-sm" data-i18n="btn.cancel" onclick="closeDirBrowser()">Cancel</button>
+      <button class="btn-sm" data-i18n="btn.create_folder" style="margin-right:auto" onclick="createFolder()">+ New folder</button>
       <button class="btn-sm" data-i18n="btn.select_folder" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
     </div>
   </div>
@@ -824,6 +908,8 @@ const TRANS = {
       'btn.all':             'All',
       'btn.none':            'None',
       'btn.cancel':          'Cancel',
+      'btn.create_folder':   '+ New folder',
+      'btn.upload':          '⬆ Upload',
       'btn.select_folder':   'Select this folder',
       'btn.save':            'Save',
       'btn.dir_up':          '↑ Up',
@@ -920,6 +1006,8 @@ const TRANS = {
       'btn.all':             'Wszystkie',
       'btn.none':            'Żadne',
       'btn.cancel':          'Anuluj',
+      'btn.create_folder':   '+ Nowy folder',
+      'btn.upload':          '⬆ Prześlij',
       'btn.select_folder':   'Wybierz ten folder',
       'btn.save':            'Zapisz',
       'confirm.delete_file': name => `Usunąć ${name} z dysku? Tej operacji nie można cofnąć.`,
@@ -1008,6 +1096,7 @@ const _frameCache = new Map(); // original url → blob URL
 let _galleryDirty = true;
 let _musicSort = { key: null, asc: true };
 let _galleryThreshold = null; // user-set threshold; null = not yet loaded
+let _autoFillOverrides = new Set(); // scenes force-included by autoTargetThreshold fill
 let _thresholdSaveTimer = null;
 let _renderTotalSec = null;
 let _audioPlayer = null, _playingFile = null, _seekTimer = null;
@@ -1045,15 +1134,12 @@ function trimPath(p) {
   if (_browseRoot && p.startsWith(_browseRoot + '/')) return p.slice(_browseRoot.length + 1);
   return p.replace(/^\/home\/[^/]+\//, '');
 }
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 // ── Views ──────────────────────────────────────────────────────────────────────
 function showView(id) { document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.getElementById(id).classList.add('active'); }
-function showForm() {
-  document.getElementById('f-positive').value = '';
-  document.getElementById('f-negative').value = '';
-  document.getElementById('about-status').textContent = '';
-  showView('form-view');
-}
 function showWelcome() { showView('welcome'); }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -1077,9 +1163,11 @@ async function refreshJobList() {
       const dur = j.ended_at ? formatDur(j.ended_at - j.started_at) : '';
       const div = document.createElement('div');
       div.className = 'job-item' + (j.id===currentJobId?' active':'');
-      div.innerHTML = `<div class="ji-dir"><span class="dot s-${j.status}"></span>${dir}</div>
-        <div class="ji-meta">${j.status}${dur?' · '+dur:''}</div>
+      const statusLabel = j.status === 'idle' ? 'new' : j.status;
+      div.innerHTML = `<div class="ji-dir"><span class="dot s-${j.status}"></span><span class="ji-dir-txt"></span></div>
+        <div class="ji-meta">${statusLabel}${dur?' · '+dur:''}</div>
         <button class="ji-del" title="Remove job" onclick="event.stopPropagation();removeJob('${j.id}')">×</button>`;
+      div.querySelector('.ji-dir-txt').textContent = dir;
       div.onclick = ()=>openJob(j.id);
       list.appendChild(div);
     }
@@ -1090,6 +1178,15 @@ async function refreshJobList() {
 setInterval(refreshJobList, 3000);
 refreshJobList();
 setLang(currentLang);
+
+// Hide S3 UI rows if S3 is not configured
+(async () => {
+  const s3 = await api.get('/api/s3/status').catch(() => null);
+  if (!s3?.configured) {
+    document.getElementById('music-s3-row').style.display = 'none';
+    // Results S3 buttons are created dynamically — handled in s3ModalOpen guard
+  }
+})();
 
 // ── Stats WebSocket ───────────────────────────────────────────────────────────
 function connectStats() {
@@ -1129,57 +1226,7 @@ function updateStats(s) {
   document.getElementById('q-queued').textContent  = s.queued_jobs;
 }
 
-// ── Start job ─────────────────────────────────────────────────────────────────
-async function startJob() {
-  const workDir = document.getElementById('f-workdir').value.trim();
-  if (!workDir) { alert('Set working directory'); return; }
-  const p = { work_dir: workDir };
-  const ms = document.getElementById('f-max-scene').value; if (ms) p.max_scene = parseFloat(ms);
-  const pf = document.getElementById('f-per-file').value;  if (pf) p.per_file  = parseFloat(pf);
-  const sdt = document.getElementById('f-sd-threshold').value.trim(); if (sdt) p.sd_threshold = parseFloat(sdt);
-  const sdm = document.getElementById('f-sd-min-scene').value.trim(); if (sdm) p.sd_min_scene  = sdm;
-  const ti = document.getElementById('f-title').value.trim(); if (ti) p.title = ti;
-  const cameras = readCamsList('f-cam-list'); if (cameras.length) p.cameras = cameras;
-  const md = document.getElementById('f-music-dir').value.trim(); if (md) p.music_dir = md;
-  p.no_intro = document.getElementById('f-no-intro').checked;
-  p.no_music = document.getElementById('f-no-music').checked;
-  const fp = document.getElementById('f-positive').value.trim(); if (fp) p.positive = fp;
-  const fn = document.getElementById('f-negative').value.trim(); if (fn) p.negative = fn;
-  const resp = await api.post('/api/jobs', p);
-  if (resp?.id) { refreshJobList(); openJob(resp.id); } else alert(JSON.stringify(resp));
-}
-
-// ── About / generate prompts ──────────────────────────────────────────────────
-async function saveFormPrompts() {
-  const workDir  = document.getElementById('f-workdir').value.trim();
-  const positive = document.getElementById('f-positive').value.trim();
-  const negative = document.getElementById('f-negative').value.trim();
-  const status   = document.getElementById('about-status');
-  if (!workDir) { alert('Set working directory first'); return; }
-  const resp = await api.post('/api/save-prompts', { work_dir: workDir, positive, negative });
-  status.textContent = resp?.ok ? 'Saved' : 'Error';
-  status.style.color = resp?.ok ? 'var(--green)' : 'var(--red)';
-  setTimeout(() => { status.textContent = ''; }, 2000);
-}
-
-async function generateAbout() {
-  const desc = document.getElementById('f-about').value.trim();
-  if (!desc) { alert('Enter a description first'); return; }
-  const workDir = document.getElementById('f-workdir').value.trim();
-  const status = document.getElementById('about-status');
-  status.textContent = 'Generating…';
-  const resp = await api.post('/api/about', { description: desc, work_dir: workDir });
-  if (resp?.ok) {
-    if (resp.positive) document.getElementById('f-positive').value = resp.positive;
-    if (resp.negative) document.getElementById('f-negative').value = resp.negative;
-    status.textContent = 'Done — review and start';
-    status.style.color = 'var(--green)';
-  } else {
-    status.textContent = 'Error: ' + (resp?.output || 'unknown');
-    status.style.color = 'var(--red)';
-  }
-}
-
+// ── Prompts ───────────────────────────────────────────────────────────────────
 async function generateJobPrompts() {
   if (!currentJobId) return;
   const desc = document.getElementById('js-description').value.trim();
@@ -1227,6 +1274,7 @@ async function openJob(jobId) {
   pinnedTrack = null;
   framesData = [];
   manualOverrides = {};
+  _autoFillOverrides.clear();
   _galleryDirty = true;
   _galleryThreshold = null;
   currentJobMaxScene = null;
@@ -1515,7 +1563,7 @@ function appendLog(line) {
     const ts = new Date().toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
     div.textContent = `${ts}  ${line}`;
   } else if (/✓|cached/i.test(line))                   { div.classList.add('log-ok'); div.textContent = line; }
-  else if (/→.*highlight_final_music/.test(line))      { div.classList.add('log-ok'); div.textContent = line; }
+  else if (/→.*_v\d+\.mp4/.test(line))                 { div.classList.add('log-ok'); div.textContent = line; }
   else if (/\[\d+\/\d+\] checked/.test(line))          { div.classList.add('log-ok'); div.textContent = line; }
   else if (/error|failed/i.test(line))                  { div.classList.add('log-err'); div.textContent = line; }
   else { div.textContent = line; }
@@ -1569,7 +1617,8 @@ function activateStep(n) {
 
 function setStatusDot(status) {
   document.getElementById('jh-dot').className = `dot s-${status}`;
-  document.getElementById('jh-status').textContent = status !== 'running' ? status : '';
+  const label = status === 'idle' ? 'new' : status;
+  document.getElementById('jh-status').textContent = status !== 'running' ? label : '';
   if (status === 'done') document.querySelectorAll('.step').forEach(s=>s.className='step done');
 }
 
@@ -1655,7 +1704,11 @@ async function loadFrames(jobId) {
     const m = job.log.find(l=>/^Threshold:\s+[\d.]+/.test(l));
     if (m) threshold = parseFloat(m.replace('Threshold:','').trim());
   }
-  if (threshold) {
+  const targetMin = job?.params?.target_minutes ? parseFloat(job.params.target_minutes) : null;
+  if (targetMin && targetMin > 0) {
+    // Target duration takes precedence over saved threshold — auto-find the right threshold.
+    autoTargetThreshold(targetMin);
+  } else if (threshold) {
     _galleryThreshold = parseFloat(threshold);
     document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
     _syncThresholdDisplay();
@@ -1824,6 +1877,7 @@ function toggleFrame(scene) {
   }
   _overridesChangedSinceRender = true;
   saveOverrides();
+  _scheduleEstimate();
   // Update only this card in-place — no full grid re-render
   const card = document.querySelector(`[data-scene="${CSS.escape(scene)}"]`);
   if (card) {
@@ -1901,8 +1955,11 @@ function renderGallery() {
       return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} #${m[7]}` : s.split('/').pop().slice(-22);
     })(f.scene);
     const limitBadge = limited ? `<span class="fc-limit-badge">limit</span>` : '';
+    const _maxSec = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
+    const effDur = Math.min(f.duration ?? _maxSec, _maxSec);
+    const durBadge = `<span class="fc-dur">${effDur.toFixed(1)}s</span>`;
     card.innerHTML = `<img src="${_cachedSrc(f.frame_url)}" loading="lazy" onerror="this.style.display='none'">
-      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span><span class="fc-name">${sceneLabel}</span>${limitBadge}</div>`;
+      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span>${durBadge}<span class="fc-name">${sceneLabel}</span>${limitBadge}</div>`;
     frag.appendChild(card);
   }
   grid.innerHTML = '';
@@ -1967,22 +2024,25 @@ function _estimateDuration(scenes) {
 function _balancedEstimate() {
   // _computeBalancedScenes() already ran (called from _computePerFileCuts).
   // isIncluded() now reflects camera balance, so just filter directly.
+  // balanced includes ALL cameras — do NOT scale by camRatio here.
   const balanced = framesData.filter(f => isIncluded(f));
   const camRatio = analyzeResult?.cam_ratio ?? 1.0;
 
   // Scale duration/count from exact dry-run values proportionally to current threshold.
-  // This avoids multiplying JS per-file-cap inaccuracies by cam_ratio.
-  const estMain = analyzeResult?.estimated_main_scenes || 0;
-  const estDur  = analyzeResult?.estimated_duration_sec || 0;
+  // Divide by estAll (total across all cams), not estMain (main cam only) — otherwise
+  // dual-cam inflates the factor by ~camRatio (≈2×).
   const estAll  = analyzeResult?.estimated_scenes || 0;
+  const estDur  = analyzeResult?.estimated_duration_sec || 0;
   let duration, scaledCount;
-  if (estMain > 0 && estDur > 0) {
-    const factor = balanced.length / estMain;
+  if (estAll > 0 && estDur > 0) {
+    const factor = balanced.length / estAll;
     duration    = estDur  * factor;
-    scaledCount = Math.round(estAll * factor);
+    scaledCount = balanced.length;
   } else {
-    duration    = _estimateDuration(balanced) * camRatio;
-    scaledCount = Math.round(balanced.length  * camRatio);
+    // No server dry-run yet — compute directly from frame durations.
+    // _estimateDuration already covers all cams; no camRatio needed.
+    duration    = _estimateDuration(balanced);
+    scaledCount = balanced.length;
   }
   return { scenes: balanced, duration, scaledCount, camRatio };
 }
@@ -1994,7 +2054,8 @@ function calculateGalleryStats() {
   const useActual = v !== null && analyzeResult?.actual_selected_scenes != null &&
                     analyzeResult?.actual_duration_sec != null && !_overridesChangedSinceRender &&
                     actualThr != null && Math.abs(v - actualThr) < 0.0015;
-  const useEstimated = !useActual && analyzeResult?.estimated_scenes > 0 &&
+  const useEstimated = !useActual && !_overridesChangedSinceRender &&
+                       analyzeResult?.estimated_scenes > 0 &&
                        analyzeResult?.estimated_duration_sec > 0 &&
                        actualThr != null && Math.abs(v - actualThr) < 0.0015;
   if (useActual) {
@@ -2028,7 +2089,6 @@ function saveSettingsField() {
   const sdm = gv('js-sd-min-scene'); if (sdm) data.sd_min_scene = sdm;
   const ms  = gv('js-max-scene');    if (ms)  data.max_scene     = parseFloat(ms);
   const pf  = gv('js-per-file');     if (pf)  data.per_file      = parseFloat(pf);
-  const tm  = gv('js-target-min');   if (tm)  data.target_minutes = parseFloat(tm);
   const ti  = gv('js-title');        if (ti)  data.title          = ti;
   data.no_intro = gc('js-no-intro') || false;
   data.no_music = gc('js-no-music') || false;
@@ -2091,7 +2151,8 @@ function _syncThresholdDisplay() {
                     !_overridesChangedSinceRender &&
                     actualThr != null && Math.abs(v - actualThr) < 0.0015;
 
-  const useEstimated = !useActual && analyzeResult?.estimated_scenes > 0 &&
+  const useEstimated = !useActual && !_overridesChangedSinceRender &&
+                       analyzeResult?.estimated_scenes > 0 &&
                        analyzeResult?.estimated_duration_sec > 0 &&
                        actualThr != null && Math.abs(v - actualThr) < 0.0015;
   let scenes, durStr;
@@ -2118,6 +2179,139 @@ function _syncThresholdDisplay() {
   if (mScenes) mScenes.textContent = scenes || '—';
 }
 
+// Parse "M:SS", "M:S", or plain "M" / "M.f" into total seconds
+function _parseTargetInput(raw) {
+  const s = (raw || '').trim();
+  const m = s.match(/^(\d+):(\d{1,2})$/);
+  if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n * 60;
+}
+
+function _applyTargetMin(el) {
+  const secs = _parseTargetInput(el.value);
+  if (!secs || secs <= 0) {
+    const w = document.getElementById('target-dur-warn');
+    if (w) { w.textContent = ''; w.style.display = 'none'; }
+    return;
+  }
+  const mins  = secs / 60;
+  const mm    = Math.floor(mins);
+  const ss    = Math.round((mins - mm) * 60);
+  el.value = `${mm}:${String(ss).padStart(2,'0')}`;
+  autoTargetThreshold(mins);
+}
+
+function _durationAtThreshold(thr) {
+  // Mirror _balancedEstimate() exactly at an arbitrary threshold.
+  // Save and restore all threshold-dependent state so the binary search is side-effect-free.
+  const savedThr      = _galleryThreshold;
+  const savedBalanced = _balancedScenes;
+  const savedCuts     = _perFileCuts;
+
+  _galleryThreshold = thr;
+  _computePerFileCuts(); // updates _perFileCuts + _balancedScenes for this thr
+
+  const balanced = framesData.filter(f => isIncluded(f));
+  // Must mirror _balancedEstimate() exactly — same fix: use estAll, not estMain.
+  const estAll  = analyzeResult?.estimated_scenes || 0;
+  const estDur  = analyzeResult?.estimated_duration_sec || 0;
+  let dur;
+  if (estAll > 0 && estDur > 0) {
+    dur = estDur * (balanced.length / estAll);
+  } else {
+    dur = _estimateDuration(balanced);
+  }
+
+  _galleryThreshold = savedThr;
+  _balancedScenes   = savedBalanced;
+  _perFileCuts      = savedCuts;
+
+  return dur;
+}
+
+function autoTargetThreshold(targetMin) {
+  if (!framesData.length || !targetMin || targetMin <= 0) return;
+  const targetSec = targetMin * 60;  // targetMin is always decimal minutes
+  const warnEl = document.getElementById('target-dur-warn');
+
+  // Clear any overrides we auto-added in a previous fill run
+  for (const scene of _autoFillOverrides) delete manualOverrides[scene];
+  _autoFillOverrides.clear();
+
+  const maxDur = _durationAtThreshold(0); // max achievable (all scenes, T=0)
+
+  let warnMsg = '';
+
+  if (maxDur > 0 && targetSec > maxDur) {
+    // Target unreachable — set T=0 then fill up with best remaining scenes
+    const maxSec = currentJobMaxScene ||
+      parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
+
+    // Set threshold to 0, rebuild balanced/perfile state
+    _galleryThreshold = 0;
+    _computePerFileCuts();
+
+    // Compute how much duration the balanced selection already covers
+    let curDur = 0;
+    for (const f of framesData) {
+      if (isIncluded(f)) curDur += Math.min(f.duration ?? maxSec, maxSec);
+    }
+
+    // Candidates: scenes not yet included (excluded only by camera balance / per-file),
+    // sorted by score descending (highest quality = closest to any meaningful threshold)
+    const candidates = framesData
+      .filter(f => !isIncluded(f) && manualOverrides[f.scene] !== 'exclude')
+      .sort((a, b) => b.score - a.score);
+
+    for (const f of candidates) {
+      if (curDur >= targetSec) break;
+      const contrib = Math.min(f.duration ?? maxSec, maxSec);
+      manualOverrides[f.scene] = 'include';
+      _autoFillOverrides.add(f.scene);
+      curDur += contrib;
+    }
+
+    saveOverrides();
+
+    // Show how close we got
+    const gotMin = Math.floor(curDur / 60);
+    const gotS   = Math.round(curDur % 60);
+    const maxMin = Math.floor(maxDur / 60);
+    const maxS   = Math.round(maxDur % 60);
+    if (curDur < targetSec) {
+      warnMsg = `⚠ max ~${gotMin}:${String(gotS).padStart(2,'0')} (filled all)`;
+    } else {
+      warnMsg = `↑ filled to ~${gotMin}:${String(gotS).padStart(2,'0')} (base ~${maxMin}:${String(maxS).padStart(2,'0')})`;
+    }
+
+    document.getElementById('threshold-val').value = '0.000';
+    _applyThreshold(0);
+
+  } else {
+    // Target is achievable — binary search for the right threshold
+    let lo = 0.0, hi = 1.0;
+    for (let i = 0; i < 50; i++) {
+      const mid = (lo + hi) / 2;
+      if (_durationAtThreshold(mid) > targetSec) lo = mid;
+      else hi = mid;
+    }
+    const thr = Math.round((lo + hi) / 2 * 1000) / 1000;
+    document.getElementById('threshold-val').value = thr.toFixed(3);
+    _applyThreshold(thr);
+  }
+
+  if (warnEl) {
+    warnEl.textContent = warnMsg;
+    warnEl.style.display = warnMsg ? '' : 'none';
+    warnEl.style.color = warnMsg ? '#d4a017' : '';
+  }
+
+  // Persist target to config
+  const wd = document.getElementById('js-workdir')?.value.trim();
+  if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: targetMin });
+}
+
 function resetThreshold() {
   const auto = analyzeResult?.auto_threshold;
   if (!auto) return;
@@ -2125,6 +2319,7 @@ function resetThreshold() {
   inp.value = parseFloat(auto).toFixed(3);
   _galleryThreshold = parseFloat(auto);
   manualOverrides = {};
+  _autoFillOverrides.clear();
   saveOverrides();
   _applyThreshold(_galleryThreshold);
 }
@@ -2379,7 +2574,8 @@ async function populateJobSettings(params) {
   const sv = (id, v) => { if (v != null && v !== '') document.getElementById(id).value = v; };
   const sc = (id, v) => { if (v != null) document.getElementById(id).checked = !!v; };
 
-  sv('js-workdir',  params.work_dir);
+  _setWorkdir(params.work_dir);
+  s3SectionInit();
   await setCamsList('js-cam-list', params.cameras || [params.cam_a, params.cam_b].filter(Boolean));
   sv('js-title',    params.title);
   sc('js-no-intro', params.no_intro);
@@ -2413,9 +2609,12 @@ async function populateJobSettings(params) {
   if (pf != null) currentJobPerFile  = parseFloat(pf);
   const mt = params.min_take ?? cfg?.min_take;
   if (mt != null) currentJobMinTake = parseFloat(mt); else currentJobMinTake = 0.5;
-  // Target minutes
+  // Target minutes — stored in gallery field as M:SS
   const tm = params.target_minutes ?? cfg?.target_minutes;
-  if (tm != null) document.getElementById('js-target-min').value = tm;
+  if (tm != null) {
+    const el = document.getElementById('gallery-target-min');
+    if (el) { const mm = Math.floor(tm); const ss = Math.round((tm - mm) * 60); el.value = `${mm}:${String(ss).padStart(2,'0')}`; }
+  }
   // Auto-count source files (non-blocking); restore saved values after
   _sceneParamManual['js'] = false;
   fillSceneParams('js').then(() => {
@@ -2519,11 +2718,27 @@ async function loadResults(jobId) {
     div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${info.size_mb} MB</div>`;
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap';
+    const dlBtn = document.createElement('a');
+    dlBtn.className = 'btn-sm';
+    dlBtn.textContent = '▼';
+    dlBtn.title = 'Download';
+    dlBtn.href = info.url + '&dl=1';
+    dlBtn.download = name;
+    dlBtn.style.textDecoration = 'none';
+    dlBtn.onclick = e => e.stopPropagation();
+    btnRow.appendChild(dlBtn);
     const ytBtn = document.createElement('button');
     ytBtn.className = 'btn-sm';
     ytBtn.textContent = '▲ YT';
     ytBtn.onclick = e => { e.stopPropagation(); ytModalOpen(filePath, name, info.yt_url || ''); };
     btnRow.appendChild(ytBtn);
+    const s3Btn = document.createElement('button');
+    s3Btn.className = 'btn-sm';
+    s3Btn.textContent = '▲ S3';
+    s3Btn.title = 'Upload to S3';
+    s3Btn.onclick = e => { e.stopPropagation(); s3ModalOpen(filePath, name); };
+    api.get('/api/s3/status').then(s => { if (!s?.configured) s3Btn.style.display = 'none'; });
+    btnRow.appendChild(s3Btn);
     if (info.yt_url) {
       const ytLink = document.createElement('a');
       ytLink.href = info.yt_url;
@@ -2577,6 +2792,734 @@ function selectCurrentDir() {
   if (_dirSelectCb) _dirSelectCb(browsePath);
   closeDirBrowser();
 }
+async function createFolder() {
+  const name = prompt('Folder name:');
+  if (!name || !name.trim()) return;
+  const data = await api.post('/api/mkdir', { path: browsePath, name: name.trim() });
+  if (data?.path) {
+    await browseTo(data.path);
+  } else {
+    alert('Could not create folder');
+  }
+}
+
+function startUpload(inputEl, prefix) {
+  const files = [...inputEl.files];
+  inputEl.value = '';
+  if (!files.length) return;
+  const workDir = document.getElementById(prefix + '-workdir').value.trim();
+  if (!workDir) { alert('Set working directory first'); return; }
+
+  const wrap  = document.getElementById(prefix + '-upload-wrap');
+  const nameEl  = document.getElementById(prefix + '-upload-name');
+  const speedEl = document.getElementById(prefix + '-upload-speed');
+  const pctEl   = document.getElementById(prefix + '-upload-pct');
+  const bar     = document.getElementById(prefix + '-upload-bar');
+
+  wrap.style.display = '';
+  let idx = 0;
+
+  function uploadNext() {
+    if (idx >= files.length) {
+      nameEl.textContent = `Done — ${files.length} file${files.length > 1 ? 's' : ''} uploaded`;
+      speedEl.textContent = '';
+      pctEl.textContent = '';
+      bar.style.width = '100%';
+      setTimeout(() => { wrap.style.display = 'none'; bar.style.width = '0%'; }, 3000);
+      return;
+    }
+    const file = files[idx++];
+    nameEl.textContent = `${idx}/${files.length}: ${file.name}`;
+    speedEl.textContent = '';
+    pctEl.textContent = '0%';
+    bar.style.width = '0%';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('work_dir', workDir);
+
+    const xhr = new XMLHttpRequest();
+    let lastLoaded = 0, lastTime = Date.now();
+
+    xhr.upload.onprogress = e => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round(e.loaded / e.total * 100);
+      pctEl.textContent = pct + '%';
+      bar.style.width = pct + '%';
+      const now = Date.now(), dt = (now - lastTime) / 1000;
+      if (dt >= 0.5) {
+        const mbps = (e.loaded - lastLoaded) / dt / 1048576;
+        speedEl.textContent = mbps.toFixed(1) + ' MB/s';
+        lastLoaded = e.loaded; lastTime = now;
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status === 200) { uploadNext(); }
+      else { alert('Upload failed: ' + xhr.responseText); wrap.style.display = 'none'; }
+    };
+    xhr.onerror = () => { alert('Upload error'); wrap.style.display = 'none'; };
+    xhr.open('POST', '/api/upload');
+    xhr.send(formData);
+  }
+  uploadNext();
+}
+// ── S3 source (Settings) ──────────────────────────────────────────────────────
+let _s3FetchEs = null;
+
+function _s3DerivedPrefix(workDir) {
+  // Strip BROWSE_ROOT, keep original path structure with slashes intact
+  // e.g. /data/2025/04-Grecja/04.21 → '2025/04-Grecja/04.21/'
+  let rel = workDir;
+  if (_browseRoot && rel.startsWith(_browseRoot)) rel = rel.slice(_browseRoot.length);
+  rel = rel.replace(/^\/+/, '').replace(/\/+$/, '');
+  return rel ? rel + '/' : '';
+}
+
+let _s3Configured = false;
+
+async function s3SectionInit() {
+  const s3 = await api.get('/api/s3/status').catch(() => null);
+  if (!s3?.configured) return;
+  _s3Configured = true;
+  const section = document.getElementById('js-s3-section');
+  if (!section) return;
+  section.style.display = '';
+  await s3LoadFileList();
+}
+
+async function s3LoadFileList() {
+  const wd = document.getElementById('js-workdir')?.value.trim();
+  const listEl = document.getElementById('js-s3-list');
+  if (!wd || !listEl) return;
+  listEl.innerHTML = '<span style="color:var(--muted)">Loading…</span>';
+
+  let data;
+  try {
+    data = await api.get(`/api/s3/source-status?work_dir=${encodeURIComponent(wd)}`);
+  } catch(e) {
+    listEl.innerHTML = `<span style="color:var(--red)">Error: ${e.message || e}</span>`;
+    return;
+  }
+
+  const cams = data.cams || {};
+  const entries = Object.entries(cams);
+  if (!entries.length) {
+    listEl.innerHTML = '<span style="color:var(--muted)">No video files found on S3</span>';
+    return;
+  }
+
+  let html = '';
+  let firstCam = true;
+  for (const [cam, files] of entries) {
+    if (cam) {
+      const border = firstCam ? '' : 'border-top:1px solid var(--border);';
+      html += `<div style="${border}padding:3px 4px 1px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">${cam}</div>`;
+      firstCam = false;
+    }
+    for (const f of files) {
+      const sz = _s3FmtSize(f.size);
+      const localStyle = f.local ? 'color:var(--green)' : 'color:var(--muted)';
+      const localTxt   = f.local ? '✓' : '☁';
+      const checked    = f.local ? '' : 'checked';
+      html += `<label style="display:flex;align-items:center;gap:6px;padding:2px 4px;cursor:pointer;border-radius:2px" onmouseenter="this.style.background='var(--bg3)'" onmouseleave="this.style.background=''">` +
+        `<input type="checkbox" class="s3-file-chk" data-key="${f.key}" ${checked}>` +
+        `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${f.name}">${f.name}</span>` +
+        `<span style="color:var(--muted);font-size:10px;white-space:nowrap">${sz}</span>` +
+        `<span style="${localStyle};font-size:11px;min-width:1.2em;text-align:center" title="${f.local ? 'local' : 'S3 only'}">${localTxt}</span>` +
+        `</label>`;
+    }
+  }
+  listEl.innerHTML = html;
+  _s3UpdateAllChk();
+}
+
+function _s3FmtSize(b) {
+  if (b >= 1_073_741_824) return (b / 1_073_741_824).toFixed(1) + ' GB';
+  if (b >= 1_048_576)     return Math.round(b / 1_048_576) + ' MB';
+  return Math.round(b / 1024) + ' KB';
+}
+
+function _s3ToggleAll(checked) {
+  document.querySelectorAll('.s3-file-chk').forEach(cb => cb.checked = checked);
+}
+
+function _s3UpdateAllChk() {
+  const all = document.querySelectorAll('.s3-file-chk');
+  const chk = document.querySelectorAll('.s3-file-chk:checked');
+  const allEl = document.getElementById('js-s3-all');
+  if (!allEl) return;
+  allEl.indeterminate = chk.length > 0 && chk.length < all.length;
+  allEl.checked = all.length > 0 && chk.length === all.length;
+}
+
+function s3FetchSources() {
+  const wd = document.getElementById('js-workdir')?.value.trim();
+  if (!wd) return;
+
+  const keys = Array.from(document.querySelectorAll('.s3-file-chk:checked')).map(cb => cb.dataset.key);
+  const status = document.getElementById('js-s3-fetch-status');
+  if (!keys.length) {
+    status.textContent = 'No files selected';
+    status.style.color = 'var(--muted)';
+    return;
+  }
+
+  const btn      = document.getElementById('btn-s3-fetch');
+  const progress = document.getElementById('js-s3-fetch-progress');
+  const fileEl   = document.getElementById('js-s3-fetch-file');
+  const speedEl  = document.getElementById('js-s3-fetch-speed');
+  const pctEl    = document.getElementById('js-s3-fetch-pct');
+  const bar      = document.getElementById('js-s3-fetch-bar');
+
+  _s3FetchEs?.close();
+  btn.disabled = true;
+  progress.style.display = '';
+  status.textContent = '';
+  bar.style.width = '0%';
+
+  const url = `/api/s3/fetch-sources?work_dir=${encodeURIComponent(wd)}&keys=${encodeURIComponent(JSON.stringify(keys))}`;
+  _s3FetchEs = new EventSource(url);
+  _s3FetchEs.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.error) {
+      status.textContent = '✗ ' + d.error;
+      status.style.color = 'var(--red)';
+      progress.style.display = 'none';
+      btn.disabled = false;
+      _s3FetchEs.close(); _s3FetchEs = null;
+      return;
+    }
+    if (d.done) {
+      const msg = d.fetched === 0
+        ? 'Already up to date'
+        : `Done — ${d.fetched} file${d.fetched > 1 ? 's' : ''} downloaded`;
+      status.textContent = msg;
+      status.style.color = 'var(--green)';
+      progress.style.display = 'none';
+      bar.style.width = '0%';
+      btn.disabled = false;
+      _s3FetchEs.close(); _s3FetchEs = null;
+      s3LoadFileList();
+      return;
+    }
+    if (d.file) {
+      fileEl.textContent  = `[${d.idx}/${d.total}] ${d.file}`;
+      speedEl.textContent = d.speed || '';
+      pctEl.textContent   = (d.pct ?? 0) + '%';
+      bar.style.width     = (d.pct ?? 0) + '%';
+    }
+  };
+  _s3FetchEs.onerror = () => {
+    status.textContent = '✗ Connection error';
+    status.style.color = 'var(--red)';
+    progress.style.display = 'none';
+    btn.disabled = false;
+    _s3FetchEs?.close(); _s3FetchEs = null;
+  };
+}
+
+async function s3PurgeLocal() {
+  const wd = document.getElementById('js-workdir')?.value.trim();
+  if (!wd) return;
+  if (!await showConfirm('Purge local sources', 'Delete local source video files and autocut scenes?\n\nCLIP cache and output files are kept.', null, 'Purge')) return;
+  const r = await api.post('/api/purge-local', { work_dir: wd });
+  const status = document.getElementById('js-s3-fetch-status');
+  if (r?.ok) {
+    status.textContent = `Purged — ${r.removed} file${r.removed !== 1 ? 's' : ''} removed`;
+    status.style.color = 'var(--green)';
+    s3LoadFileList();
+  } else {
+    status.textContent = '✗ Purge failed';
+    status.style.color = 'var(--red)';
+  }
+}
+
+// ── S3 & yt-dlp ───────────────────────────────────────────────────────────────
+let _s3FilePath = null, _s3Es = null;
+
+function s3ModalOpen(filePath, fileName) {
+  _s3FilePath = filePath;
+  document.getElementById('s3-file-name').textContent = fileName;
+  document.getElementById('s3-key').value = 'highlights/' + fileName;
+  document.getElementById('s3-progress-wrap').style.display = 'none';
+  document.getElementById('s3-bar').style.width = '0%';
+  document.getElementById('s3-pct').textContent = '';
+  document.getElementById('s3-speed').textContent = '';
+  document.getElementById('s3-status').textContent = '';
+  document.getElementById('btn-s3-upload').disabled = false;
+  document.getElementById('s3-modal').classList.add('open');
+}
+function s3ModalClose() {
+  _s3Es?.close(); _s3Es = null;
+  document.getElementById('s3-modal').classList.remove('open');
+}
+function s3ModalUpload() {
+  const key = document.getElementById('s3-key').value.trim();
+  if (!key || !_s3FilePath) return;
+  document.getElementById('s3-progress-wrap').style.display = '';
+  document.getElementById('s3-status').textContent = 'Uploading…';
+  document.getElementById('btn-s3-upload').disabled = true;
+  _s3Es?.close();
+  _s3Es = new EventSource(
+    `/api/s3/upload?local_path=${encodeURIComponent(_s3FilePath)}&key=${encodeURIComponent(key)}`
+  );
+  _s3Es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.pct != null) {
+      document.getElementById('s3-bar').style.width = d.pct + '%';
+      document.getElementById('s3-pct').textContent = d.pct + '%';
+    }
+    if (d.speed) document.getElementById('s3-speed').textContent = d.speed;
+    if (d.done) {
+      _s3Es.close(); _s3Es = null;
+      document.getElementById('s3-status').textContent = 'Done ✓';
+      document.getElementById('s3-pct').textContent = '100%';
+      document.getElementById('s3-bar').style.width = '100%';
+      document.getElementById('btn-s3-upload').disabled = false;
+    }
+    if (d.error) {
+      _s3Es.close(); _s3Es = null;
+      document.getElementById('s3-status').textContent = 'Error: ' + d.error;
+      document.getElementById('btn-s3-upload').disabled = false;
+    }
+  };
+  _s3Es.onerror = () => {
+    _s3Es.close(); _s3Es = null;
+    document.getElementById('s3-status').textContent = 'Connection error';
+    document.getElementById('btn-s3-upload').disabled = false;
+  };
+}
+
+async function s3MusicBrowse() {
+  const prefix = document.getElementById('music-s3-prefix').value.trim();
+  const statusEl = document.getElementById('music-s3-status');
+  statusEl.textContent = 'Loading…';
+  const data = await api.get(`/api/s3/list?prefix=${encodeURIComponent(prefix)}`);
+  if (!data) { statusEl.textContent = 'Error'; return; }
+  const items = data.items || [];
+  statusEl.textContent = items.length ? `${items.length} tracks` : 'No audio files';
+  const wrap = document.getElementById('music-s3-wrap');
+  const list = document.getElementById('music-s3-list');
+  list.innerHTML = '';
+  if (!items.length) return;
+
+  const musicDir = document.getElementById('music-dir-input').value.trim();
+  for (const item of items) {
+    const ext = item.name.split('.').pop().toLowerCase();
+    if (!['mp3','m4a','flac','ogg','wav','aac'].includes(ext)) continue;
+    const row = document.createElement('div');
+    row.className = 's3-item';
+    const name = document.createElement('span'); name.className = 's3-name'; name.textContent = item.name; name.title = item.key;
+    const size = document.createElement('span'); size.className = 's3-size'; size.textContent = _fmtSize(item.size);
+    const dlBtn = document.createElement('button'); dlBtn.className = 'btn-sm'; dlBtn.textContent = '↓';
+    dlBtn.title = 'Download to local music dir';
+    dlBtn.onclick = () => s3MusicDownload(item.key, item.name, musicDir, dlBtn);
+    row.append(name, size, dlBtn);
+    list.appendChild(row);
+  }
+  wrap.style.display = '';
+  document.getElementById('btn-music-s3-close').style.display = '';
+}
+
+let _s3MusicEs = null;
+function s3MusicDownload(key, name, musicDir, btnEl) {
+  if (!musicDir) { alert('Set music directory first'); return; }
+  const localPath = musicDir.replace(/\/$/, '') + '/' + name;
+  btnEl.disabled = true;
+  btnEl.textContent = '…';
+  _s3MusicEs?.close();
+  _s3MusicEs = new EventSource(
+    `/api/s3/download?key=${encodeURIComponent(key)}&local_path=${encodeURIComponent(localPath)}`
+  );
+  _s3MusicEs.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.pct != null) btnEl.textContent = d.pct + '%';
+    if (d.done) {
+      _s3MusicEs.close(); _s3MusicEs = null;
+      btnEl.textContent = '✓';
+      loadMusicTracks(); // refresh local list
+    }
+    if (d.error) {
+      _s3MusicEs.close(); _s3MusicEs = null;
+      btnEl.textContent = '!';
+      btnEl.title = d.error;
+      btnEl.disabled = false;
+    }
+  };
+  _s3MusicEs.onerror = () => {
+    _s3MusicEs.close();
+    btnEl.textContent = '!'; btnEl.disabled = false;
+  };
+}
+
+let _ytdlEs = null;
+function ytdlDownload() {
+  const url = document.getElementById('music-yt-url').value.trim();
+  if (!url) return;
+  const msgEl  = document.getElementById('music-yt-msg');
+  const pctEl  = document.getElementById('music-yt-pct');
+  msgEl.textContent  = 'Starting…';
+  pctEl.textContent  = '';
+  _ytdlEs?.close();
+  _ytdlEs = new EventSource(`/api/music/yt-download?url=${encodeURIComponent(url)}`);
+  _ytdlEs.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.msg) msgEl.textContent = d.msg.replace(/^\[.*?\]\s*/, '');
+    if (d.pct != null) pctEl.textContent = Math.round(d.pct) + '%';
+    if (d.done) {
+      _ytdlEs.close(); _ytdlEs = null;
+      pctEl.textContent = '';
+      document.getElementById('music-yt-url').value = '';
+      _ytdlSave(d.path, d.name, msgEl, pctEl);
+    }
+    if (d.error) {
+      _ytdlEs.close(); _ytdlEs = null;
+      msgEl.textContent = '✗ ' + d.error.split('\n').pop();
+      pctEl.textContent = '';
+    }
+  };
+  _ytdlEs.onerror = () => {
+    _ytdlEs.close();
+    document.getElementById('music-yt-msg').textContent = 'Connection error';
+  };
+}
+
+async function _ytdlSave(tmpPath, name, msgEl, pctEl) {
+  const musicDir = document.getElementById('music-dir-input').value.trim();
+
+  if (_s3Configured) {
+    // ── S3 path ──────────────────────────────────────────────────────────────
+    const prefix = (document.getElementById('music-s3-prefix').value.trim() || 'music/').replace(/\/*$/, '/');
+    const key    = prefix + name + '.mp3';
+    msgEl.textContent = 'Uploading to S3…';
+    let _s3UpEs = new EventSource(`/api/s3/upload?local_path=${encodeURIComponent(tmpPath)}&key=${encodeURIComponent(key)}`);
+    await new Promise(resolve => {
+      _s3UpEs.onmessage = ev => {
+        const u = JSON.parse(ev.data);
+        if (u.pct != null) pctEl.textContent = u.pct + '%';
+        if (u.speed)       msgEl.textContent = 'S3 ' + u.speed;
+        if (u.done) {
+          _s3UpEs.close();
+          pctEl.textContent = '';
+          resolve(true);
+        }
+        if (u.error) {
+          _s3UpEs.close();
+          msgEl.textContent = '✗ S3: ' + u.error;
+          pctEl.textContent = '';
+          // Fall back to tmp path so this session still works
+          pinnedTrack = tmpPath;
+          document.querySelector('#btn-music-to-summary')?.classList.remove('hidden');
+          updatePhaseUI();
+          resolve(false);
+        }
+      };
+      _s3UpEs.onerror = () => { _s3UpEs.close(); msgEl.textContent = 'S3 upload error'; resolve(false); };
+    });
+    // After S3 upload — also save locally so pipeline can use it right away
+    if (musicDir) {
+      const res = await fetch('/api/music/save-downloaded', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tmp_path: tmpPath, music_dir: musicDir}),
+      }).then(r => r.ok ? r.json() : null).catch(() => null);
+      if (res?.ok) {
+        pinnedTrack = res.path;
+        msgEl.textContent = '✓ ' + name + ' (S3 + local)';
+        loadMusicTracks();
+      } else {
+        pinnedTrack = tmpPath;
+        msgEl.textContent = '✓ ' + name + ' (S3)';
+      }
+    } else {
+      pinnedTrack = tmpPath;
+      msgEl.textContent = '✓ ' + name + ' (S3)';
+    }
+    s3MusicBrowse();
+  } else {
+    // ── Local path ───────────────────────────────────────────────────────────
+    if (!musicDir) {
+      // No music dir set — keep temp file for this session only
+      pinnedTrack = tmpPath;
+      msgEl.textContent = '✓ ' + name + ' (set Music dir to save permanently)';
+      document.querySelector('#btn-music-to-summary')?.classList.remove('hidden');
+      updatePhaseUI();
+      return;
+    }
+    const res = await fetch('/api/music/save-downloaded', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tmp_path: tmpPath, music_dir: musicDir}),
+    }).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (res?.ok) {
+      pinnedTrack = res.path;
+      msgEl.textContent = '✓ ' + name;
+      loadMusicTracks();
+    } else {
+      pinnedTrack = tmpPath;
+      msgEl.textContent = '✓ ' + name + ' (save failed)';
+    }
+  }
+  document.querySelector('#btn-music-to-summary')?.classList.remove('hidden');
+  updatePhaseUI();
+}
+
+// ── File list browser ─────────────────────────────────────────────────────────
+async function loadFileList(prefix) {
+  const wd   = document.getElementById(prefix + '-workdir').value.trim();
+  const wrap = document.getElementById(prefix + '-files-wrap');
+  const list = document.getElementById(prefix + '-files-list');
+  if (!wd) { wrap.style.display = 'none'; return; }
+  const files = await api.get(`/api/files?path=${encodeURIComponent(wd)}`);
+  if (!files?.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  const allCb = document.getElementById(prefix + '-files-all');
+  if (allCb) allCb.checked = false;
+  list.innerHTML = '';
+  for (const f of files) {
+    const row = document.createElement('div');
+    row.className = 'fitem';
+    row.dataset.path = f.path;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.style.flexShrink = '0';
+    const name = document.createElement('span');
+    name.className = 'fname'; name.textContent = f.name; name.title = f.name;
+    const size = document.createElement('span');
+    size.className = 'fsize'; size.textContent = _fmtSize(f.size);
+    const del = document.createElement('button');
+    del.className = 'fdel'; del.textContent = '✕'; del.title = 'Delete file';
+    del.onclick = e => { e.stopPropagation(); _deleteFile(f.path, row, prefix); };
+    row.addEventListener('mouseenter', e => _showFilePreview(f.path, e));
+    row.addEventListener('mousemove',  e => _moveFileTip(e));
+    row.addEventListener('mouseleave', _hideFilePreview);
+    row.append(cb, name, size, del);
+    list.appendChild(row);
+  }
+}
+
+function _fmtSize(b) {
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576)    return (b / 1048576).toFixed(0) + ' MB';
+  return (b / 1024).toFixed(0) + ' KB';
+}
+
+async function _deleteFile(path, rowEl) {
+  const name = rowEl.querySelector('.fname')?.textContent || path;
+  if (!confirm(`Delete ${name}?\nThis cannot be undone.`)) return;
+  const r = await api.del(`/api/file?path=${encodeURIComponent(path)}`);
+  if (r?.ok) rowEl.remove();
+  else alert('Delete failed');
+}
+
+async function deleteCheckedFiles(prefix) {
+  const list = document.getElementById(prefix + '-files-list');
+  const rows = [...list.querySelectorAll('input[type=checkbox]:checked')].map(cb => cb.closest('.fitem'));
+  if (!rows.length) return;
+  const names = rows.map(r => r.querySelector('.fname')?.textContent).join('\n');
+  if (!confirm(`Delete ${rows.length} file(s)?\n\n${names}\n\nThis cannot be undone.`)) return;
+  for (const row of rows) {
+    const r = await api.del(`/api/file?path=${encodeURIComponent(row.dataset.path)}`);
+    if (r?.ok) row.remove();
+  }
+}
+
+function toggleAllFiles(prefix, checked) {
+  document.getElementById(prefix + '-files-list')
+    .querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = checked);
+}
+
+// ── Confirm modal ──────────────────────────────────────────────────────────────
+let _confirmResolve = null;
+
+function showConfirm(heading, msg, files, okLabel = 'Delete') {
+  return new Promise(resolve => {
+    _confirmResolve = resolve;
+    document.getElementById('confirm-heading').textContent = heading;
+    document.getElementById('confirm-msg').textContent = msg;
+    const fd = document.getElementById('confirm-files');
+    if (files) { fd.textContent = files; fd.style.display = ''; }
+    else fd.style.display = 'none';
+    document.getElementById('btn-confirm-ok').textContent = okLabel;
+    document.getElementById('confirm-modal').classList.add('open');
+  });
+}
+function _confirmOk()     { document.getElementById('confirm-modal').classList.remove('open'); _confirmResolve?.(true);  _confirmResolve = null; }
+function _confirmCancel() { document.getElementById('confirm-modal').classList.remove('open'); _confirmResolve?.(false); _confirmResolve = null; }
+
+// ── Files browser modal ────────────────────────────────────────────────────────
+let _fileBrowserPath = '';
+
+function openFileBrowser(workDir, camSub) {
+  if (!workDir) { alert('Set working directory first'); return; }
+  const dir = camSub ? workDir.replace(/\/$/, '') + '/' + camSub : workDir;
+  _fileBrowserPath = dir;
+  document.getElementById('files-path-txt').textContent = dir;
+  document.getElementById('files-modal').classList.add('open');
+  _refreshFilesModal();
+}
+
+function closeFileBrowser() {
+  document.getElementById('files-modal').classList.remove('open');
+  _hideFilePreview();
+}
+
+async function _createFolderInFiles() {
+  const name = prompt('Folder name:');
+  if (!name?.trim()) return;
+  const data = await api.post('/api/mkdir', { path: _fileBrowserPath, name: name.trim() });
+  if (data?.path) {
+    _fileBrowserPath = data.path;
+    document.getElementById('files-path-txt').textContent = data.path;
+    _refreshFilesModal();
+  } else {
+    alert(data?.error || 'Failed to create folder');
+  }
+}
+
+function startUploadModal(inputEl) {
+  const files = [...inputEl.files];
+  inputEl.value = '';
+  if (!files.length) return;
+  if (!_fileBrowserPath) { alert('No directory set'); return; }
+
+  const wrap    = document.getElementById('files-upload-wrap');
+  const nameEl  = document.getElementById('files-upload-name');
+  const speedEl = document.getElementById('files-upload-speed');
+  const pctEl   = document.getElementById('files-upload-pct');
+  const bar     = document.getElementById('files-upload-bar');
+
+  wrap.style.display = '';
+  let idx = 0;
+
+  function uploadNext() {
+    if (idx >= files.length) {
+      nameEl.textContent = `Done — ${files.length} file${files.length > 1 ? 's' : ''} uploaded`;
+      speedEl.textContent = ''; pctEl.textContent = '';
+      bar.style.width = '100%';
+      setTimeout(() => { wrap.style.display = 'none'; bar.style.width = '0%'; _refreshFilesModal(); }, 1500);
+      return;
+    }
+    const file = files[idx++];
+    nameEl.textContent = `${idx}/${files.length}: ${file.name}`;
+    speedEl.textContent = ''; pctEl.textContent = '0%'; bar.style.width = '0%';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('work_dir', _fileBrowserPath);
+
+    const xhr = new XMLHttpRequest();
+    let lastLoaded = 0, lastTime = Date.now();
+
+    xhr.upload.onprogress = e => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round(e.loaded / e.total * 100);
+      pctEl.textContent = pct + '%';
+      bar.style.width = pct + '%';
+      const now = Date.now(), dt = (now - lastTime) / 1000;
+      if (dt >= 0.5) {
+        speedEl.textContent = ((e.loaded - lastLoaded) / dt / 1048576).toFixed(1) + ' MB/s';
+        lastLoaded = e.loaded; lastTime = now;
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status === 200) uploadNext();
+      else { alert('Upload failed: ' + xhr.responseText); wrap.style.display = 'none'; }
+    };
+    xhr.onerror = () => { alert('Upload error'); wrap.style.display = 'none'; };
+    xhr.open('POST', '/api/upload');
+    xhr.send(formData);
+  }
+  uploadNext();
+}
+
+async function _refreshFilesModal() {
+  const list = document.getElementById('files-list');
+  list.innerHTML = '<div style="padding:10px 11px;font-size:11px;color:var(--muted)">Loading…</div>';
+  document.getElementById('files-all').checked = false;
+  const files = await api.get(`/api/files?path=${encodeURIComponent(_fileBrowserPath)}`);
+  list.innerHTML = '';
+  if (!files?.length) {
+    list.innerHTML = '<div style="padding:10px 11px;font-size:11px;color:var(--muted)">No video files found.</div>';
+    return;
+  }
+  for (const f of files) {
+    const row = document.createElement('div');
+    row.className = 'fitem';
+    row.dataset.path = f.path;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.style.flexShrink = '0';
+    const name = document.createElement('span');
+    name.className = 'fname'; name.textContent = f.name; name.title = f.name;
+    const size = document.createElement('span');
+    size.className = 'fsize'; size.textContent = _fmtSize(f.size);
+    const del = document.createElement('button');
+    del.className = 'fdel'; del.textContent = '✕'; del.title = 'Delete file';
+    del.onclick = e => { e.stopPropagation(); _deleteFileModal(f.path, row); };
+    row.addEventListener('mouseenter', e => _showFilePreview(f.path, e));
+    row.addEventListener('mousemove',  e => _moveFileTip(e));
+    row.addEventListener('mouseleave', _hideFilePreview);
+    row.append(cb, name, size, del);
+    list.appendChild(row);
+  }
+}
+
+async function _deleteFileModal(path, rowEl) {
+  const name = rowEl.querySelector('.fname')?.textContent || path;
+  if (!await showConfirm('Delete file', 'This cannot be undone.', name)) return;
+  const r = await api.del(`/api/file?path=${encodeURIComponent(path)}`);
+  if (r?.ok) rowEl.remove();
+  else alert('Delete failed');
+}
+
+async function _deleteCheckedFilesModal() {
+  const list = document.getElementById('files-list');
+  const rows = [...list.querySelectorAll('input[type=checkbox]:checked')].map(cb => cb.closest('.fitem'));
+  if (!rows.length) return;
+  const names = rows.map(r => r.querySelector('.fname')?.textContent).join('\n');
+  if (!await showConfirm(`Delete ${rows.length} file${rows.length > 1 ? 's' : ''}`, 'This cannot be undone.', names)) return;
+  for (const row of rows) {
+    const r = await api.del(`/api/file?path=${encodeURIComponent(row.dataset.path)}`);
+    if (r?.ok) row.remove();
+  }
+}
+
+function _toggleAllFilesModal(checked) {
+  document.getElementById('files-list')
+    .querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = checked);
+}
+
+// Video preview tooltip
+let _previewTimer = null;
+function _showFilePreview(path, e) {
+  clearTimeout(_previewTimer);
+  _previewTimer = setTimeout(() => {
+    const v = document.getElementById('file-tip-video');
+    v.src = `/api/serve-file?path=${encodeURIComponent(path)}`;
+    v.addEventListener('loadedmetadata', () => {
+      v.currentTime = Math.min(3, v.duration * 0.05);
+      v.play().catch(() => {});
+    }, {once: true});
+    document.getElementById('file-tip').style.display = '';
+    _moveFileTip(e);
+  }, 400);
+}
+function _moveFileTip(e) {
+  const tip = document.getElementById('file-tip');
+  if (tip.style.display === 'none') return;
+  const m = 14, w = 242, h = 137;
+  let x = e.clientX + m, y = e.clientY + m;
+  if (x + w > window.innerWidth)  x = e.clientX - w - m;
+  if (y + h > window.innerHeight) y = e.clientY - h - m;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+function _hideFilePreview() {
+  clearTimeout(_previewTimer);
+  const tip = document.getElementById('file-tip');
+  tip.style.display = 'none';
+  const v = document.getElementById('file-tip-video');
+  v.pause(); v.src = '';
+}
+
 // ── Scene parameter calculator ───────────────────────────────────────────────
 const _sceneParamManual = { f: false, js: false };
 
@@ -2589,16 +3532,20 @@ function markManual(prefix) {
     const pf = parseFloat(document.getElementById('js-per-file')?.value  || '0');
     if (ms > 0) currentJobMaxScene = ms;
     if (pf > 0) currentJobPerFile  = pf;
+    _overridesChangedSinceRender = true;
     _syncThresholdDisplay();
     _scheduleEstimate();
   }
 }
 
 async function fillSceneParams(prefix) {
-  const workdir = document.getElementById(prefix === 'js' ? 'js-workdir' : 'f-workdir').value.trim();
+  const workdir = document.getElementById('js-workdir').value.trim();
   if (!workdir) return;
   const cameras = readCamsList(prefix + '-cam-list');
-  const targetMin = parseFloat(document.getElementById(prefix + '-target-min').value) || 6;
+  // Target minutes: gallery field (shared) or form field, fallback 6
+  const targetMinEl = document.getElementById('gallery-target-min') ||
+                      document.getElementById(prefix + '-target-min');
+  const targetMin = (_parseTargetInput(targetMinEl?.value) ?? 360) / 60;
 
   const camsParam = cameras.length ? cameras.join(',') : '';
   const data = await api.get(
@@ -2624,6 +3571,15 @@ async function fillSceneParams(prefix) {
   document.getElementById(prefix + '-per-file').value  = maxPerFile;
   _sceneParamManual[prefix] = false;
   if (info) info.textContent = countStr;
+
+  // Update in-memory state and retrigger estimate for the Settings panel
+  if (prefix === 'js') {
+    currentJobMaxScene = maxScene;
+    currentJobPerFile  = maxPerFile;
+    _overridesChangedSinceRender = true;
+    _syncThresholdDisplay();
+    _scheduleEstimate();
+  }
 
   // Save target to config
   const wd = prefix === 'js'
@@ -2657,13 +3613,33 @@ function _relabelCams(container) {
   container.querySelectorAll('.cam-row').forEach((row, i) => {
     row.querySelector('.cam-label').textContent = 'Cam ' + (_CAM_LETTERS[i] || String.fromCharCode(65+i));
   });
+  _updateWorkdirBrowseBtn();
+}
+
+function _setWorkdir(v) {
+  const el = document.getElementById('js-workdir');
+  if (!el || v == null) return;
+  el.value = v;
+  el.size = Math.max(32, v.length + 1);
+}
+
+function _updateWorkdirBrowseBtn() {
+  const btn = document.getElementById('js-workdir-browse-btn');
+  if (!btn) return;
+  const count = document.getElementById('js-cam-list')?.querySelectorAll('.cam-row').length || 0;
+  btn.style.display = count > 0 ? 'none' : '';
+}
+
+function _openWorkdirFileBrowser() {
+  const wd = document.getElementById('js-workdir')?.value.trim();
+  if (wd) openFileBrowser(wd, '');
 }
 
 async function addCamRow(containerId, value, subdirs) {
   const container = document.getElementById(containerId);
   if (!subdirs) {
     const wd = containerId.startsWith('f-')
-      ? document.getElementById('f-workdir').value.trim()
+      ? document.getElementById('js-workdir').value.trim()
       : document.getElementById('js-workdir').value.trim();
     subdirs = await _fetchCamSubdirs(wd);
   }
@@ -2671,10 +3647,19 @@ async function addCamRow(containerId, value, subdirs) {
   const lbl = document.createElement('span'); lbl.className = 'cam-label'; lbl.textContent = 'Cam ?';
   const sel = document.createElement('select'); sel.className = 'cam-select';
   sel.appendChild(_camOptions(subdirs, value || ''));
+  const browse = document.createElement('button'); browse.className = 'btn-sm'; browse.textContent = '📁';
+  browse.title = 'Browse files'; browse.style.flexShrink = '0';
+  browse.onclick = () => {
+    const wd = containerId.startsWith('f-')
+      ? document.getElementById('js-workdir').value.trim()
+      : document.getElementById('js-workdir').value.trim();
+    const sub = sel.value.trim();
+    openFileBrowser(wd, sub);
+  };
   const btn = document.createElement('button'); btn.className = 'btn-sm'; btn.textContent = '−';
   btn.title = 'Remove camera'; btn.style.flexShrink = '0';
   btn.onclick = () => { row.remove(); _relabelCams(container); };
-  row.append(lbl, sel, btn);
+  row.append(lbl, sel, browse, btn);
   container.appendChild(row);
   _relabelCams(container);
 }
@@ -2682,13 +3667,11 @@ async function addCamRow(containerId, value, subdirs) {
 async function setCamsList(containerId, cameras) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  const wd = containerId.startsWith('f-')
-    ? document.getElementById('f-workdir').value.trim()
-    : document.getElementById('js-workdir').value.trim();
+  const wd = document.getElementById('js-workdir').value.trim();
   const subdirs = await _fetchCamSubdirs(wd);
   const list = (cameras || []).filter(Boolean);
   for (const cam of list) await addCamRow(containerId, cam, subdirs);
-  if (!list.length) await addCamRow(containerId, '', subdirs);
+  _updateWorkdirBrowseBtn();
 }
 
 function readCamsList(containerId) {
@@ -2696,16 +3679,6 @@ function readCamsList(containerId) {
     .map(s => s.value.trim()).filter(Boolean);
 }
 
-// Project working dir
-function openFormDirBrowser()      { openDirBrowser(document.getElementById('f-workdir').value, p => { document.getElementById('f-workdir').value = p; loadDirConfig(p); }); }
-// Music dir (form)
-function openFormMusicDirBrowser() {
-  openDirBrowser(document.getElementById('f-music-dir').value, p => {
-    document.getElementById('f-music-dir').value = p;
-    const wd = document.getElementById('f-workdir').value.trim();
-    if (wd) api.put('/api/job-config', { work_dir: wd, music_dir: p });
-  });
-}
 // Music dir (job Music tab)
 function openMusicDirBrowser() {
   openDirBrowser(document.getElementById('music-dir-input').value, p => {
@@ -2732,25 +3705,10 @@ async function loadDirConfig(dir) {
       const imp = await api.post('/api/jobs/import', { work_dir: data._resolved });
       if (imp?.id) { refreshJobList(); openJob(imp.id); return; }
     }
+    // New directory — create a draft job immediately so it persists in the sidebar
+    const dr = await api.post('/api/jobs?draft=true', { work_dir: data._resolved });
+    if (dr?.id) { refreshJobList(); openJob(dr.id); return; }
   }
-
-  const set = (id, v) => { if (v !== undefined && v !== null && v !== '') document.getElementById(id).value = v; };
-  const chk = (id, v) => { if (v !== undefined && v !== null) document.getElementById(id).checked = !!v; };
-  set('f-max-scene',    data.max_scene);
-  set('f-per-file',     data.per_file);
-  await setCamsList('f-cam-list', data.cameras || [data.cam_a, data.cam_b].filter(Boolean));
-  set('f-title',        data.title);
-  set('f-music-dir',    data.music_dir);
-  chk('f-no-intro',     data.no_intro);
-  chk('f-no-music',     data.no_music);
-  if (data.target_minutes) document.getElementById('f-target-min').value = data.target_minutes;
-  // Auto-count source files (non-blocking)
-  _sceneParamManual['f'] = false;
-  fillSceneParams('f').then(() => {
-    // Restore manually-overridden values if user already has them set
-    if (data.max_scene) { document.getElementById('f-max-scene').value = data.max_scene; _sceneParamManual['f'] = false; }
-    if (data.per_file)  { document.getElementById('f-per-file').value  = data.per_file;  _sceneParamManual['f'] = false; }
-  });
 }
 async function dirUp() {
   const data = await api.get(`/api/browse?path=${encodeURIComponent(browsePath)}`);
@@ -2772,9 +3730,10 @@ async function browseTo(path) {
   for (const e of data.entries) {
     if (!e.is_dir) continue;
     const d=document.createElement('div'); d.className='de';
-    d.innerHTML=`<span class="icon">▶</span><span class="name">${e.name}</span>
+    d.innerHTML=`<span class="icon">▶</span><span class="name"></span>
       ${e.has_mp4?'<span class="badge">MP4</span>':''}
       ${e.has_autoframe?'<span class="badge" style="color:var(--accent)">cached</span>':''}`;
+    d.querySelector('.name').textContent = e.name;
     d.onclick=()=>{browsePath=e.path; document.getElementById('dir-path-txt').textContent=e.path;};
     d.ondblclick=()=>browseTo(e.path);
     list.appendChild(d);

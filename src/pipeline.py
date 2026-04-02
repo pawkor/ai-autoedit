@@ -84,6 +84,22 @@ async def _run(cmd: list, cwd=None, env=None) -> tuple[int, str]:
     return proc.returncode, out.decode("utf-8", errors="replace")
 
 
+# ── Output naming ─────────────────────────────────────────────────────────────
+
+def _output_name(work_dir: Path) -> str:
+    """Derive a human-friendly base name from work_dir.
+    Strips BROWSE_ROOT prefix, then replaces '/' with '-'.
+    E.g. /data/2025/04-Grecja/04.21 → '2025-04-Grecja-04.21'
+    """
+    browse_root = Path(os.environ.get("BROWSE_ROOT", str(Path.home())))
+    try:
+        rel = work_dir.resolve().relative_to(browse_root.resolve())
+    except ValueError:
+        rel = Path(work_dir.name)
+    name = str(rel).replace("/", "-").strip("-")
+    return name or work_dir.name
+
+
 # ── Versioning helper ─────────────────────────────────────────────────────────
 
 def _next_version(path: Path) -> Path:
@@ -101,7 +117,6 @@ def _next_version(path: Path) -> Path:
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
 import csv as _csv_mod
-import re  as _re_mod
 
 def _back_cam_sources(cam_src_csv: Path, main_cam: str) -> set[str]:
     """Return set of source stems that belong to non-main cameras."""
@@ -508,7 +523,7 @@ async def run(params: dict, work_dir: Path,
     _back_srcs_fe = _back_cam_sources(_cam_src_csv, cam_a)
     if _back_srcs_fe:
         scene_files_main = [sf for sf in scene_files
-                            if _re_mod.sub(r'-scene-\d+$', '', sf.stem) not in _back_srcs_fe]
+                            if re.sub(r'-scene-\d+$', '', sf.stem) not in _back_srcs_fe]
         if len(scene_files_main) < len(scene_files):
             yield f"  Skipping {len(scene_files) - len(scene_files_main)} back-cam scenes"
     else:
@@ -570,7 +585,7 @@ async def run(params: dict, work_dir: Path,
             if _back_srcs:
                 _frame_count = sum(
                     1 for f in _all_frames
-                    if _re_mod.sub(r'-scene-\d+$', '', f.stem) not in _back_srcs
+                    if re.sub(r'-scene-\d+$', '', f.stem) not in _back_srcs
                 )
             else:
                 _frame_count = len(_all_frames)
@@ -586,7 +601,7 @@ async def run(params: dict, work_dir: Path,
                 scores_csv.unlink()
                 yield "  Prompts changed — rescoring..."
             else:
-                yield f"  Cached ({_csv_count} scenes, delete {scores_csv.name} to rescore)"
+                yield f"  Cached ({_csv_count} scenes)"
         except Exception:
             scores_csv.unlink()
             yield "  Corrupt scores CSV — rescoring..."
@@ -905,7 +920,7 @@ async def run(params: dict, work_dir: Path,
                 video_to_mix = final or highlight
                 vid_dur      = await _probe_duration(video_to_mix, ffprobe) or 0
                 yield f"  Track (pinned): {_st_path.stem}"
-                output_music = _next_version(work_dir / "highlight_final_music.mp4")
+                output_music = _next_version(work_dir / f"{_output_name(work_dir)}.mp4")
                 fade_start = vid_dur - music_fade
                 await _run([
                     ffmpeg,
@@ -1003,7 +1018,7 @@ async def run(params: dict, work_dir: Path,
                         yield "  Could not select track, skipping music"
                     else:
                         yield f"  Track: {Path(best_track['file']).stem}"
-                        output_music = _next_version(work_dir / "highlight_final_music.mp4")
+                        output_music = _next_version(work_dir / f"{_output_name(work_dir)}.mp4")
                         fade_start = vid_dur - music_fade
                         await _run([
                             ffmpeg,

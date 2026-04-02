@@ -14,17 +14,21 @@ Kliknięcie pliku otwiera wbudowany odtwarzacz wideo. Obsługuje range requests 
 
 Clicking a file opens the built-in video player. Supports range requests (Safari, iOS).
 
+---
+
 ## Pliki wynikowe / Output files
 
-Każdy render tworzy nowy plik zamiast nadpisywać poprzedni:
+Każdy render tworzy nowy plik zamiast nadpisywać poprzedni. Nazwa pochodzi ze ścieżki projektu względem `BROWSE_ROOT` (`DATA_DIR` w `.env`):
+
+Each render creates a new file instead of overwriting. The name is derived from the project path relative to `BROWSE_ROOT` (`DATA_DIR` in `.env`):
 
 ```
-highlight_final_music_v1.mp4   ← pierwszy render
-highlight_final_music_v2.mp4   ← nowa muzyka lub zmiana threshold
-highlight_final_music_v3.mp4   ← kolejna iteracja
+2025-04-Grecja-04.21.mp4      ← pierwszy render
+2025-04-Grecja-04.21_v2.mp4   ← nowa muzyka lub zmiana threshold
+2025-04-Grecja-04.21_v3.mp4   ← kolejna iteracja
 ```
 
-Each render creates a new file instead of overwriting:
+---
 
 ## Usuwanie / Deleting
 
@@ -65,3 +69,25 @@ Upload progress is shown in real time in the modal.
 Token zapisywany w `webapp/youtube_token.json` i odświeżany automatycznie.
 
 Token is saved in `webapp/youtube_token.json` and refreshed automatically.
+
+---
+
+## Experimental / Untested
+
+### Upload do S3 / Upload to S3
+
+![Wyniki z przyciskiem S3](img/AI-autoedit-s3-results-player.png)
+
+Gdy S3 jest skonfigurowane, przy każdym pliku wynikowym pojawia się przycisk **▲ S3**.
+
+When S3 is configured, an **▲ S3** button appears next to each result file.
+
+![Modal uploadu S3](img/AI-autoedit-s3-results-upload-s3.png)
+
+Kliknięcie otwiera modal uploadu. Pole **S3 key** jest pre-filled jako `highlights/<nazwa_pliku>` — można zmienić przed wysłaniem.
+
+Clicking opens the upload modal. The **S3 key** field is pre-filled as `highlights/<filename>` — editable before uploading.
+
+Pasek postępu i prędkość transferu widoczne w czasie rzeczywistym.
+
+Upload progress bar and transfer speed are shown in real time.

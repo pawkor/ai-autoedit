@@ -4,7 +4,7 @@
 
 ![Ekran główny](img/AI-autoedit-main-screen.png)
 
-Lewy pasek wyświetla historię zadań z ich statusem (`done` / `running` / `failed`) i czasem trwania. Przełącznik **en / pl** zmienia język interfejsu bez przeładowania strony. Kliknięcie projektu otwiera go i przełącza na zakładkę Summary.
+Lewy pasek wyświetla historię zadań z ich statusem (`done` / `running` / `failed` / `queued`) i czasem trwania. Przełącznik **en / pl** zmienia język interfejsu bez przeładowania strony. Kliknięcie projektu otwiera go i przełącza na zakładkę Summary.
 
 The left sidebar shows job history with status and elapsed time. The **en / pl** switcher changes the interface language without reload. Clicking a project opens it and switches to the Summary tab.
 
@@ -12,23 +12,22 @@ The left sidebar shows job history with status and elapsed time. The **en / pl**
 
 ## Nowy projekt / New project
 
-![Nowy projekt](img/AI-autoedit-new-project.png)
+![Przeglądarka katalogów](img/AI-autoedit-new-workdir.png)
 
-### Pola formularza / Form fields
+Kliknięcie przycisku **+ New project** otwiera przeglądarkę katalogów. Nawigacja: pojedyncze kliknięcie zaznacza katalog, podwójne kliknięcie wchodzi do środka. Katalogi z plikami MP4 oznaczone są plakietką **MP4**, a te z istniejącym cache — plakietką **cached**.
 
-| Pole | Opis |
-|------|------|
-| Work directory | Katalog z plikami MP4 (ścieżka wewnątrz kontenera, np. `/data/2025/04-Grecja/04.21/helmet`) |
-| Music directory | Katalog z biblioteką muzyczną (np. `/data/music/NCS`) |
-| Cam A / Cam B | Tryb dual-camera: podkatalogi dwóch kamer. Cam A = źródło audio, Cam B = wyciszona. |
-| No intro / No music | Pomijają intro/outro lub miks muzyczny. |
+Clicking **+ New project** opens a directory browser. Single-click selects a folder, double-click navigates into it. Folders containing MP4 files are marked with an **MP4** badge; folders with an existing cache show a **cached** badge.
 
-### Generowanie promptów CLIP / Generating CLIP prompts
+Po wyborze katalogu i kliknięciu **Select** aplikacja:
 
-Pole tekstowe **About this ride** + przycisk **Generate CLIP prompts** wywołuje Claude API i generuje prompty POSITIVE/NEGATIVE dopasowane do opisu wyjazdu. Wyniki pojawiają się w polach obok. Przycisk **Save prompts** zapisuje je do `config.ini` projektu.
+After selecting a directory and clicking **Select** the app:
 
-The **About this ride** text area + **Generate CLIP prompts** button calls Claude API and generates POSITIVE/NEGATIVE prompts matched to the ride description. Results appear in the adjacent fields. **Save prompts** writes them to the project's `config.ini`.
+| Sytuacja | Zachowanie |
+|----------|------------|
+| Katalog ma już aktywne zadanie | Otwiera istniejące zadanie |
+| Katalog ma pliki wynikowe (`highlight*.mp4`, `_autoframe/`) | Importuje jako zakończone zadanie |
+| Nowy katalog | Tworzy szkic projektu i otwiera zakładkę Settings |
 
-Kliknięcie **▶ Analyze** uruchamia pipeline, automatycznie ustawia wstępny threshold i przenosi na zakładkę Gallery.
+Parametry pipeline (kamery, progi, prompty CLIP) konfiguruje się w zakładce **Settings** po otwarciu projektu.
 
-Clicking **▶ Analyze** starts the pipeline, auto-sets an initial threshold, and switches to the Gallery tab.
+Pipeline parameters (cameras, thresholds, CLIP prompts) are configured in the **Settings** tab after opening the project.

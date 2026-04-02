@@ -10,6 +10,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -20,7 +21,14 @@ from typing import Optional
 
 import aiofiles
 import psutil
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request, Body
+import tempfile
+try:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError as BotoClientError
+    _boto3_ok = True
+except ImportError:
+    _boto3_ok = False
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request, Body, UploadFile, Form
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -35,6 +43,22 @@ WEBAPP_DIR  = Path(__file__).resolve().parent
 STATIC_DIR  = WEBAPP_DIR / "static"
 JOBS_DIR    = WEBAPP_DIR / "jobs"
 BROWSE_ROOT = Path(os.environ.get("BROWSE_ROOT", str(Path.home())))
+
+# ── S3 (optional) ─────────────────────────────────────────────────────────────
+S3_CLIENT = None
+S3_BUCKET  = os.environ.get("S3_BUCKET", "").strip()
+if _boto3_ok and S3_BUCKET and os.environ.get("S3_ACCESS_KEY_ID"):
+    _s3_kw: dict = {
+        "aws_access_key_id":     os.environ["S3_ACCESS_KEY_ID"],
+        "aws_secret_access_key": os.environ["S3_SECRET_ACCESS_KEY"],
+        "region_name":           os.environ.get("S3_REGION", "us-east-1"),
+    }
+    if os.environ.get("S3_ENDPOINT_URL"):
+        _s3_kw["endpoint_url"] = os.environ["S3_ENDPOINT_URL"]
+    try:
+        S3_CLIENT = boto3.client("s3", **_s3_kw)
+    except Exception as _e:
+        print(f"[S3] init error: {_e}")
 
 JOBS_DIR.mkdir(exist_ok=True)
 
@@ -531,6 +555,446 @@ async def list_subdirs(dir: str = Query(...)):
     return names
 
 
+@app.post("/api/mkdir")
+async def mkdir(data: dict):
+    parent = Path(data.get("path", "")).resolve()
+    name = (data.get("name") or "").strip()
+    if not name or "/" in name or "\\" in name or name in (".", ".."):
+        raise HTTPException(400, "Invalid folder name")
+    if not str(parent).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    new_dir = parent / name
+    new_dir.mkdir(exist_ok=True)
+    return {"path": str(new_dir)}
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile, work_dir: str = Form(...)):
+    dest_dir = Path(work_dir).resolve()
+    if not str(dest_dir).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not dest_dir.is_dir():
+        raise HTTPException(400, "Directory not found")
+    safe_name = Path(file.filename).name  # strip any path component
+    if not safe_name:
+        raise HTTPException(400, "Invalid filename")
+    if Path(safe_name).suffix.lower() not in _UPLOAD_EXTS:
+        raise HTTPException(400, "File type not allowed")
+    dest_path = dest_dir / safe_name
+    if dest_path.resolve().parent != dest_dir:
+        raise HTTPException(400, "Invalid filename")
+    with open(dest_path, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+    return {"ok": True, "path": str(dest_path)}
+
+
+_VIDEO_EXTS  = {'.mp4', '.mov', '.avi', '.mkv', '.mts', '.m2ts', '.m4v', '.3gp'}
+_UPLOAD_EXTS = _VIDEO_EXTS | {'.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'}
+
+@app.get("/api/files")
+async def list_files(path: str = Query(...)):
+    d = Path(path).resolve()
+    if not str(d).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not d.is_dir():
+        raise HTTPException(400)
+    files = sorted(
+        [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in _VIDEO_EXTS],
+        key=lambda f: f.name,
+    )
+    return [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
+
+
+@app.delete("/api/file")
+async def delete_file_endpoint(path: str = Query(...)):
+    f = Path(path).resolve()
+    if not str(f).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not f.is_file():
+        raise HTTPException(404)
+    f.unlink()
+    return {"ok": True}
+
+
+@app.get("/api/serve-file")
+async def serve_file(path: str = Query(...)):
+    f = Path(path).resolve()
+    if not str(f).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    if not f.is_file():
+        raise HTTPException(404)
+    return FileResponse(str(f))
+
+
+@app.get("/api/s3/status")
+async def s3_status():
+    return {"configured": S3_CLIENT is not None, "bucket": S3_BUCKET or ""}
+
+
+@app.get("/api/s3/list")
+async def s3_list(prefix: str = Query(default="")):
+    if not S3_CLIENT:
+        raise HTTPException(503, "S3 not configured")
+    try:
+        resp = await asyncio.to_thread(
+            S3_CLIENT.list_objects_v2, Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=500
+        )
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    items = [
+        {"key": o["Key"], "name": o["Key"].split("/")[-1], "size": o["Size"],
+         "last_modified": o["LastModified"].isoformat()}
+        for o in resp.get("Contents", []) if not o["Key"].endswith("/")
+    ]
+    return {"items": items, "prefix": prefix, "bucket": S3_BUCKET}
+
+
+@app.get("/api/s3/upload")
+async def s3_upload_sse(local_path: str = Query(...), key: str = Query(...)):
+    """SSE: upload a local file to S3, stream progress as JSON events."""
+    if not S3_CLIENT:
+        async def _err():
+            yield 'data: {"error":"S3 not configured"}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    local = Path(local_path).resolve()
+    if not str(local).startswith(str(BROWSE_ROOT)) or not local.is_file():
+        async def _err():
+            yield 'data: {"error":"File not found or access denied"}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    async def generate():
+        size   = local.stat().st_size
+        done   = [0]
+        t_ref  = [time.time(), 0]      # [timestamp, bytes_at_last_sample]
+        speed  = [""]
+        err    = [None]
+
+        def callback(n):
+            done[0] += n
+            now = time.time()
+            dt  = now - t_ref[0]
+            if dt >= 0.5:
+                spd = (done[0] - t_ref[1]) / dt
+                speed[0] = f"{spd/1_048_576:.1f} MB/s" if spd >= 1_048_576 else f"{spd/1024:.0f} KB/s"
+                t_ref[0], t_ref[1] = now, done[0]
+
+        task = asyncio.create_task(asyncio.to_thread(
+            S3_CLIENT.upload_file, str(local), S3_BUCKET, key,
+            Callback=callback
+        ))
+        while not task.done():
+            pct = round(done[0] / size * 100) if size else 0
+            yield f"data: {json.dumps({'pct': pct, 'speed': speed[0]})}\n\n"
+            await asyncio.sleep(0.3)
+        try:
+            await task
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/s3/download")
+async def s3_download_sse(key: str = Query(...), local_path: str = Query(...)):
+    """SSE: download an S3 object to a local path, stream progress."""
+    if not S3_CLIENT:
+        async def _err():
+            yield 'data: {"error":"S3 not configured"}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    async def generate():
+        try:
+            head = await asyncio.to_thread(S3_CLIENT.head_object, Bucket=S3_BUCKET, Key=key)
+            size = head["ContentLength"]
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            return
+
+        dest = Path(local_path).resolve()
+        if not str(dest).startswith(str(BROWSE_ROOT)):
+            yield f"data: {json.dumps({'error': 'Access denied'})}\n\n"
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        done   = [0]
+        t_ref  = [time.time(), 0]
+        speed  = [""]
+        err    = [None]
+
+        def callback(n):
+            done[0] += n
+            now = time.time()
+            dt  = now - t_ref[0]
+            if dt >= 0.5:
+                spd = (done[0] - t_ref[1]) / dt
+                speed[0] = f"{spd/1_048_576:.1f} MB/s" if spd >= 1_048_576 else f"{spd/1024:.0f} KB/s"
+                t_ref[0], t_ref[1] = now, done[0]
+
+        task = asyncio.create_task(asyncio.to_thread(
+            S3_CLIENT.download_file, S3_BUCKET, key, str(dest), Callback=callback
+        ))
+        while not task.done():
+            pct = round(done[0] / size * 100) if size else 0
+            yield f"data: {json.dumps({'pct': pct, 'speed': speed[0]})}\n\n"
+            await asyncio.sleep(0.3)
+        try:
+            await task
+            yield f"data: {json.dumps({'done': True, 'name': dest.name})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+
+def _s3_prefix(work_dir: Path) -> str:
+    """S3 prefix for a work_dir: relative path from BROWSE_ROOT with trailing slash.
+    e.g. /data/2025/04-Grecja/04.21 → '2025/04-Grecja/04.21/'
+    """
+    try:
+        rel = work_dir.resolve().relative_to(BROWSE_ROOT.resolve())
+    except ValueError:
+        rel = Path(work_dir.name)
+    return str(rel).rstrip("/") + "/"
+
+
+@app.get("/api/s3/source-status")
+async def s3_source_status(work_dir: str = Query(...)):
+    """List S3 source files vs local for each cam subfolder."""
+    if not S3_CLIENT:
+        raise HTTPException(503, "S3 not configured")
+    wd = Path(work_dir).resolve()
+    if not str(wd).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403)
+    prefix = _s3_prefix(wd)
+    # list S3 objects under prefix
+    try:
+        resp = await asyncio.to_thread(
+            S3_CLIENT.list_objects_v2, Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=2000
+        )
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    s3_files: dict[str, int] = {
+        o["Key"]: o["Size"]
+        for o in resp.get("Contents", [])
+        if Path(o["Key"]).suffix.lower() in _VIDEO_EXTS
+    }
+    # group by immediate subfolder relative to prefix
+    cams: dict[str, list] = {}
+    for key, size in s3_files.items():
+        rel = key[len(prefix):]
+        parts = rel.split("/")
+        cam = parts[0] if len(parts) > 1 else ""
+        name = parts[-1]
+        local_path = wd / rel
+        cams.setdefault(cam, []).append({
+            "key": key, "name": name, "size": size,
+            "local": local_path.exists(),
+            "local_path": str(local_path),
+        })
+    return {"prefix": prefix, "cams": cams}
+
+
+@app.get("/api/s3/fetch-sources")
+async def s3_fetch_sources(work_dir: str = Query(...), keys: str = Query(default="")):
+    """SSE: download selected (or all missing) S3 source video files to local work_dir.
+    keys: optional JSON array of S3 keys to fetch; if omitted, fetches all missing."""
+    if not S3_CLIENT:
+        async def _err():
+            yield 'data: {"error":"S3 not configured"}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    wd = Path(work_dir).resolve()
+    if not str(wd).startswith(str(BROWSE_ROOT)):
+        async def _err():
+            yield 'data: {"error":"Access denied"}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    selected_keys: list[str] | None = None
+    if keys:
+        try:
+            selected_keys = json.loads(keys)
+        except Exception:
+            async def _err():
+                yield 'data: {"error":"Invalid keys parameter"}\n\n'
+            return StreamingResponse(_err(), media_type="text/event-stream")
+
+    async def generate():
+        prefix = _s3_prefix(wd)
+
+        if selected_keys is not None:
+            # Fetch only the specified keys; get sizes via head_object
+            pairs: list[tuple[str, int]] = []
+            for key in selected_keys:
+                if not key.startswith(prefix):
+                    continue
+                try:
+                    head = await asyncio.to_thread(S3_CLIENT.head_object, Bucket=S3_BUCKET, Key=key)
+                    pairs.append((key, head["ContentLength"]))
+                except Exception:
+                    pairs.append((key, 0))
+            missing = pairs
+        else:
+            try:
+                resp = await asyncio.to_thread(
+                    S3_CLIENT.list_objects_v2, Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=2000
+                )
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                return
+            files = [
+                (o["Key"], o["Size"])
+                for o in resp.get("Contents", [])
+                if Path(o["Key"]).suffix.lower() in _VIDEO_EXTS
+            ]
+            missing = [
+                (key, size) for key, size in files
+                if not (wd / key[len(prefix):]).exists()
+            ]
+
+        if not missing:
+            yield f"data: {json.dumps({'done': True, 'skipped': 0, 'fetched': 0})}\n\n"
+            return
+
+        fetched = 0
+        for idx, (key, size) in enumerate(missing):
+            dest = (wd / key[len(prefix):]).resolve()
+            if not str(dest).startswith(str(BROWSE_ROOT)):
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            name = key.split("/")[-1]
+            yield f"data: {json.dumps({'file': name, 'idx': idx + 1, 'total': len(missing), 'pct': 0})}\n\n"
+
+            done   = [0]
+            t_ref  = [time.time(), 0]
+            speed  = [""]
+
+            def callback(n, _done=done, _t=t_ref, _spd=speed):
+                _done[0] += n
+                now, dt = time.time(), time.time() - _t[0]
+                if dt >= 0.5:
+                    s = (_done[0] - _t[1]) / dt
+                    _spd[0] = f"{s/1_048_576:.1f} MB/s" if s >= 1_048_576 else f"{s/1024:.0f} KB/s"
+                    _t[0], _t[1] = now, _done[0]
+
+            task = asyncio.create_task(asyncio.to_thread(
+                S3_CLIENT.download_file, S3_BUCKET, key, str(dest), Callback=callback
+            ))
+            while not task.done():
+                pct = round(done[0] / size * 100) if size else 0
+                yield f"data: {json.dumps({'file': name, 'idx': idx+1, 'total': len(missing), 'pct': pct, 'speed': speed[0]})}\n\n"
+                await asyncio.sleep(0.4)
+            try:
+                await task
+                fetched += 1
+                yield f"data: {json.dumps({'file': name, 'idx': idx+1, 'total': len(missing), 'pct': 100})}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'error': str(exc), 'file': name})}\n\n"
+                return
+
+        yield f"data: {json.dumps({'done': True, 'fetched': fetched, 'total': len(missing)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/purge-local")
+async def purge_local(data: dict = Body(...)):
+    """Delete local source video files and autocut scenes to free disk space."""
+    wd = Path(data.get("work_dir", "")).resolve()
+    if not str(wd).startswith(str(BROWSE_ROOT)) or not wd.is_dir():
+        raise HTTPException(400, "invalid work_dir")
+    removed = 0
+    # Delete video source files in cam subfolders (not in _autoframe/)
+    for sub in wd.iterdir():
+        if sub.name.startswith("_") or not sub.is_dir():
+            continue
+        for f in sub.iterdir():
+            if f.suffix.lower() in _VIDEO_EXTS and f.is_file():
+                f.unlink()
+                removed += 1
+    # Delete autocut scene clips
+    autocut = wd / "_autoframe" / "autocut"
+    if autocut.is_dir():
+        for f in autocut.iterdir():
+            if f.is_file():
+                f.unlink()
+                removed += 1
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/api/music/save-downloaded")
+async def music_save_downloaded(data: dict = Body(...)):
+    """Move a yt-dlp temp file to the music directory."""
+    src = Path(data.get("tmp_path", "")).resolve()
+    dst_dir_raw = (data.get("music_dir") or "").strip()
+    if not dst_dir_raw:
+        raise HTTPException(400, "music_dir required")
+    dst_dir = Path(dst_dir_raw).expanduser().resolve()
+    # Source must be a real ytdl temp file
+    if not str(src).startswith(tempfile.gettempdir()):
+        raise HTTPException(400, "Source must be a temp file")
+    if not src.is_file():
+        raise HTTPException(404, "Temp file not found")
+    # Destination must be under BROWSE_ROOT
+    if not str(dst_dir).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403, "music_dir outside allowed root")
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / src.name
+    shutil.move(str(src), str(dst))
+    try:
+        src.parent.rmdir()   # clean up empty temp dir
+    except Exception:
+        pass
+    return {"ok": True, "path": str(dst)}
+
+
+@app.get("/api/music/yt-download")
+async def yt_download_sse(url: str = Query(...)):
+    """SSE: download YouTube audio via yt-dlp, stream progress, return temp file path."""
+    async def generate():
+        tmp = tempfile.mkdtemp(prefix="ytdl-")
+        cmd = [
+            "yt-dlp", "--extract-audio", "--audio-format", "mp3",
+            "--audio-quality", "0", "--no-playlist", "--newline",
+            "-o", f"{tmp}/%(title)s.%(ext)s", "--", url,
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            yield f"data: {json.dumps({'error': 'yt-dlp not installed'})}\n\n"
+            return
+
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            m = re.search(r"(\d+\.?\d*)%", line)
+            pct = float(m.group(1)) if m else None
+            yield f"data: {json.dumps({'msg': line, 'pct': pct})}\n\n"
+
+        await proc.wait()
+        mp3s = sorted(Path(tmp).glob("*.mp3"))
+        if proc.returncode == 0 and mp3s:
+            f = mp3s[0]
+            yield f"data: {json.dumps({'done': True, 'path': str(f), 'name': f.stem})}\n\n"
+        else:
+            stderr = (await proc.stderr.read()).decode("utf-8", errors="replace")
+            yield f"data: {json.dumps({'error': (stderr or 'Download failed')[-500:]})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.get("/api/browse")
 async def browse(path: str = Query(default=None)):
     root = Path(path).resolve() if path else BROWSE_ROOT
@@ -791,6 +1255,13 @@ async def put_job_config(data: dict):
     if not work_dir.is_dir():
         raise HTTPException(400, "work_dir not found")
     save_job_config(work_dir, data)
+    # Sync in-memory job params so that the next render picks up changed values
+    # (e.g. title, no_intro) without requiring a full re-analyze.
+    for job in jobs.values():
+        if Path(job.params.get("work_dir", "")).resolve() == work_dir:
+            for k, v in data.items():
+                if k != "work_dir":
+                    job.params[k] = v
     return {"ok": True}
 
 
@@ -822,7 +1293,7 @@ def _validate_cameras(cameras, work_dir: Path) -> None:
 
 
 @app.post("/api/jobs")
-async def create_job(params: JobParams, analyze_only: bool = Query(default=True)):
+async def create_job(params: JobParams, analyze_only: bool = Query(default=True), draft: bool = Query(default=False)):
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
@@ -836,13 +1307,41 @@ async def create_job(params: JobParams, analyze_only: bool = Query(default=True)
     if params.positive or params.negative:
         save_prompts_to_config(work_dir / "config.ini", params.positive or "", params.negative or "")
 
+    # Reuse an existing idle job for this directory (avoids duplicates when
+    # draft creation and Analyze click race against each other)
+    existing_idle = next(
+        (j for j in jobs.values() if j.params.get("work_dir") == str(work_dir) and j.status == "idle"),
+        None,
+    )
+    if existing_idle:
+        if draft:
+            return {"id": existing_idle.id}
+        # Promote the idle job to running
+        existing_idle.params      = d
+        existing_idle.log         = []
+        existing_idle.status      = "queued"
+        existing_idle.phase       = "analyzing" if analyze_only else "rendering"
+        existing_idle.started_at  = time.time()
+        existing_idle.ended_at    = None
+        existing_idle.analyze_result = None
+        existing_idle.selected_track = None
+        existing_idle._task       = None
+        existing_idle.save()
+        existing_idle._task = asyncio.create_task(_run_job(existing_idle, analyze_only=analyze_only))
+        return {"id": existing_idle.id}
+
     job_id = str(uuid.uuid4())[:8]
     job = Job(job_id, d)
-    job.phase = "analyzing" if analyze_only else "rendering"
+    if draft:
+        job.status = "idle"
+        job.phase  = "new"
+    else:
+        job.phase = "analyzing" if analyze_only else "rendering"
     jobs[job_id] = job
     job.save()
 
-    job._task = asyncio.create_task(_run_job(job, analyze_only=analyze_only))
+    if not draft:
+        job._task = asyncio.create_task(_run_job(job, analyze_only=analyze_only))
     return {"id": job_id}
 
 
@@ -1247,9 +1746,13 @@ async def job_result(job_id: str):
         return int(m.group(1)) if m else 0
 
     auto_dir = work_dir / "_autoframe"
-    for pat in ("highlight_final_music_v*.mp4", "highlight_music_v*.mp4"):
+    out_name = pipeline._output_name(work_dir)
+    seen: set[str] = set()
+    for pat in (f"{out_name}_v*.mp4", "highlight_final_music_v*.mp4", "highlight_music_v*.mp4"):
         for p in sorted(work_dir.glob(pat), key=_ver, reverse=True):
-            _add(p)
+            if p.name not in seen:
+                seen.add(p.name)
+                _add(p)
 
     # Fallback: no-music renders inside _autoframe/
     if not files:
@@ -1492,7 +1995,7 @@ async def yt_disconnect():
 
 
 @app.get("/api/file")
-async def serve_file(request: Request, path: str = Query(...)):
+async def serve_file(request: Request, path: str = Query(...), dl: int = Query(0)):
     p = Path(path).resolve()
     if not str(p).startswith(str(BROWSE_ROOT)):
         raise HTTPException(403)
@@ -1513,6 +2016,8 @@ async def serve_file(request: Request, path: str = Query(...)):
         "Last-Modified":  last_mod,
         "Cache-Control":  "public, max-age=86400",
     }
+    if dl:
+        base_headers["Content-Disposition"] = f'attachment; filename="{p.name}"'
 
     # Conditional request — return 304 (no body) if client already has the file
     if request.headers.get("if-none-match") == etag:

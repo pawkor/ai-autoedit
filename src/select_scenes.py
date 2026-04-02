@@ -155,16 +155,64 @@ if dual_cam:
     other_cams  = all_cam_names[1:]
 
     # ── Build absolute timestamp map from PySceneDetect CSVs ─────────────────
-    # ts_map[scene_name] = seconds since midnight (day-relative)
+    # ts_map[scene_name] = seconds since midnight (day-relative, or since UTC epoch
+    # when falling back to creation_time metadata — consistent within one day's footage)
     ts_map: dict[str, float] = {}
+    _skipped_csvs: list[Path] = []   # CSVs whose stems had no filename timestamp
     if os.path.isdir(CSV_DIR):
-        for csv_path in Path(CSV_DIR).glob("*-Scenes.csv"):
+        for csv_path in sorted(Path(CSV_DIR).glob("*-Scenes.csv")):
             stem = csv_path.stem[:-len("-Scenes")]
             m = _re.search(r'_(\d{6})(?:_\d+)*$', stem)
             if not m:
+                _skipped_csvs.append(csv_path)
                 continue
             hms = m.group(1)
             file_start = int(hms[0:2]) * 3600 + int(hms[2:4]) * 60 + int(hms[4:6])
+            try:
+                sdf = pd.read_csv(csv_path, skiprows=1)
+                for _, row in sdf.iterrows():
+                    snum = int(row["Scene Number"])
+                    key  = f"{stem}-scene-{snum:03d}"
+                    secs = float(row.get("Start Time (seconds)", 0) or 0)
+                    ts_map[key] = file_start + secs
+            except Exception:
+                pass
+
+    # Fallback: for CSVs without a filename timestamp, probe the source file
+    # for creation_time metadata (MP4 container stores it reliably).
+    if _skipped_csvs:
+        _work_dir = Path(os.getcwd())
+        _ffprobe  = _cfg.get("paths", "ffprobe", fallback="ffprobe")
+
+        def _creation_time_secs(stem: str) -> float | None:
+            """Return seconds-since-epoch from creation_time tag, or None."""
+            cam = cam_map.get(stem)
+            if not cam:
+                return None
+            for ext in (".mp4", ".MP4", ".mov", ".MOV"):
+                p = _work_dir / cam / (stem + ext)
+                if p.exists():
+                    try:
+                        out = subprocess.check_output(
+                            [_ffprobe, "-v", "quiet", "-print_format", "json",
+                             "-show_format", str(p)],
+                            stderr=subprocess.DEVNULL, timeout=10,
+                        )
+                        tags = _json.loads(out)["format"].get("tags", {})
+                        ct = tags.get("creation_time", "")
+                        if ct:
+                            from datetime import datetime, timezone
+                            dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                            return dt.timestamp()
+                    except Exception:
+                        pass
+            return None
+
+        for csv_path in _skipped_csvs:
+            stem = csv_path.stem[:-len("-Scenes")]
+            file_start = _creation_time_secs(stem)
+            if file_start is None:
+                continue
             try:
                 sdf = pd.read_csv(csv_path, skiprows=1)
                 for _, row in sdf.iterrows():
@@ -207,6 +255,40 @@ if dual_cam:
             for fut in as_completed(futs):
                 duration_map[futs[fut]] = fut.result()
 
+    # ── Detect clock offset between cameras ──────────────────────────────────
+    # If back cam clock was wrong (e.g. DST off by 1h), all back timestamps will
+    # be shifted by a constant. Detect by trying candidate offsets and picking the
+    # one that maximises matching pairs within ±TIMESTAMP_MATCH_SEC.
+    main_ts_vals = [ts_map[s[0]] for s in all_selected
+                    if s[5] == cam_a_name and ts_map.get(s[0]) is not None]
+    back_ts_sources = set()
+    back_ts_raw: list[float] = []
+    for _, row in back_df.iterrows():
+        sc = row['scene']
+        t = ts_map.get(sc)
+        if t is not None:
+            back_ts_raw.append(t)
+            back_ts_sources.add(sc)
+
+    cam_clock_offset = 0.0
+    if main_ts_vals and back_ts_raw:
+        best_count, best_off = 0, 0.0
+        # Try whole-hour candidates ±12h and also 0
+        candidates = [h * 3600 for h in range(-12, 13)]
+        tol = TIMESTAMP_MATCH_SEC
+        for off in candidates:
+            adjusted = [t - off for t in back_ts_raw]
+            count = sum(
+                1 for bt in adjusted
+                if any(abs(bt - mt) <= tol for mt in main_ts_vals)
+            )
+            if count > best_count:
+                best_count, best_off = count, off
+        if best_off != 0.0 and best_count > 0:
+            cam_clock_offset = best_off
+            h = int(best_off / 3600)
+            print(f"  Clock offset detected: back cam is {h:+d}h — correcting timestamps")
+
     # Build back-cam entry list with timestamps, sorted by timestamp for fast scan
     back_entries = []
     for _, row in back_df.iterrows():
@@ -220,9 +302,11 @@ if dual_cam:
         fp = f"{SCENES_DIR}{sc}.mp4"
         if not os.path.exists(fp):
             continue
+        raw_ts = ts_map.get(sc)
+        adj_ts = (raw_ts - cam_clock_offset) if raw_ts is not None else None
         back_entries.append({
             "tuple": (sc, fp, dur, take, float(row['score']), row['camera']),
-            "ts":    ts_map.get(sc),
+            "ts":    adj_ts,
         })
     back_entries.sort(key=lambda e: (e["ts"] or 0))
 

@@ -1,7 +1,5 @@
 # Zakładka Settings / Settings tab
 
-![Ustawienia](img/AI-autoedit-settings.png)
-
 Zakładka **Settings** pozwala zmieniać wszystkie parametry pipeline bez edytowania plików. Każde pole zapisuje się do `config.ini` projektu automatycznie po opuszczeniu pola (Enter lub kliknięcie gdzie indziej).
 
 The **Settings** tab lets you change all pipeline parameters without editing files. Every field saves to the project's `config.ini` automatically on blur or Enter.
@@ -10,11 +8,23 @@ The **Settings** tab lets you change all pipeline parameters without editing fil
 
 ## Sekcje / Sections
 
-### Sources / Working directory
+### Source
 
-Katalog roboczy z plikami MP4 oraz opcjonalna lista kamer (dla dual-camera).
+![Ustawienia — jedna kamera](img/AI-autoedit-settings-single-cam.png)
 
-Working directory with MP4 files and optional camera list (for dual-camera).
+Katalog roboczy z plikami MP4 (tylko do odczytu — ustawiony przy tworzeniu projektu). Przycisk 📁 otwiera przeglądarkę plików dla tego katalogu (patrz niżej).
+
+Working directory with MP4 files (read-only — set when the project is created). The 📁 button opens the file browser for that directory (see below).
+
+**Konfiguracja kamer / Camera configuration**
+
+![Ustawienia — multicam](img/AI-autoedit-settings-multi-cam.png)
+
+Lista podkatalogów kamer. Cam A = źródło audio; pozostałe kamery są wyciszane w mikście. Przycisk **+ Add camera** dodaje kolejny wiersz. Przycisk 📁 przy każdej kamerze otwiera przeglądarkę plików dla tego podkatalogu.
+
+List of camera subdirectories. Cam A = audio source; other cameras are muted in the mix. **+ Add camera** adds a row. The 📁 button next to each camera opens the file browser for that subfolder.
+
+---
 
 ### Scene detection *(requires Re-analyze)*
 
@@ -26,6 +36,8 @@ PySceneDetect parameters — affect the cut detection stage. Changes require Re-
 |----------|-----------|---------------------|
 | Detect threshold | `20` | Czułość detektora. Wyższy = mniej cięć. Dla leśnego materiału zalecane 24–28. / Detector sensitivity. Higher = fewer cuts. For forest/lighting-heavy footage try 24–28. |
 | Min scene len | `8` | Minimalna długość sceny w sekundach. / Minimum scene duration in seconds. |
+
+---
 
 ### Scene selection
 
@@ -43,17 +55,30 @@ Threshold CLIP ustawiany jest na żywo przez suwak w zakładce Gallery.
 
 The CLIP threshold is set live via the Gallery slider — not in Settings.
 
-### CLIP prompts / About this ride
+---
 
-Opis wyjazdu do generowania promptów przez Claude API. Szczegóły: [Nowy projekt](ui-projects.md).
+### Intro / music
 
-Ride description for Claude-based prompt generation. Details: [New project](ui-projects.md).
+| Parametr | Opis / Description |
+|----------|--------------------|
+| Title | Tytuł na kartce intro. Każda linia = jeden wiersz tekstu. Pozostaw puste dla auto (rok + folder). / Intro card title. Each line = one text row. Leave empty for auto (year + folder). |
+| Music directory | Katalog z biblioteką MP3 do miksowania. / Directory with the MP3 library for mixing. |
+| No intro/outro | Pomija generowanie karty intro i czarnego outro. / Skips intro card and black outro generation. |
+| No music | Pomija miks muzyczny. / Skips the music mix. |
 
-### POSITIVE / NEGATIVE prompts
+---
 
-Edytowalne bezpośrednio, jeden prompt na linię. Zapisywane automatycznie po opuszczeniu pola.
+### CLIP prompts
 
-Editable directly, one prompt per line. Saved automatically on blur.
+Opis wyjazdu (pole **About this ride**) + przycisk **✦ Generate CLIP prompts** wywołuje Claude API i generuje prompty POSITIVE/NEGATIVE dopasowane do opisu. Wyniki pojawiają się w polach poniżej. **Save prompts** zapisuje je do `config.ini` projektu.
+
+The **About this ride** field + **✦ Generate CLIP prompts** button calls the Claude API and generates POSITIVE/NEGATIVE prompts matched to the ride description. Results appear in the fields below. **Save prompts** writes them to the project's `config.ini`.
+
+Prompty POSITIVE/NEGATIVE można też edytować bezpośrednio, jeden prompt na linię.
+
+POSITIVE/NEGATIVE prompts can also be edited directly, one prompt per line.
+
+---
 
 ### CLIP scoring
 
@@ -62,10 +87,6 @@ Editable directly, one prompt per line. Saved automatically on blur.
 | Batch size | `64` | Klatki przez GPU jednocześnie. Obniż do 32/16 przy błędach OOM. / Frames per GPU batch. Lower to 32/16 if OOM errors occur. |
 | Workers | `4` | Wątki ładowania klatek. / Frame-loading worker threads. |
 
-Wartości zapisywane automatycznie po opuszczeniu pola. Stosowane przy kolejnym Re-analyze.
-
-Values saved automatically on blur. Applied on the next Re-analyze run.
-
 ---
 
 ## Re-analyze with these settings
@@ -73,3 +94,53 @@ Values saved automatically on blur. Applied on the next Re-analyze run.
 Uruchamia pipeline od nowa. Pomija detekcję scen jeśli pliki źródłowe i parametry `[scene_detection]` nie zmieniły się.
 
 Reruns the pipeline. Skips scene detection if source files and `[scene_detection]` parameters haven't changed.
+
+---
+
+## Przeglądarka plików / File browser
+
+![Przeglądarka plików](img/AI-autoedit-settings-file-browser.png)
+
+Otwierana przyciskiem 📁 przy katalogu roboczym lub podkatalogu kamery. Wyświetla pliki wideo (MP4, MOV, MTS, M2TS i inne) w danym katalogu.
+
+Opened via the 📁 button next to the working directory or a camera subfolder. Shows video files (MP4, MOV, MTS, M2TS, etc.) in that directory.
+
+| Akcja | Opis |
+|-------|------|
+| Najechanie kursorem na plik | Podgląd wideo (miniaturka 240×135) |
+| **×** przy pliku | Usuwa plik z dysku po potwierdzeniu |
+| Checkbox przy pliku | Zaznacza do grupowego usunięcia |
+| **Delete checked** | Usuwa zaznaczone pliki po potwierdzeniu |
+| **+ Folder** | Tworzy nowy podkatalog |
+| **↑ Upload** | Przesyła pliki z przeglądarki do tego katalogu |
+
+---
+
+## Experimental / Untested
+
+### S3 source
+
+Sekcja **S3 source** pojawia się automatycznie gdy w `.env` skonfigurowane są zmienne `S3_BUCKET`, `S3_ACCESS_KEY_ID` i `S3_SECRET_ACCESS_KEY`. Umożliwia pobieranie plików źródłowych wideo bezpośrednio z bucketa S3 przed uruchomieniem pipeline.
+
+The **S3 source** section appears automatically when `S3_BUCKET`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` are set in `.env`. It allows fetching source video files from an S3 bucket before running the pipeline.
+
+Lista plików: ikona ☁ = tylko na S3, ✓ = już pobrane lokalnie. Checkbox przy pliku zaznacza go do pobrania.
+
+File list: ☁ = S3 only, ✓ = already downloaded locally. Checkbox marks a file for download.
+
+| Przycisk | Opis |
+|----------|------|
+| **↺** (nagłówek) | Odświeża listę plików z S3 |
+| All missing | Zaznacza wszystkie pliki których brakuje lokalnie |
+| **↓ Fetch selected** | Pobiera zaznaczone pliki z S3 do katalogu roboczego, pasek postępu per-plik |
+| **✕ Purge local** | Usuwa lokalne pliki źródłowe i przetworzone klipy (`_autoframe/autocut/`) żeby zwolnić miejsce |
+
+Konfiguracja S3 w `.env` / S3 configuration in `.env`:
+
+```
+S3_BUCKET=my-bucket
+S3_ACCESS_KEY_ID=your-key-id
+S3_SECRET_ACCESS_KEY=your-secret
+S3_REGION=us-east-1
+S3_ENDPOINT_URL=https://...   # opcjonalne: Backblaze B2, Cloudflare R2, MinIO / optional
+```
