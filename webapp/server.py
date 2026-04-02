@@ -390,6 +390,9 @@ async def get_settings():
     return {
         "max_concurrent_jobs": int(wcfg("max_concurrent_jobs", "1")),
         "port":                int(wcfg("port", "8000")),
+        "theme":               wcfg("theme", ""),
+        "lang":                wcfg("lang", ""),
+        "sort_newest":         wcfg("sort_newest", ""),
     }
 
 

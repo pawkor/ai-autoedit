@@ -41,9 +41,9 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #app-footer a { color:var(--muted); text-decoration:none; }
 #app-footer a:hover { color:var(--accent); }
 #sidebar { width:260px; min-width:260px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
-#sidebar-header { padding:12px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; }
-#sidebar-header h1 { flex:1; font-size:14px; color:var(--accent); letter-spacing:1px; line-height:1.2; }
-.icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:13px; }
+#sidebar-header { padding:12px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+#sidebar-header h1 { font-size:14px; color:var(--accent); letter-spacing:1px; line-height:1.2; }
+.icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:16px; }
 .icon-btn:hover { border-color:var(--accent); color:var(--accent); }
 #sidebar-new-row { padding:8px 10px; border-bottom:1px solid var(--border); }
 #btn-new { width:100%; background:var(--accent); color:var(--accent-text); border:none; padding:5px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
@@ -243,9 +243,10 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .thresh-btn:hover { border-color:var(--accent); color:var(--accent); }
 #gallery-status { display:flex; align-items:center; gap:10px; padding:6px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; font-size:11px; }
 #gallery-stats-text { flex:1; color:var(--muted); }
-#sidebar-sort, #sidebar-theme { font-size:10px; color:var(--muted); padding:2px 6px; background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; width:100%; }
-#sidebar-sort:hover, #sidebar-theme:hover { border-color:var(--accent); color:var(--accent); }
+#sidebar-sort, #sidebar-theme, #sidebar-lang { font-size:10px; color:var(--muted); padding:2px 6px; background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; width:100%; }
+#sidebar-sort:hover, #sidebar-theme:hover, #sidebar-lang:hover { border-color:var(--accent); color:var(--accent); }
 #sidebar-btns { display:flex; flex-direction:column; gap:3px; }
+#sidebar-btns > div { display:flex; flex-direction:row; gap:3px; }
 #frames-scroll { flex:1; overflow-y:scroll; padding:14px; }
 #frames-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .fc { border:1px solid var(--border); border-radius:3px; overflow:hidden; transition:border-color .15s; }
@@ -325,10 +326,6 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .rf { position:relative; }
 #video-wrap { background:#000; border-radius:4px; overflow:hidden; display:none; }
 #video-wrap video { width:100%; max-height:58vh; display:block; }
-#lang-switcher { font-size:11px; color:var(--muted); white-space:nowrap; }
-.lang-btn { cursor:pointer; padding:0 2px; }
-.lang-btn:hover { color:var(--text); }
-.lang-btn.lang-active { color:var(--accent); font-weight:bold; }
 </style>
 </head>
 <body>
@@ -340,14 +337,12 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
   <div id="sidebar-header">
     <h1>AI<br>autoedit</h1>
     <div id="sidebar-btns">
+      <div>
+        <button id="sidebar-theme" onclick="toggleTheme()">dark</button>
+        <button id="sidebar-lang" onclick="toggleLang()">en</button>
+      </div>
       <button id="sidebar-sort" onclick="toggleSortOrder()" data-i18n="misc.newest">newest</button>
-      <button id="sidebar-theme" onclick="toggleTheme()">dark</button>
     </div>
-    <span id="lang-switcher">
-      <span class="lang-btn" data-lang="en" onclick="setLang('en')">en</span>
-      <span style="color:var(--border)">/</span>
-      <span class="lang-btn" data-lang="pl" onclick="setLang('pl')">pl</span>
-    </span>
     <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
   </div>
   <div id="sidebar-new-row">
@@ -568,7 +563,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               onfocus="this.select()">
             <span style="font-size:11px;color:var(--muted)">min</span>
             <span id="target-dur-warn" style="font-size:11px;margin-left:6px;display:none"></span>
-            <button class="btn-sm" style="margin-left:6px;padding:1px 6px;font-size:11px" title="Clear manual overrides and re-run target search" onclick="resetThreshold()">↺</button>
+            <button class="btn-sm" style="margin-left:6px;padding:1px 6px;font-size:14px;line-height:1" title="Clear manual overrides and re-run target search" onclick="resetThreshold()">↺</button>
             <span style="margin-left:8px;color:var(--muted);font-size:11px">Filter:</span>
             <input class="gf-filter-input" id="filter-score" type="text" placeholder="score" title="Score prefix — Enter to apply (e.g. 0.8 → 0.800–0.899)"
               onkeydown="if(event.key==='Enter'){onGalleryFilter();this.blur()}"
@@ -1087,6 +1082,7 @@ function setLang(lang) {
   if (!TRANS[lang]) return;
   currentLang = lang;
   localStorage.setItem('lang', lang);
+  _saveUiPrefs();
   const t = TRANS[lang];
   // Tooltips
   document.querySelectorAll('[data-i18n-tip]').forEach(el => {
@@ -1106,10 +1102,17 @@ function setLang(lang) {
   // Sort button (dynamic state)
   const sortBtn = document.getElementById('sidebar-sort');
   if (sortBtn) sortBtn.textContent = t.labels[jobSortNewest ? 'misc.newest' : 'misc.oldest'];
-  // Lang switcher active state
-  document.querySelectorAll('.lang-btn').forEach(b =>
-    b.classList.toggle('lang-active', b.dataset.lang === lang)
-  );
+  const langBtn = document.getElementById('sidebar-lang');
+  if (langBtn) langBtn.textContent = lang;
+}
+
+function toggleLang() {
+  const langs = Object.keys(TRANS);
+  setLang(langs[(langs.indexOf(currentLang) + 1) % langs.length]);
+}
+
+function _saveUiPrefs() {
+  api.put('/api/settings', { theme: currentTheme, lang: currentLang, sort_newest: jobSortNewest ? 'true' : 'false' });
 }
 
 const api = {
@@ -1206,6 +1209,7 @@ function showWelcome() { showView('welcome'); }
 function toggleSortOrder() {
   jobSortNewest = !jobSortNewest;
   localStorage.setItem('jobSortNewest', jobSortNewest);
+  _saveUiPrefs();
   const t = TRANS[currentLang]?.labels;
   document.getElementById('sidebar-sort').textContent = t?.[jobSortNewest ? 'misc.newest' : 'misc.oldest'] || (jobSortNewest ? 'newest' : 'oldest');
   refreshJobList();
@@ -1224,6 +1228,7 @@ function applyTheme(name) {
   const sel = document.getElementById('s-theme');
   if (sel) sel.value = name;
   localStorage.setItem('theme', name);
+  _saveUiPrefs();
 }
 function toggleTheme() {
   applyTheme(THEMES[(THEMES.indexOf(currentTheme) + 1) % THEMES.length]);
@@ -1257,7 +1262,23 @@ async function refreshJobList() {
 setInterval(refreshJobList, 3000);
 refreshJobList();
 setLang(currentLang);
-applyTheme(localStorage.getItem('theme') || 'dark');
+applyTheme(currentTheme);
+// Sync UI prefs from server (authoritative across all devices)
+api.get('/api/settings').then(s => {
+  if (!s) return;
+  if (s.theme && s.theme !== currentTheme) { applyTheme(s.theme); localStorage.setItem('theme', s.theme); }
+  if (s.lang  && s.lang  !== currentLang)  { setLang(s.lang);     localStorage.setItem('lang', s.lang); }
+  if (s.sort_newest !== '') {
+    const newest = s.sort_newest === 'true';
+    if (newest !== jobSortNewest) {
+      jobSortNewest = newest;
+      localStorage.setItem('jobSortNewest', jobSortNewest);
+      const t = TRANS[currentLang]?.labels;
+      const btn = document.getElementById('sidebar-sort');
+      if (btn) btn.textContent = t?.[jobSortNewest ? 'misc.newest' : 'misc.oldest'] || (jobSortNewest ? 'newest' : 'oldest');
+    }
+  }
+});
 
 // Hide S3 UI rows if S3 is not configured
 (async () => {
