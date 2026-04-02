@@ -6,9 +6,9 @@ Zakładka **Music** pokazuje zaindeksowane ścieżki z katalogu muzycznego (MP3/
 
 The **Music** tab shows indexed tracks from the music directory (MP3/M4A) with artist, title, genre, BPM, and energy.
 
-U góry zakładki widoczny jest szacowany czas highlight i liczba wybranych scen — np. `Est. highlight: 6:00 [45 scenes]`. Przycisk **→ Summary** przenosi do zakładki Summary.
+U góry zakładki widoczny jest szacowany czas highlight i liczba wybranych scen. Przycisk **→ Summary** przenosi do zakładki Summary.
 
-At the top of the tab: estimated highlight duration and selected scene count — e.g. `Est. highlight: 6:00 [45 scenes]`. The **→ Summary** button navigates to the Summary tab.
+At the top of the tab: estimated highlight duration and selected scene count. The **→ Summary** button navigates to the Summary tab.
 
 ---
 
@@ -55,9 +55,20 @@ After download the file is saved automatically:
 - Pole tekstowe **Filter** — filtruje po tytule lub wykonawcy
 - Dropdown **genre** — filtruje po gatunku
 
-Pokazywane są tylko ścieżki o czasie trwania zbliżonym do szacowanego czasu highlight (±5s). Jeśli lista jest pusta — rozszerz bibliotekę lub zmień threshold w Gallery.
+- **Filter** text field — filters by title or artist
+- **genre** dropdown — filters by genre
 
-Only tracks within ±5s of the estimated highlight duration are shown. If the list is empty — expand the library or adjust the Gallery threshold.
+---
+
+## Sortowanie / Sort order
+
+Domyślnie lista ścieżek sortowana jest według zbliżenia do aktualnego Target dur.: na górze utwór najbardziej pasujący długością, niżej na przemian dłuższe i krótsze (±1 s, ±2 s, ±3 s…). Gdy nie ma ustawionego Target dur., lista pojawia się w kolejności indeksu.
+
+Kliknięcie nagłówka kolumny (tytuł, czas, BPM, energia) przełącza na sortowanie wg tej kolumny. Ponowne kliknięcie odwraca kierunek. Kliknięcie raz jeszcze wraca do sortowania domyślnego.
+
+By default tracks are sorted by proximity to the current Target dur.: the best-matching track is at the top, then alternating longer and shorter (±1 s, ±2 s, ±3 s…). If Target dur. is not set, tracks appear in index order.
+
+Clicking a column header (title, duration, BPM, energy) sorts by that column. Click again to reverse. Click once more to return to default sort.
 
 ---
 
@@ -74,6 +85,12 @@ Clicking ▶ next to a track starts playback. A seek bar appears below the title
 Checkboxy przy ścieżkach zaznaczają je do użycia w pipeline. Zaznaczenie przenosi się na kolejne rendery. Przyciski **All** / **None** zaznaczają lub odznaczają wszystkie widoczne (po filtrach) ścieżki.
 
 Checkboxes next to tracks mark them for use in the pipeline. Selection persists across renders. **All** / **None** buttons select or deselect all currently visible (filtered) tracks.
+
+### → Target dur.
+
+Gdy zaznaczona jest dokładnie jedna ścieżka, pojawia się przycisk **→ Target dur.** Kliknięcie ustawia Target dur. w Gallery na czas trwania wybranego utworu i automatycznie uruchamia wyszukiwanie progu — wynik to film dopasowany do długości wybranego utworu. Widok przełącza się na zakładkę Gallery.
+
+When exactly one track is selected, the **→ Target dur.** button appears. Clicking it sets Gallery's Target dur. to the selected track's duration and immediately runs the threshold search — producing a film matched to that track's length. The view switches to the Gallery tab.
 
 ---
 

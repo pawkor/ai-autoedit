@@ -29,9 +29,25 @@ CSV_DIR          = os.environ.get("CSV_DIR",          "")
 AUDIO_CAM        = os.environ.get("AUDIO_CAM",        "")
 MANUAL_OVERRIDES = os.environ.get("MANUAL_OVERRIDES", "")
 TIMESTAMP_MATCH_SEC = _cfg.getfloat("scene_selection", "timestamp_match_sec", fallback=30.0)
+DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
 
 import re as _re
 import json as _json
+
+# ── Persistent ffprobe duration cache ────────────────────────────────────────
+# DRY_RUN: built here and saved to disk so binary-search iterations are fast.
+# Always: loaded (if present) to derive per-file CSV inflation ratios used by
+# timestamp matching — PySceneDetect "Start Time (seconds)" is ~10x too large
+# for VFR files due to container timebase mismatch.
+_dur_cache: dict[str, float] = {}
+_dur_cache_path: Path | None = None
+if SCENES_DIR:
+    _dur_cache_path = Path(SCENES_DIR).parent / "duration_cache.json"
+    if _dur_cache_path.exists():
+        try:
+            _dur_cache = _json.loads(_dur_cache_path.read_text())
+        except Exception:
+            _dur_cache = {}
 _ov = {}
 if MANUAL_OVERRIDES and os.path.exists(MANUAL_OVERRIDES):
     _ov = _json.load(open(MANUAL_OVERRIDES))
@@ -62,14 +78,24 @@ if force_exclude:
     df = df[~df['scene'].isin(force_exclude)]
 
 
+_dur_cache_dirty = False
+
 def get_duration(scene_file):
+    global _dur_cache_dirty
+    key = Path(scene_file).name
+    if key in _dur_cache:
+        return _dur_cache[key]
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
              "-of", "csv=p=0", scene_file],
             capture_output=True, text=True
         )
-        return float(result.stdout.strip())
+        dur = float(result.stdout.strip())
+        if DRY_RUN:
+            _dur_cache[key] = dur
+            _dur_cache_dirty = True
+        return dur
     except:
         return None
 
@@ -86,6 +112,7 @@ with ThreadPoolExecutor(max_workers=WORKERS) as ex:
     for future in as_completed(futures):
         scene = futures[future]
         duration_map[scene] = future.result()
+
 
 
 def select_from_group(group_df):
@@ -157,6 +184,7 @@ if dual_cam:
     # ── Build absolute timestamp map from PySceneDetect CSVs ─────────────────
     # ts_map[scene_name] = seconds since midnight (day-relative, or since UTC epoch
     # when falling back to creation_time metadata — consistent within one day's footage)
+
     ts_map: dict[str, float] = {}
     _skipped_csvs: list[Path] = []   # CSVs whose stems had no filename timestamp
     if os.path.isdir(CSV_DIR):
@@ -341,6 +369,25 @@ if dual_cam:
     if no_match:
         print(f"  {no_match} main-cam scene(s) had no back-cam match within ±{TIMESTAMP_MATCH_SEC:.0f}s")
 
+    # ── Ensure back-cam scenes appear in chronological order ─────────────────
+    # VFR timebase inflation causes ts_map values to drift, so timestamp-based
+    # pairing may assign back-cam scenes from the same source file out of scene
+    # order.  Re-sort assignments within each source file so the video stays
+    # chronological even if individual pairings are approximate.
+    from collections import defaultdict
+    _back_src_idx: dict[str, list[int]] = defaultdict(list)
+    for _i, (_ms, _bs) in enumerate(paired):
+        if _bs is not None:
+            _src = _re.sub(r'-scene-\d+$', '', _bs[0])
+            _back_src_idx[_src].append(_i)
+    for _src, _idxs in _back_src_idx.items():
+        if len(_idxs) < 2:
+            continue
+        _back_tups = [paired[_i][1] for _i in _idxs]
+        _back_tups.sort(key=lambda t: int(_re.search(r'-scene-(\d+)$', t[0]).group(1)))
+        for _k, _i in enumerate(_idxs):
+            paired[_i] = (paired[_i][0], _back_tups[_k])
+
     # ── Interleave: main[0], back[0], main[1], back[1], … ───────────────────
     selected = []
     for ms, bs in paired:
@@ -400,9 +447,15 @@ def prepare_clip(scene, scene_file, duration, take, camera):
 total = sum(t for _, _, _, t, _, _ in selected)
 print(f"Threshold: {THRESHOLD}")
 print(f"Selected: {len(selected)} scenes")
-print(f"Total: {total:.1f}s ({total/60:.1f} min)")
+print(f"Total: {int(total//60)}:{int(total%60):02d} ({total:.1f}s)")
 
-DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
+# Persist all newly-probed durations (candidates + inflation probes) to cache
+if DRY_RUN and _dur_cache_dirty and _dur_cache_path:
+    try:
+        _dur_cache_path.write_text(_json.dumps(_dur_cache))
+    except Exception:
+        pass
+
 if DRY_RUN:
     sys.exit(0)
 

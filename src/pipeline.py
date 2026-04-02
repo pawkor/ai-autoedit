@@ -179,7 +179,7 @@ async def estimate(params: dict, work_dir: Path) -> dict:
     for ln in lines:
         m = re.search(r'^Selected:\s*(\d+)', ln)
         if m: scenes = int(m.group(1))
-        m = re.search(r'^Total:\s*([\d.]+)s', ln)
+        m = re.search(r'^Total:.*\(([\d.]+)s\)', ln) or re.search(r'^Total:\s*([\d.]+)s', ln)
         if m: dur = float(m.group(1))
         m = re.search(r'Main cam \([^)]+\):\s*(\d+)\s*scenes', ln)
         if m: main = int(m.group(1))
@@ -209,6 +209,42 @@ async def estimate(params: dict, work_dir: Path) -> dict:
         pass
 
     return result
+
+
+async def find_threshold_iter(params: dict, work_dir: Path, target_sec: float):
+    """
+    Async generator — yields progress dicts for each binary-search iteration,
+    then a final dict with done=True.
+    Each progress dict: {iteration, total, threshold, duration_sec, done=False}
+    Final dict: {done=True, threshold, duration_sec, scenes, main_scenes, cam_ratio} or {done=True, error=...}
+    """
+    MAX_ITER = 12
+    lo, hi = 0.0, 1.0
+    best: dict | None = None
+    best_diff = float("inf")
+
+    for i in range(MAX_ITER):
+        mid = round((lo + hi) / 2, 4)
+        r = await estimate({**params, "threshold": mid}, work_dir)
+        if not r:
+            yield {"done": True, "error": "No scores CSV — run analysis first"}
+            return
+        dur = r.get("duration_sec", 0)
+        diff = abs(dur - target_sec)
+        if diff < best_diff:
+            best_diff = diff
+            best = r
+        yield {"iteration": i + 1, "total": MAX_ITER, "threshold": mid,
+               "duration_sec": dur, "done": False}
+        if dur > target_sec:
+            lo = mid   # too long → raise threshold
+        else:
+            hi = mid   # too short → lower threshold
+
+    if best:
+        yield {**best, "done": True}
+    else:
+        yield {"done": True, "error": "No result"}
 
 
 async def run(params: dict, work_dir: Path,

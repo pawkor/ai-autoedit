@@ -45,7 +45,7 @@ PySceneDetect parameters — affect the cut detection stage. Changes require Re-
 |----------|--------------------|
 | Max scene sec | Maks. czas wycinany z jednej sceny (środek klipu). / Max seconds taken per scene (centred). |
 | Max per file sec | Maks. łączny czas z jednego pliku. Nadmiarowe sceny oznaczone jako „limit" w Gallery. / Max total seconds from one source file. Excess scenes shown as "limit" in Gallery. |
-| Target min | Docelowy czas highlight w minutach — używany przez przycisk ⟳ Fill. / Target highlight duration in minutes — used by the ⟳ Fill button. |
+| Target min | Docelowy czas highlight w minutach — używany przez automatyczne wyszukiwanie progu w Gallery i przycisk ⟳ Fill. / Target highlight duration in minutes — used by the Gallery auto threshold search and the ⟳ Fill button. |
 
 Przycisk **⟳ Fill** oblicza Max scene sec i Max per file sec automatycznie na podstawie liczby plików źródłowych i docelowego czasu.
 

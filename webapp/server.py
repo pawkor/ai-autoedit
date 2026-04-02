@@ -149,6 +149,10 @@ class Job:
 jobs: dict[str, Job] = {}
 job_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 
+# ── Threshold-search state (polling) ──────────────────────────────────────────
+_threshold_searches: dict[str, dict] = {}   # search_id → status dict
+_threshold_tasks:    dict[str, asyncio.Task] = {}  # search_id → running task
+
 # ── App ────────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="autoframe")
@@ -1411,6 +1415,51 @@ async def estimate_job(job_id: str, body: dict = Body({})):
     return result
 
 
+@app.post("/api/jobs/{job_id}/find-threshold")
+async def find_threshold_job(job_id: str, body: dict = Body({})):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is running")
+    target_sec = float(body.get("target_sec") or 0)
+    if target_sec <= 0:
+        raise HTTPException(400, "target_sec required")
+    merged = {**job.params, **body}
+    search_id = uuid.uuid4().hex[:12]
+    _threshold_searches[search_id] = {"done": False, "iteration": 0, "total": 12}
+
+    async def _run():
+        try:
+            async for update in pipeline.find_threshold_iter(merged, job.work_dir(), target_sec):
+                _threshold_searches[search_id] = update
+        except asyncio.CancelledError:
+            _threshold_searches[search_id] = {"done": True, "cancelled": True}
+        finally:
+            _threshold_tasks.pop(search_id, None)
+
+    task = asyncio.create_task(_run())
+    _threshold_tasks[search_id] = task
+    return {"search_id": search_id}
+
+
+@app.get("/api/threshold-search/{search_id}")
+async def get_threshold_search(search_id: str):
+    st = _threshold_searches.get(search_id)
+    if st is None:
+        raise HTTPException(404)
+    return st
+
+
+@app.delete("/api/threshold-search/{search_id}")
+async def cancel_threshold_search(search_id: str):
+    task = _threshold_tasks.pop(search_id, None)
+    if task and not task.done():
+        task.cancel()
+    _threshold_searches.pop(search_id, None)
+    return {"ok": True}
+
+
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str):
     job = jobs.get(job_id)
@@ -1456,7 +1505,7 @@ async def get_analyze_result(job_id: str):
         m = re.search(r'Selected:\s*(\d+)\s*scenes', line)
         if m:
             _actual_scenes = int(m.group(1))
-        m = re.search(r'Total:\s*([\d.]+)s', line)
+        m = re.search(r'Total:.*\(([\d.]+)s\)', line) or re.search(r'Total:\s*([\d.]+)s', line)
         if m:
             _actual_dur = float(m.group(1))
     if _actual_scenes is not None:
@@ -1697,6 +1746,7 @@ async def job_frames(job_id: str):
 
     # Normalize scores per-camera if dual-cam (mirrors select_scenes.py)
     cam_sources_csv = job.auto_dir() / "camera_sources.csv"
+    avg_back_cam_take_sec = None
     if cam_sources_csv.exists():
         cdf = pd.read_csv(cam_sources_csv)
         cam_map = dict(zip(cdf["source"], cdf["camera"]))
@@ -1711,7 +1761,25 @@ async def job_frames(job_id: str):
                     df.loc[idx, "score"] = 1.0
         df = df.rename(columns={"_camera": "camera"}).drop(columns=["_source"])
 
-    return [
+        # Compute avg back-cam clip take (capped at max_scene) for duration estimation
+        cam_a = str(job.params.get("cam_a") or "")
+        if not cam_a:
+            _cams = job.params.get("cameras") or []
+            if isinstance(_cams, str):
+                _cams = [c.strip() for c in _cams.split(",") if c.strip()]
+            cam_a = _cams[0] if _cams else ""
+        if cam_a:
+            max_scene_val = float(job.params.get("max_scene") or 10)
+            back_sources = {src for src, cam in cam_map.items() if cam != cam_a}
+            back_takes = [
+                min(dur, max_scene_val)
+                for name, dur in durations.items()
+                if re.sub(r"-scene-\d+$", "", name) in back_sources
+            ]
+            if back_takes:
+                avg_back_cam_take_sec = round(sum(back_takes) / len(back_takes), 2)
+
+    frames = [
         {
             "scene":     row["scene"],
             "score":     round(float(row["score"]), 4),
@@ -1722,6 +1790,7 @@ async def job_frames(job_id: str):
         }
         for _, row in df.iterrows()
     ]
+    return {"frames": frames, "back_cam": {"avg_take_sec": avg_back_cam_take_sec}}
 
 
 @app.get("/api/jobs/{job_id}/result")

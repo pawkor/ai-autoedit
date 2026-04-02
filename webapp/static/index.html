@@ -8,21 +8,45 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --bg:#0e0e0e; --bg2:#161616; --bg3:#1e1e1e; --border:#2a2a2a;
-  --text:#d4d4d4; --muted:#6b6b6b; --accent:#e07b39;
+  --text:#d4d4d4; --muted:#6b6b6b; --accent:#e07b39; --accent-text:#000;
   --green:#4ec94e; --red:#e05555; --yellow:#d4a017; --blue:#4e9de0;
   --font:'Consolas','Menlo',monospace;
+}
+html.theme-light {
+  --bg:#f0f0f0; --bg2:#e4e4e4; --bg3:#d8d8d8; --border:#bbbbbb;
+  --text:#1a1a1a; --muted:#777777; --accent:#c05a18; --accent-text:#fff;
+  --green:#2a7d2a; --red:#bb2e2e; --yellow:#8a6200; --blue:#1a60a0;
+}
+html.theme-gruvbox {
+  --bg:#282828; --bg2:#3c3836; --bg3:#504945; --border:#665c54;
+  --text:#ebdbb2; --muted:#928374; --accent:#fe8019; --accent-text:#282828;
+  --green:#b8bb26; --red:#fb4934; --yellow:#fabd2f; --blue:#83a598;
+}
+html.theme-nord {
+  --bg:#2e3440; --bg2:#3b4252; --bg3:#434c5e; --border:#4c566a;
+  --text:#eceff4; --muted:#7b88a8; --accent:#88c0d0; --accent-text:#2e3440;
+  --green:#a3be8c; --red:#bf616a; --yellow:#ebcb8b; --blue:#5e81ac;
+}
+html.theme-solarized {
+  --bg:#002b36; --bg2:#073642; --bg3:#0a4555; --border:#1a5c6f;
+  --text:#839496; --muted:#586e75; --accent:#cb4b16; --accent-text:#fdf6e3;
+  --green:#859900; --red:#dc322f; --yellow:#b58900; --blue:#268bd2;
 }
 html,body { height:100%; background:var(--bg); color:var(--text); font-family:var(--font); font-size:13px; }
 
 /* ── Layout ── */
-#app { display:flex; height:100vh; }
+#app { display:flex; flex-direction:column; height:100vh; }
+#app-body { display:flex; flex:1; overflow:hidden; }
+#app-footer { flex-shrink:0; padding:5px 12px; border-top:1px solid var(--border); background:var(--bg2); font-size:10px; color:var(--muted); display:flex; gap:6px; align-items:center; }
+#app-footer a { color:var(--muted); text-decoration:none; }
+#app-footer a:hover { color:var(--accent); }
 #sidebar { width:260px; min-width:260px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
 #sidebar-header { padding:12px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; }
 #sidebar-header h1 { flex:1; font-size:14px; color:var(--accent); letter-spacing:1px; line-height:1.2; }
 .icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:13px; }
 .icon-btn:hover { border-color:var(--accent); color:var(--accent); }
 #sidebar-new-row { padding:8px 10px; border-bottom:1px solid var(--border); }
-#btn-new { width:100%; background:var(--accent); color:#000; border:none; padding:5px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
+#btn-new { width:100%; background:var(--accent); color:var(--accent-text); border:none; padding:5px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
 #btn-new:hover { opacity:.85; }
 #job-list { flex:1; overflow-y:auto; }
 .job-item { padding:9px 10px; border-bottom:1px solid var(--border); cursor:pointer; position:relative; }
@@ -61,8 +85,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .ff label[data-tip]::after {
   content: attr(data-tip);
   position:absolute; left:0; top:calc(100% + 4px);
-  background:#1a1a1a; border:1px solid var(--border);
-  color:var(--text); padding:7px 9px; font-size:11px; line-height:1.5;
+  background:#1a1a1a; border:1px solid #333;
+  color:#d4d4d4; padding:7px 9px; font-size:11px; line-height:1.5;
   white-space:pre-line; width:240px; border-radius:3px; z-index:200;
   opacity:0; pointer-events:none;
   transition:opacity 0.15s; transition-delay:0s;
@@ -148,7 +172,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .modal-header { padding:12px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-size:13px; color:var(--accent); letter-spacing:1px; }
 .modal-body { padding:16px 14px; display:flex; flex-direction:column; gap:12px; }
 .modal-footer { padding:10px 14px; border-top:1px solid var(--border); display:flex; gap:7px; justify-content:flex-end; }
-.btn-primary { background:var(--accent); color:#000; border:none; padding:6px 16px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; border-radius:3px; }
+.btn-primary { background:var(--accent); color:var(--accent-text); border:none; padding:6px 16px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; border-radius:3px; }
 .btn-primary:hover { opacity:.85; }
 #settings-note { font-size:10px; color:var(--muted); margin-top:-6px; }
 
@@ -219,8 +243,9 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .thresh-btn:hover { border-color:var(--accent); color:var(--accent); }
 #gallery-status { display:flex; align-items:center; gap:10px; padding:6px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; font-size:11px; }
 #gallery-stats-text { flex:1; color:var(--muted); }
-#sidebar-sort { font-size:10px; color:var(--muted); padding:2px 6px; background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; }
-#sidebar-sort:hover { border-color:var(--accent); color:var(--accent); }
+#sidebar-sort, #sidebar-theme { font-size:10px; color:var(--muted); padding:2px 6px; background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; width:100%; }
+#sidebar-sort:hover, #sidebar-theme:hover { border-color:var(--accent); color:var(--accent); }
+#sidebar-btns { display:flex; flex-direction:column; gap:3px; }
 #frames-scroll { flex:1; overflow-y:scroll; padding:14px; }
 #frames-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .fc { border:1px solid var(--border); border-radius:3px; overflow:hidden; transition:border-color .15s; }
@@ -231,8 +256,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .fc.manual.included { border-color:#4af; border-style:dashed; }
 .fc.manual.excluded { border:2px dashed #f64; }
 .fc.manual.excluded img { opacity:.2; }
-.fc-limit-badge { font-size:9px; color:#b8860b; background:#2a1f00; border:1px solid #b8860b; border-radius:2px; padding:0 3px; margin-left:4px; flex-shrink:0; }
-.fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#111; transition:opacity .15s; }
+.fc-limit-badge { font-size:9px; color:var(--yellow); background:var(--bg); border:1px solid var(--yellow); border-radius:2px; padding:0 3px; margin-left:4px; flex-shrink:0; }
+.fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:var(--bg3); transition:opacity .15s; }
 .fc-info { padding:3px 6px; display:flex; justify-content:space-between; align-items:baseline; font-size:12px; background:var(--bg2); }
 .fc-score { color:var(--accent); flex-shrink:0; }
 .fc-dur   { color:var(--muted); font-size:10px; flex-shrink:0; margin-left:4px; }
@@ -308,12 +333,16 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 </head>
 <body>
 <div id="app">
+<div id="app-body">
 
 <!-- Sidebar -->
 <div id="sidebar">
   <div id="sidebar-header">
     <h1>AI<br>autoedit</h1>
-    <button id="sidebar-sort" onclick="toggleSortOrder()" data-i18n="misc.newest">newest</button>
+    <div id="sidebar-btns">
+      <button id="sidebar-sort" onclick="toggleSortOrder()" data-i18n="misc.newest">newest</button>
+      <button id="sidebar-theme" onclick="toggleTheme()">dark</button>
+    </div>
     <span id="lang-switcher">
       <span class="lang-btn" data-lang="en" onclick="setLang('en')">en</span>
       <span style="color:var(--border)">/</span>
@@ -529,13 +558,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <div id="gallery-panel">
         <div id="gallery-header">
           <div id="threshold-bar">
-            <label data-i18n="lbl.threshold_gallery">Threshold</label>
-            <button class="thresh-btn" onclick="stepThreshold(-0.001)" title="-0.001">▼</button>
-            <input type="number" id="threshold-val" value="0.148" step="0.001" min="0" max="1"
-              onchange="onThresholdEdit()" onkeydown="if(event.key==='Enter'){onThresholdEdit();this.blur()}">
-            <button class="thresh-btn" onclick="stepThreshold(+0.001)" title="+0.001">▲</button>
-            <button class="thresh-btn" onclick="resetThreshold()" title="Reset to auto threshold" style="margin-left:4px;width:auto;padding:0 6px;font-size:11px">↺ Reset</button>
-            <span style="font-size:11px;color:var(--muted);margin-left:8px">Target dur.</span>
+            <input type="hidden" id="threshold-val" value="0.148">
+            <span style="font-size:11px;color:var(--muted)">Target dur.</span>
             <input type="text" id="gallery-target-min" value="6:00" inputmode="numeric"
               title="Target highlight duration (M:SS or minutes) — Enter or blur to find matching threshold"
               style="width:44px;margin-left:4px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:2px 4px;border-radius:3px;font-size:12px;font-family:var(--font);outline:none;text-align:center"
@@ -544,6 +568,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               onfocus="this.select()">
             <span style="font-size:11px;color:var(--muted)">min</span>
             <span id="target-dur-warn" style="font-size:11px;margin-left:6px;display:none"></span>
+            <button class="btn-sm" style="margin-left:6px;padding:1px 6px;font-size:11px" title="Clear manual overrides and re-run target search" onclick="resetThreshold()">↺</button>
             <span style="margin-left:8px;color:var(--muted);font-size:11px">Filter:</span>
             <input class="gf-filter-input" id="filter-score" type="text" placeholder="score" title="Score prefix — Enter to apply (e.g. 0.8 → 0.800–0.899)"
               onkeydown="if(event.key==='Enter'){onGalleryFilter();this.blur()}"
@@ -553,7 +578,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               onblur="onGalleryFilter()">
           </div>
           <div id="gallery-status" style="margin-top:2px">
-            <span id="gallery-stats-text">—</span>
+            <span id="gallery-stats-text" style="flex:1;min-width:0">—</span>
             <button id="btn-gallery-to-music" class="btn-sm" style="display:none;margin-left:auto" data-i18n="btn.to_music" onclick="switchTab('music')">→ Music</button>
           </div>
         </div>
@@ -604,6 +629,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
             <select id="music-genre" onchange="renderMusicList()"><option value="">all genres</option></select>
             <button class="btn-sm" data-i18n="btn.all" onclick="setAllMusic(true)">All</button>
             <button class="btn-sm" data-i18n="btn.none" onclick="setAllMusic(false)">None</button>
+            <button class="btn-sm" id="btn-set-target-dur" title="Set Target dur. from selected track" onclick="setTargetFromSelectedTrack()" style="display:none">→ Target dur.</button>
             <span id="music-count">—</span>
           </div>
         </div>
@@ -632,7 +658,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
             <div>Scenes detected: <span id="sum-scene-count" style="color:var(--accent)">—</span></div>
             <div>Scenes selected: <span id="sum-scene-selected" style="color:var(--accent)">—</span></div>
-            <div>Threshold:       <span id="sum-threshold"   style="color:var(--accent)">—</span></div>
+            <div>Scoring:         <span id="sum-threshold"   style="color:var(--accent)">—</span></div>
             <div>Est. duration:   <span id="sum-duration"    style="color:var(--accent)">—</span></div>
           </div>
         </div>
@@ -667,6 +693,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
   </div>
 
 </div><!-- /main -->
+</div><!-- /app-body -->
+<div id="app-footer"><a href="/static/license.html" target="_blank">Licencja / License</a><span>,</span><a href="/static/privacy.html" target="_blank">Prywatność / Privacy</a></div>
 </div><!-- /app -->
 
 <!-- Files browser modal -->
@@ -775,6 +803,17 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <div id="settings-note" data-i18n="misc.settings_note">Changes to max concurrent jobs require server restart.</div>
       <hr style="border-color:var(--border);margin:12px 0">
       <div class="ff">
+        <label>Theme</label>
+        <select id="s-theme" onchange="applyTheme(this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none">
+          <option value="dark">dark</option>
+          <option value="light">light</option>
+          <option value="gruvbox">gruvbox</option>
+          <option value="nord">nord</option>
+          <option value="solarized">solarized</option>
+        </select>
+      </div>
+      <hr style="border-color:var(--border);margin:12px 0">
+      <div class="ff">
         <label>YouTube</label>
         <div id="yt-connect-row" style="display:flex;align-items:center;gap:8px;margin-top:4px">
           <span id="yt-status-dot" style="font-size:11px;color:var(--muted)">…</span>
@@ -871,10 +910,10 @@ const TRANS = {
       // labels
       'lbl.working_dir':     'Working directory',
       'lbl.cam_subfolders':  'Camera subfolders (A = audio source)',
-      'lbl.threshold':       'Threshold',
+      'lbl.threshold':       'Scoring',
       'lbl.max_scene':       'Max scene sec',
       'lbl.per_file':        'Max per file sec',
-      'lbl.threshold_gallery':'Threshold',
+      'lbl.threshold_gallery':'Scoring',
       'lbl.title_long':      'Title (each line = one text line on intro card)',
       'lbl.title_short':     'Title',
       'lbl.music_dir_label': 'Music directory',
@@ -970,10 +1009,10 @@ const TRANS = {
       // labels
       'lbl.working_dir':     'Katalog roboczy',
       'lbl.cam_subfolders':  'Podfoldery kamer (A = źródło audio)',
-      'lbl.threshold':       'Próg',
+      'lbl.threshold':       'Scoring',
       'lbl.max_scene':       'Max czas sceny (s)',
       'lbl.per_file':        'Max czas z pliku (s)',
-      'lbl.threshold_gallery':'Próg',
+      'lbl.threshold_gallery':'Scoring',
       'lbl.title_long':      'Tytuł (każda linia = osobna linia na planszy intro)',
       'lbl.title_short':     'Tytuł',
       'lbl.music_dir_label': 'Folder z muzyką',
@@ -1083,8 +1122,10 @@ const api = {
 
 let currentJobId=null, jobWs=null, statsWs=null, elapsedTimer=null;
 let browsePath=null, framesData=[], manualOverrides={};
-let jobSortNewest=true, currentJobMaxScene=null, currentJobPerFile=null, currentJobMinTake=0.5;
+let jobSortNewest = localStorage.getItem('jobSortNewest') !== 'false';
+let currentJobMaxScene=null, currentJobPerFile=null, currentJobMinTake=0.5;
 let _overridesChangedSinceRender = false;
+let _avgBackCamTakeSec = null; // avg back-cam clip take (pre-capped), loaded with /frames
 let _perFileCuts = new Set();
 let _balancedScenes = null; // Set<scene> when dual-cam active, null = single-cam / not needed
 let _filterScore = '', _filterTime = '';
@@ -1098,6 +1139,25 @@ let _musicSort = { key: null, asc: true };
 let _galleryThreshold = null; // user-set threshold; null = not yet loaded
 let _autoFillOverrides = new Set(); // scenes force-included by autoTargetThreshold fill
 let _thresholdSaveTimer = null;
+let _targetAbortController = null; // AbortController for find-threshold request
+let _targetSearchActive = false;   // true while binary search is running
+
+function _setGallerySearchStatus(iter, total) {
+  // Render inline progress bar + label into gallery-stats-text.
+  // iter=null → reset to plain '—'; iter=0 → "scanning…"; iter>0 → "N/M"
+  const el = document.getElementById('gallery-stats-text');
+  if (!el) return;
+  if (iter === null) { el.textContent = '—'; return; }
+  const pct   = total > 0 ? Math.round(iter / total * 100) : 0;
+  const label = iter > 0 ? `${iter}/${total}` : 'scanning…';
+  el.innerHTML =
+    `<span style="display:inline-flex;align-items:center;gap:6px;width:100%">` +
+    `<span style="flex:1;height:4px;border-radius:2px;overflow:hidden;background:var(--bg3);display:inline-block;vertical-align:middle">` +
+    `<span style="display:block;height:100%;width:${pct}%;background:var(--accent);border-radius:2px;transition:width .25s ease"></span>` +
+    `</span>` +
+    `<span style="font-size:10px;color:var(--muted);white-space:nowrap">${label}</span>` +
+    `</span>`;
+}
 let _renderTotalSec = null;
 let _audioPlayer = null, _playingFile = null, _seekTimer = null;
 
@@ -1145,9 +1205,28 @@ function showWelcome() { showView('welcome'); }
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function toggleSortOrder() {
   jobSortNewest = !jobSortNewest;
+  localStorage.setItem('jobSortNewest', jobSortNewest);
   const t = TRANS[currentLang]?.labels;
   document.getElementById('sidebar-sort').textContent = t?.[jobSortNewest ? 'misc.newest' : 'misc.oldest'] || (jobSortNewest ? 'newest' : 'oldest');
   refreshJobList();
+}
+
+const THEMES = ['dark', 'light', 'gruvbox', 'nord', 'solarized'];
+let currentTheme = localStorage.getItem('theme') || 'dark';
+
+function applyTheme(name) {
+  if (!THEMES.includes(name)) name = 'dark';
+  currentTheme = name;
+  THEMES.forEach(t => document.documentElement.classList.remove('theme-' + t));
+  if (name !== 'dark') document.documentElement.classList.add('theme-' + name);
+  const btn = document.getElementById('sidebar-theme');
+  if (btn) btn.textContent = name;
+  const sel = document.getElementById('s-theme');
+  if (sel) sel.value = name;
+  localStorage.setItem('theme', name);
+}
+function toggleTheme() {
+  applyTheme(THEMES[(THEMES.indexOf(currentTheme) + 1) % THEMES.length]);
 }
 
 async function refreshJobList() {
@@ -1178,6 +1257,7 @@ async function refreshJobList() {
 setInterval(refreshJobList, 3000);
 refreshJobList();
 setLang(currentLang);
+applyTheme(localStorage.getItem('theme') || 'dark');
 
 // Hide S3 UI rows if S3 is not configured
 (async () => {
@@ -1282,6 +1362,7 @@ async function openJob(jobId) {
   currentJobMinTake  = 0.5;
   _perFileCuts = new Set();
   _balancedScenes = null;
+  _avgBackCamTakeSec = null;
   _filterScore = ''; _filterTime = '';
   const _fsi = document.getElementById('filter-score'); if (_fsi) _fsi.value = '';
   const _fti = document.getElementById('filter-time');  if (_fti) _fti.value = '';
@@ -1362,6 +1443,12 @@ async function openJob(jobId) {
   connectJobWs(jobId, job.started_at);
 
   if (job.status === 'done' || job.status === 'failed' || jobPhase === 'analyzed') {
+    // If this job has a target duration, mark search as pending NOW — before loadFrames
+    // even fires — so that switchTab('gallery') shows the progress bar immediately.
+    if (parseFloat(job.params.target_minutes) > 0) {
+      _targetSearchActive = true;
+      _setGallerySearchStatus(0, 12);
+    }
     loadFrames(jobId);
     loadAnalyzeResult(jobId);
   }
@@ -1668,8 +1755,15 @@ function switchTab(name) {
     if (_galleryThreshold !== null)
       document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
     _syncThresholdDisplay();
-    if (framesData.length) { if (_galleryDirty) { renderGallery(); calculateGalleryStats(); } }
-    else loadFrames(currentJobId);
+    if (_targetSearchActive) {
+      // Binary search running — ensure progress indicator is visible.
+      _setGallerySearchStatus(0, 12);
+      if (framesData.length && _galleryDirty) renderGallery();
+    } else if (framesData.length) {
+      if (_galleryDirty) { renderGallery(); calculateGalleryStats(); }
+    } else {
+      loadFrames(currentJobId);
+    }
   }
   if (name==='music' && currentJobId) {
     const _doMusic = () => { if (!musicTracks.length) loadMusicTracks(); else renderMusicList(); };
@@ -1688,10 +1782,12 @@ async function loadFrames(jobId) {
     api.get(`/api/jobs/${jobId}/frames`),
     api.get(`/api/jobs/${jobId}`),
   ]);
-  if (!data?.length) return;
+  const frames = data?.frames ?? data;  // handle {frames,back_cam} or legacy array
+  if (!frames?.length) return;
   // Guard: ignore stale response if user switched to another job
   if (currentJobId !== jobId) return;
-  framesData = data;
+  framesData = frames;
+  _avgBackCamTakeSec = data?.back_cam?.avg_take_sec ?? null;
   // Ensure caps are set from job params (guards against populateJobSettings race)
   if (job?.params?.max_scene != null) currentJobMaxScene = parseFloat(job.params.max_scene);
   if (job?.params?.per_file  != null) currentJobPerFile  = parseFloat(job.params.per_file);
@@ -1706,7 +1802,11 @@ async function loadFrames(jobId) {
   }
   const targetMin = job?.params?.target_minutes ? parseFloat(job.params.target_minutes) : null;
   if (targetMin && targetMin > 0) {
-    // Target duration takes precedence over saved threshold — auto-find the right threshold.
+    // Apply saved threshold immediately for instant display, then refine via binary search.
+    if (threshold) {
+      _galleryThreshold = parseFloat(threshold);
+      document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
+    }
     autoTargetThreshold(targetMin);
   } else if (threshold) {
     _galleryThreshold = parseFloat(threshold);
@@ -2021,6 +2121,15 @@ function _estimateDuration(scenes) {
   return total;
 }
 
+// Convert main-cam duration + main-cam scene count to total (all cams) duration.
+// _avgBackCamTakeSec is the avg capped back-cam clip take, loaded from /frames.
+// cam_ratio - 1 = back-cam scenes per main-cam scene (pairing rate).
+function _estimateTotalDuration(mainDur, mainCount) {
+  const camRatio = analyzeResult?.cam_ratio ?? 1.0;
+  if (camRatio <= 1.0 || _avgBackCamTakeSec == null) return mainDur * camRatio;
+  return mainDur + mainCount * (camRatio - 1) * _avgBackCamTakeSec;
+}
+
 function _balancedEstimate() {
   // _computeBalancedScenes() already ran (called from _computePerFileCuts).
   // isIncluded() now reflects camera balance, so just filter directly.
@@ -2034,20 +2143,16 @@ function _balancedEstimate() {
   const estAll  = analyzeResult?.estimated_scenes || 0;
   const estDur  = analyzeResult?.estimated_duration_sec || 0;
   let duration, scaledCount;
-  if (estAll > 0 && estDur > 0) {
-    const factor = balanced.length / estAll;
-    duration    = estDur  * factor;
-    scaledCount = balanced.length;
-  } else {
-    // No server dry-run yet — compute directly from frame durations.
-    // _estimateDuration already covers all cams; no camRatio needed.
-    duration    = _estimateDuration(balanced);
+  {
+    const mainDur = _estimateDuration(balanced);
+    duration    = _estimateTotalDuration(mainDur, balanced.length);
     scaledCount = balanced.length;
   }
-  return { scenes: balanced, duration, scaledCount, camRatio };
+  return { scenes: balanced, duration, scaledCount, camRatio: analyzeResult?.cam_ratio ?? 1.0 };
 }
 
 function calculateGalleryStats() {
+  if (_targetSearchActive) return; // progress bar is shown; don't overwrite with stale estimate
   // If actual render data matches current threshold and no overrides, show actual values
   const v = _galleryThreshold;
   const actualThr = analyzeResult?.actual_threshold ?? analyzeResult?.auto_threshold;
@@ -2132,6 +2237,7 @@ function _scheduleEstimate() {
       analyzeResult.auto_threshold          = res.threshold;
       _syncThresholdDisplay();
       calculateGalleryStats();
+
     }
   }, 900);
 }
@@ -2213,15 +2319,9 @@ function _durationAtThreshold(thr) {
   _computePerFileCuts(); // updates _perFileCuts + _balancedScenes for this thr
 
   const balanced = framesData.filter(f => isIncluded(f));
-  // Must mirror _balancedEstimate() exactly — same fix: use estAll, not estMain.
-  const estAll  = analyzeResult?.estimated_scenes || 0;
-  const estDur  = analyzeResult?.estimated_duration_sec || 0;
-  let dur;
-  if (estAll > 0 && estDur > 0) {
-    dur = estDur * (balanced.length / estAll);
-  } else {
-    dur = _estimateDuration(balanced);
-  }
+  // Must mirror _balancedEstimate() exactly.
+  const mainDur = _estimateDuration(balanced);
+  const dur = _estimateTotalDuration(mainDur, balanced.length);
 
   _galleryThreshold = savedThr;
   _balancedScenes   = savedBalanced;
@@ -2230,75 +2330,102 @@ function _durationAtThreshold(thr) {
   return dur;
 }
 
-function autoTargetThreshold(targetMin) {
-  if (!framesData.length || !targetMin || targetMin <= 0) return;
-  const targetSec = targetMin * 60;  // targetMin is always decimal minutes
+async function autoTargetThreshold(targetMin) {
+  if (!framesData.length || !targetMin || targetMin <= 0 || !currentJobId) return;
+  const targetSec = targetMin * 60;
   const warnEl = document.getElementById('target-dur-warn');
+
+  // Abort any in-flight search
+  if (_targetAbortController) { _targetAbortController.abort(); _targetAbortController = null; }
+  const ctrl = new AbortController();
+  _targetAbortController = ctrl;
 
   // Clear any overrides we auto-added in a previous fill run
   for (const scene of _autoFillOverrides) delete manualOverrides[scene];
   _autoFillOverrides.clear();
 
-  const maxDur = _durationAtThreshold(0); // max achievable (all scenes, T=0)
+  // Persist target to config and job params
+  const wd = document.getElementById('js-workdir')?.value.trim();
+  if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: targetMin });
+  if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { target_minutes: targetMin });
+
+  // Show progress indicator in stats text
+  _targetSearchActive = true;
+  _setGallerySearchStatus(0, 12);
+  if (warnEl)  { warnEl.textContent = ''; warnEl.style.display = 'none'; }
+
+  const ms = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value) || 10;
+  const pf = currentJobPerFile  || parseFloat(document.getElementById('js-per-file')?.value)  || 45;
+
+
+  let res = null;
+  let _searchId = null;
+  try {
+    const r = await fetch(`/api/jobs/${currentJobId}/find-threshold`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_sec: targetSec, max_scene: ms, per_file: pf }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) { res = null; return; }
+    const startData = await r.json();
+    _searchId = startData.search_id;
+    if (!_searchId) { res = null; return; }
+
+    // Poll until done
+    while (true) {
+      if (ctrl.signal.aborted) break;
+      await new Promise(ok => setTimeout(ok, 400));
+      if (ctrl.signal.aborted) break;
+      const pr = await fetch(`/api/threshold-search/${_searchId}`, { signal: ctrl.signal });
+      if (!pr.ok) break;
+      const msg = await pr.json();
+      if (!msg.done) {
+        _setGallerySearchStatus(msg.iteration || 0, msg.total || 12);
+      } else {
+        res = (msg.error || msg.cancelled) ? null : msg;
+        break;
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return; // superseded by newer request — exit silently
+  } finally {
+    _targetSearchActive = false;
+    if (_searchId) fetch(`/api/threshold-search/${_searchId}`, { method: 'DELETE' }).catch(() => {});
+    if (_targetAbortController === ctrl) _targetAbortController = null;
+    // Stats text will be restored by calculateGalleryStats() called from _applyThreshold
+    // (or remains as last search state until then — reset here as fallback)
+    _setGallerySearchStatus(null, 0);
+  }
 
   let warnMsg = '';
 
-  if (maxDur > 0 && targetSec > maxDur) {
-    // Target unreachable — set T=0 then fill up with best remaining scenes
-    const maxSec = currentJobMaxScene ||
-      parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
-
-    // Set threshold to 0, rebuild balanced/perfile state
-    _galleryThreshold = 0;
-    _computePerFileCuts();
-
-    // Compute how much duration the balanced selection already covers
-    let curDur = 0;
-    for (const f of framesData) {
-      if (isIncluded(f)) curDur += Math.min(f.duration ?? maxSec, maxSec);
-    }
-
-    // Candidates: scenes not yet included (excluded only by camera balance / per-file),
-    // sorted by score descending (highest quality = closest to any meaningful threshold)
-    const candidates = framesData
-      .filter(f => !isIncluded(f) && manualOverrides[f.scene] !== 'exclude')
-      .sort((a, b) => b.score - a.score);
-
-    for (const f of candidates) {
-      if (curDur >= targetSec) break;
-      const contrib = Math.min(f.duration ?? maxSec, maxSec);
-      manualOverrides[f.scene] = 'include';
-      _autoFillOverrides.add(f.scene);
-      curDur += contrib;
-    }
-
-    saveOverrides();
-
-    // Show how close we got
-    const gotMin = Math.floor(curDur / 60);
-    const gotS   = Math.round(curDur % 60);
-    const maxMin = Math.floor(maxDur / 60);
-    const maxS   = Math.round(maxDur % 60);
-    if (curDur < targetSec) {
-      warnMsg = `⚠ max ~${gotMin}:${String(gotS).padStart(2,'0')} (filled all)`;
-    } else {
-      warnMsg = `↑ filled to ~${gotMin}:${String(gotS).padStart(2,'0')} (base ~${maxMin}:${String(maxS).padStart(2,'0')})`;
-    }
-
-    document.getElementById('threshold-val').value = '0.000';
-    _applyThreshold(0);
-
-  } else {
-    // Target is achievable — binary search for the right threshold
-    let lo = 0.0, hi = 1.0;
-    for (let i = 0; i < 50; i++) {
-      const mid = (lo + hi) / 2;
-      if (_durationAtThreshold(mid) > targetSec) lo = mid;
-      else hi = mid;
-    }
-    const thr = Math.round((lo + hi) / 2 * 1000) / 1000;
+  if (res?.threshold != null) {
+    const thr = Math.round(res.threshold * 1000) / 1000;
     document.getElementById('threshold-val').value = thr.toFixed(3);
+
+    // Ensure analyzeResult exists — may be null if loadAnalyzeResult raced with binary search
+    if (!analyzeResult) analyzeResult = {};
+    analyzeResult.estimated_scenes       = res.scenes;
+    analyzeResult.estimated_duration_sec = res.duration_sec;
+    analyzeResult.estimated_main_scenes  = res.main_scenes;
+    analyzeResult.cam_ratio              = res.cam_ratio;
+    analyzeResult.auto_threshold         = thr;
+
     _applyThreshold(thr);
+    // Immediate save to config.ini (no debounce) so render uses the found threshold
+    if (currentJobId) {
+      api.patch(`/api/jobs/${currentJobId}/params`, { threshold: thr });
+      const wd2 = document.getElementById('js-workdir')?.value.trim();
+      if (wd2) api.put('/api/job-config', { work_dir: wd2, threshold: thr });
+    }
+
+    if (res.duration_sec < targetSec - 10) {
+      const gotMin = Math.floor(res.duration_sec / 60), gotS = Math.round(res.duration_sec % 60);
+      warnMsg = `⚠ max ~${gotMin}:${String(gotS).padStart(2,'0')}`;
+    }
+  } else if (res !== null) {
+    warnMsg = '⚠ search failed';
   }
 
   if (warnEl) {
@@ -2306,22 +2433,20 @@ function autoTargetThreshold(targetMin) {
     warnEl.style.display = warnMsg ? '' : 'none';
     warnEl.style.color = warnMsg ? '#d4a017' : '';
   }
-
-  // Persist target to config
-  const wd = document.getElementById('js-workdir')?.value.trim();
-  if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: targetMin });
 }
 
 function resetThreshold() {
-  const auto = analyzeResult?.auto_threshold;
-  if (!auto) return;
-  const inp = document.getElementById('threshold-val');
-  inp.value = parseFloat(auto).toFixed(3);
-  _galleryThreshold = parseFloat(auto);
   manualOverrides = {};
   _autoFillOverrides.clear();
   saveOverrides();
-  _applyThreshold(_galleryThreshold);
+  const targetMin = _parseTargetInput(document.getElementById('gallery-target-min')?.value) / 60;
+  if (targetMin > 0) {
+    autoTargetThreshold(targetMin);
+  } else if (analyzeResult?.auto_threshold) {
+    _galleryThreshold = parseFloat(analyzeResult.auto_threshold);
+    document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
+    _applyThreshold(_galleryThreshold);
+  }
 }
 
 let _thresholdRafId = null;
@@ -2381,12 +2506,9 @@ async function loadMusicTracks() {
   renderMusicList();
 }
 
-const MUSIC_DUR_TOL = 5; // seconds ±
-
-function _trackVisible(t, filter, genre, targetDur) {
+function _trackVisible(t, filter, genre) {
   if (filter && !t.title.toLowerCase().includes(filter)) return false;
   if (genre && (t.genre || '').toLowerCase() !== genre) return false;
-  if (targetDur && t.duration && Math.abs(t.duration - targetDur) > MUSIC_DUR_TOL) return false;
   return true;
 }
 
@@ -2403,7 +2525,24 @@ function sortMusic(key) {
 }
 
 function _sortedTracks(tracks) {
-  if (!_musicSort.key) return tracks;
+  const targetFromInput = _parseTargetInput(document.getElementById('gallery-target-min')?.value);
+  const targetDur = (targetFromInput > 0 ? targetFromInput : null)
+    ?? analyzeResult?._live_est_dur
+    ?? analyzeResult?.estimated_duration_sec
+    ?? 0;
+  if (!_musicSort.key) {
+    // Default: sort by closeness to target duration, alternating longer/shorter
+    // Order: exact → +1s → -1s → +2s → -2s → ...
+    if (!targetDur) return tracks;
+    return [...tracks].sort((a, b) => {
+      const da = (a.duration || 0) - targetDur;
+      const db = (b.duration || 0) - targetDur;
+      const absDa = Math.abs(da), absDb = Math.abs(db);
+      if (absDa !== absDb) return absDa - absDb;
+      // same absolute diff: longer before shorter
+      return db - da;
+    });
+  }
   return [...tracks].sort((a, b) => {
     let va, vb;
     if (_musicSort.key === 'title')  { va = (a.artist || '') + a.title; vb = (b.artist || '') + b.title; }
@@ -2420,11 +2559,10 @@ function renderMusicList() {
   const list = document.getElementById('music-list');
   const filter = document.getElementById('music-filter').value.toLowerCase();
   const genre  = document.getElementById('music-genre').value.toLowerCase();
-  const minDur = analyzeResult?._live_est_dur ?? analyzeResult?.estimated_duration_sec ?? 0;
   const frag = document.createDocumentFragment();
   let shown = 0;
   for (const t of _sortedTracks(musicTracks)) {
-    if (!_trackVisible(t, filter, genre, minDur)) continue;
+    if (!_trackVisible(t, filter, genre)) continue;
     shown++;
     const row = document.createElement('div');
     row.className = 'mt';
@@ -2447,6 +2585,7 @@ function renderMusicList() {
       }
       updateMusicCount(shown);
       updatePhaseUI();
+      if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { music_files: [...musicSelected] });
     });
     const titleWrap = document.createElement('span');
     titleWrap.className = 'mt-title';
@@ -2498,11 +2637,11 @@ function renderMusicList() {
 
 function updateMusicCount(shown) {
   const s = musicSelected.size, t = musicTracks.length;
-  const minDur = analyzeResult?._live_est_dur ?? analyzeResult?.estimated_duration_sec ?? 0;
-  const durFilter = minDur ? ` ~${fmtDur(minDur)}±${MUSIC_DUR_TOL}s` : '';
-  const shownTxt = (shown != null && shown !== t) ? ` · ${shown} shown${durFilter}` : '';
+  const shownTxt = (shown != null && shown !== t) ? ` · ${shown} shown` : '';
   const allTxt = s === 0 && t > 0 ? ' (no filter = all)' : '';
   document.getElementById('music-count').textContent = `${s} / ${t} selected${shownTxt}${allTxt}`;
+  const btnTgt = document.getElementById('btn-set-target-dur');
+  if (btnTgt) btnTgt.style.display = s === 1 ? '' : 'none';
 }
 
 async function rebuildMusicIndex() {
@@ -2561,13 +2700,30 @@ async function rebuildMusicIndex() {
 function setAllMusic(checked) {
   const filter = document.getElementById('music-filter').value.toLowerCase();
   const genre  = document.getElementById('music-genre').value.toLowerCase();
-  const minDur = analyzeResult?._live_est_dur ?? analyzeResult?.estimated_duration_sec ?? 0;
   for (const t of musicTracks) {
-    if (!_trackVisible(t, filter, genre, minDur)) continue;
+    if (!_trackVisible(t, filter, genre)) continue;
     if (checked) musicSelected.add(t.file);
     else musicSelected.delete(t.file);
   }
   renderMusicList();
+}
+
+function setTargetFromSelectedTrack() {
+  if (musicSelected.size === 0) return;
+  const file = [...musicSelected][0];
+  const track = musicTracks.find(t => t.file === file);
+  if (!track?.duration) return;
+  const mins = track.duration / 60;
+  const mm = Math.floor(mins), ss = Math.round((mins - mm) * 60);
+  const inp = document.getElementById('gallery-target-min');
+  if (inp) {
+    inp.value = `${mm}:${String(ss).padStart(2,'0')}`;
+  }
+  autoTargetThreshold(mins);
+  const wd = document.getElementById('js-workdir')?.value.trim();
+  if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: mins });
+  if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { target_minutes: mins });
+  switchTab('gallery');
 }
 
 async function populateJobSettings(params) {
