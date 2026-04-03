@@ -57,6 +57,32 @@ Progres uploadu widoczny w czasie rzeczywistym w modalu.
 
 Upload progress is shown in real time in the modal.
 
+---
+
+## Upload YouTube Shorts / YouTube Shorts upload
+
+![Modal uploadu Shorts](img/AI-autoedit-results-short-upload.png)
+
+Pliki z `short` w nazwie (np. `2025-04-Grecja-04.21-short_v01.mp4`) wyświetlają przycisk **▲ YT Shorts** zamiast **▲ YT**.
+
+Files with `short` in the name (e.g. `2025-04-Grecja-04.21-short_v01.mp4`) show a **▲ YT Shorts** button instead of **▲ YT**.
+
+| Pole | Opis |
+|------|------|
+| Title | Pre-filled z `[job] title` z config.ini projektu |
+| Description | Tytuł + link do głównego filmu + hashtagi + link GitHub + ↺ Claude |
+| Privacy | public / unlisted / private (domyślnie public) |
+
+Upload jest **zablokowany** jeśli główny film nie ma jeszcze opublikowanego URL na YouTube (wymagany najpierw upload pełnego highlight). Po opublikowaniu głównego filmu opis Shorta automatycznie zawiera `Full video: https://youtu.be/...`.
+
+Upload is **blocked** if the main video has no YouTube URL yet. Once the full highlight is published, the Short description auto-includes `Full video: https://youtu.be/...`.
+
+Footer: `#shorts #motorcycle #motovlog #adventurebike #ktm #roadtrip\nhttps://github.com/pawkor/ai-autoedit`
+
+> **Uwaga:** Upload Shorts do YouTube używa tego samego tokenu OAuth co zwykłe filmy.
+>
+> **Note:** Shorts upload uses the same OAuth token as regular video upload.
+
 ### Konfiguracja YouTube / YouTube setup
 
 1. Utwórz projekt w [Google Cloud Console](https://console.cloud.google.com) → włącz **YouTube Data API v3**

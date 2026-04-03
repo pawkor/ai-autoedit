@@ -625,7 +625,7 @@ async def delete_file_endpoint(path: str = Query(...)):
 
 
 @app.get("/api/serve-file")
-async def serve_file(path: str = Query(...)):
+async def serve_file_simple(path: str = Query(...)):
     f = Path(path).resolve()
     if not str(f).startswith(str(BROWSE_ROOT)):
         raise HTTPException(403)
@@ -676,7 +676,6 @@ async def s3_upload_sse(local_path: str = Query(...), key: str = Query(...)):
         done   = [0]
         t_ref  = [time.time(), 0]      # [timestamp, bytes_at_last_sample]
         speed  = [""]
-        err    = [None]
 
         def callback(n):
             done[0] += n
@@ -730,7 +729,6 @@ async def s3_download_sse(key: str = Query(...), local_path: str = Query(...)):
         done   = [0]
         t_ref  = [time.time(), 0]
         speed  = [""]
-        err    = [None]
 
         def callback(n):
             done[0] += n
@@ -1076,6 +1074,7 @@ _JOB_CONFIG_MAP = {
     "clip_workers": ("clip_scoring", "num_workers"),
     "yt_title":     ("youtube", "title"),
     "yt_desc":      ("youtube", "description"),
+    "shorts_text":  ("shorts",  "text_overlays"),
 }
 
 
@@ -1610,6 +1609,74 @@ async def render_job(job_id: str, params: RenderParams):
     return {"id": job_id, "phase": "rendering"}
 
 
+async def _run_shorts(job: Job):
+    """Run make_shorts.py for the given job, streaming output to job log."""
+    async with job_semaphore:
+        job.status = "running"
+        job.phase  = "shorts"
+        await job.broadcast({"type": "status", "status": "running", "phase": "shorts"})
+        job.save()
+        try:
+            cmd = [
+                sys.executable,
+                str(SCRIPT_DIR / "make_shorts.py"),
+                job.params["work_dir"],
+            ]
+            if job.params.get("shorts_text"):
+                cmd.append("--text")
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(SCRIPT_DIR),
+            )
+            job.process = proc
+            async for raw in proc.stdout:
+                for part in raw.decode("utf-8", errors="replace").split("\r"):
+                    line = part.rstrip("\n").rstrip()
+                    if line:
+                        is_progress = bool(re.search(r'^\s*\d+%\||\[[\u2588\u2591 ]+\]\s*\d+%|\b\d+%\|', line))
+                        if not is_progress:
+                            job.log.append(line)
+                        await job.broadcast({"type": "log", "line": line})
+            await proc.wait()
+            if proc.returncode == 0:
+                job.status = "done"
+                job.phase  = "done"
+            else:
+                job.log.append(f"ERROR: make_shorts.py exited with code {proc.returncode}")
+                job.status = "failed"
+                job.phase  = "failed"
+        except asyncio.CancelledError:
+            job.log.append("[shorts cancelled]")
+            job.status = "killed"
+            job.phase  = "failed"
+        except Exception as exc:
+            job.log.append(f"ERROR: {exc}")
+            job.status = "failed"
+            job.phase  = "failed"
+        job.ended_at = time.time()
+        job.save()
+        await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
+
+
+@app.post("/api/jobs/{job_id}/render-short")
+async def render_short(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is already running or queued")
+    job.log.append("")
+    job.log.append("── Render Short ──────────────────────────")
+    job.status = "queued"
+    job.phase  = "shorts"
+    job.ended_at = None
+    job.save()
+    job._task = asyncio.create_task(_run_shorts(job))
+    return {"id": job_id, "phase": "shorts"}
+
+
 @app.delete("/api/jobs/{job_id}")
 async def kill_job(job_id: str):
     job = jobs.get(job_id)
@@ -1822,16 +1889,11 @@ async def job_result(job_id: str):
     auto_dir = work_dir / "_autoframe"
     out_name = pipeline._output_name(work_dir)
     seen: set[str] = set()
-    for pat in (f"{out_name}_v*.mp4", "highlight_final_music_v*.mp4", "highlight_music_v*.mp4"):
+    for pat in (f"{out_name}_v*.mp4", f"{out_name}-short_v*.mp4"):
         for p in sorted(work_dir.glob(pat), key=_ver, reverse=True):
             if p.name not in seen:
                 seen.add(p.name)
                 _add(p)
-
-    # Fallback: no-music renders inside _autoframe/
-    if not files:
-        for name in ("highlight_final.mp4", "highlight.mp4"):
-            _add(auto_dir / name)
 
     # Attach stored YouTube URLs
     yt_urls = _read_yt_urls(auto_dir)
@@ -2063,7 +2125,8 @@ async def yt_upload(payload: dict):
             body={
                 "snippet": {"title": payload.get("title", file_path.stem),
                             "description": payload.get("description", "")},
-                "status":  {"privacyStatus": payload.get("privacy", "unlisted")},
+                "status":  {"privacyStatus": payload.get("privacy", "unlisted"),
+                            "selfDeclaredMadeForKids": False},
             },
             media_body=media,
         )

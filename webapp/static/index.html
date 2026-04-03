@@ -309,9 +309,9 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .cb-label input[type=checkbox] { accent-color:var(--accent); cursor:pointer; }
 
 /* ── YouTube modal ── */
-#yt-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
-#yt-modal.open { display:flex; }
-#yt-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:460px; }
+#yt-modal, #yt-shorts-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
+#yt-modal.open, #yt-shorts-modal.open { display:flex; }
+#yt-box, #yt-shorts-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:460px; }
 
 /* ── Results tab ── */
 #results-panel { flex:1; overflow-y:auto; padding:14px; display:none; flex-direction:column; gap:14px; }
@@ -461,6 +461,14 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
             <div class="chk-row">
               <label class="chk"><input type="checkbox" id="js-no-intro" onchange="saveSettingsField()"><span data-i18n="lbl.no_intro"> No intro/outro</span></label>
               <label class="chk"><input type="checkbox" id="js-no-music" onchange="saveSettingsField()"><span data-i18n="lbl.no_music"> No music</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="fsec">
+          <h3>Shorts</h3>
+          <div class="frow">
+            <div class="chk-row">
+              <label class="chk"><input type="checkbox" id="js-shorts-text" onchange="saveSettingsField()"><span> Text overlays (<code>--text</code>)</span></label>
             </div>
           </div>
         </div>
@@ -664,7 +672,10 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
         </div>
         <div class="fsec">
           <h3 data-i18n="sec.render">RENDER</h3>
-          <button id="btn-render" class="btn-primary" onclick="startRender()" data-i18n="btn.render">▶ Render Highlight</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button id="btn-render" class="btn-primary" onclick="startRender()" data-i18n="btn.render">▶ Render Highlight</button>
+            <button id="btn-render-short" class="btn-primary" onclick="startRenderShort()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text)">▶ Render Short</button>
+          </div>
           <div id="render-progress-wrap" style="display:none;margin-top:12px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
               <span id="render-status-label" style="color:var(--muted)">Rendering…</span>
@@ -673,6 +684,15 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
             </div>
             <div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden">
               <div id="render-progress-bar" style="height:8px;background:var(--accent);width:0%;transition:width .4s ease"></div>
+            </div>
+          </div>
+          <div id="shorts-progress-wrap" style="display:none;margin-top:12px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
+              <span id="shorts-status-label" style="color:var(--muted)">Generating Short…</span>
+              <span id="shorts-pct" style="margin-left:auto;color:var(--muted)"></span>
+            </div>
+            <div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden">
+              <div id="shorts-progress-bar" style="height:8px;background:var(--accent);width:0%;transition:width .4s ease"></div>
             </div>
           </div>
         </div>
@@ -837,15 +857,15 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
     <div class="modal-body">
       <div class="ff"><label>File</label><div id="yt-file-name" style="font-size:11px;color:var(--muted)"></div></div>
       <div class="ff">
-        <label style="display:flex;align-items:center;gap:6px">
-          Title
-          <button type="button" id="btn-yt-gen" class="icon-btn" style="font-size:13px;line-height:1" title="Generate via Claude API" onclick="_generateYtMeta()">↺</button>
-          <span id="yt-gen-status" style="font-size:11px;color:var(--muted)"></span>
-        </label>
+        <label>Title</label>
         <input type="text" id="yt-title" oninput="_ytMetaDirty()" onblur="_ytMetaSave()">
       </div>
       <div class="ff">
-        <label>Description</label>
+        <label style="display:flex;align-items:center;gap:6px">
+          Description
+          <button type="button" id="btn-yt-gen" class="icon-btn" style="font-size:13px;line-height:1" title="Generate description via Claude API" onclick="_generateYtMeta()">↺</button>
+          <span id="yt-gen-status" style="font-size:11px;color:var(--muted)"></span>
+        </label>
         <textarea id="yt-desc" rows="3" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box" oninput="_ytMetaDirty()" onblur="_ytMetaSave()"></textarea>
       </div>
       <div class="ff">
@@ -879,6 +899,44 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
     <div class="modal-footer">
       <button type="button" class="btn-sm" onclick="ytModalClose()">Cancel</button>
       <button type="button" class="btn-primary" id="btn-yt-upload" onclick="ytUpload()">▲ Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- YouTube Shorts upload modal -->
+<div id="yt-shorts-modal">
+  <div id="yt-shorts-box">
+    <div class="modal-header">
+      <span>▲ Upload to YouTube Shorts</span>
+      <button class="icon-btn" onclick="ytShortsModalClose()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ff"><label>File</label><div id="yts-file-name" style="font-size:11px;color:var(--muted)"></div></div>
+      <div class="ff">
+        <label>Title</label>
+        <input type="text" id="yts-title">
+      </div>
+      <div class="ff">
+        <label style="display:flex;align-items:center;gap:6px">
+          Description
+          <button type="button" id="btn-yts-gen" class="icon-btn" style="font-size:13px;line-height:1" title="Generate description via Claude API" onclick="_generateYtShortsMeta()">↺</button>
+          <span id="yts-gen-status" style="font-size:11px;color:var(--muted)"></span>
+        </label>
+        <textarea id="yts-desc" rows="3" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box"></textarea>
+      </div>
+      <div class="ff">
+        <label>Privacy</label>
+        <div style="display:flex;gap:14px;margin-top:4px">
+          <label class="cb-label"><input type="radio" name="yts-privacy" value="private"> private</label>
+          <label class="cb-label"><input type="radio" name="yts-privacy" value="unlisted"> unlisted</label>
+          <label class="cb-label"><input type="radio" name="yts-privacy" value="public" checked> public</label>
+        </div>
+      </div>
+      <div id="yts-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-sm" onclick="ytShortsModalClose()">Cancel</button>
+      <button type="button" class="btn-primary" id="btn-yts-upload" onclick="ytShortsUpload()">▲ Upload</button>
     </div>
   </div>
 </div>
@@ -1496,6 +1554,16 @@ function connectJobWs(jobId, startedAt) {
     const msg = JSON.parse(e.data);
     if (msg.type==='log') {
       appendLog(msg.line);
+      if (jobPhase === 'shorts') {
+        const m = msg.line.match(/\[\s*(\d+)\/(\d+)\]/);
+        if (m) {
+          const pct = Math.round(parseInt(m[1]) / parseInt(m[2]) * 100);
+          const bar = document.getElementById('shorts-progress-bar');
+          const lbl = document.getElementById('shorts-pct');
+          if (bar) bar.style.width = pct + '%';
+          if (lbl) lbl.textContent = pct + '%';
+        }
+      }
     } else if (msg.type==='status') {
       if (msg.phase) { jobPhase = msg.phase; updatePhaseUI(); }
       setStatusDot(msg.status);
@@ -1515,15 +1583,26 @@ function connectJobWs(jobId, startedAt) {
           loadFrames(jobId);
           loadResults(jobId);
           loadAnalyzeResult(jobId);
-          const btnR = document.getElementById('btn-render');
-          if (btnR) { btnR.disabled = false; btnR.textContent = '▶ Render Highlight'; }
-          const lbl = document.getElementById('render-status-label');
-          if (lbl) lbl.textContent = msg.status === 'done' ? '✓ Done' : '✗ Failed';
-          const etaEl = document.getElementById('render-eta');
-          if (etaEl) etaEl.textContent = '';
-          if (msg.status === 'done') {
-            document.getElementById('render-progress-bar').style.width = '100%';
-            document.getElementById('render-pct').textContent = '100%';
+          if (msg.phase === 'shorts' || jobPhase === 'shorts') {
+            const btnS = document.getElementById('btn-render-short');
+            if (btnS) { btnS.disabled = false; btnS.textContent = '▶ Render Short'; }
+            const sbar = document.getElementById('shorts-progress-bar');
+            if (sbar) sbar.style.width = msg.status === 'done' ? '100%' : '0%';
+            const slbl = document.getElementById('shorts-status-label');
+            if (slbl) slbl.textContent = msg.status === 'done' ? '✓ Short ready' : '✗ Failed';
+            const spct = document.getElementById('shorts-pct');
+            if (spct) spct.textContent = msg.status === 'done' ? '100%' : '';
+          } else {
+            const btnR = document.getElementById('btn-render');
+            if (btnR) { btnR.disabled = false; btnR.textContent = '▶ Render Highlight'; }
+            const lbl = document.getElementById('render-status-label');
+            if (lbl) lbl.textContent = msg.status === 'done' ? '✓ Done' : '✗ Failed';
+            const etaEl = document.getElementById('render-eta');
+            if (etaEl) etaEl.textContent = '';
+            if (msg.status === 'done') {
+              document.getElementById('render-progress-bar').style.width = '100%';
+              document.getElementById('render-pct').textContent = '100%';
+            }
           }
         }
         refreshJobList();
@@ -1602,6 +1681,26 @@ async function loadAnalyzeResult(jobId) {
   }
   const infoEl = document.getElementById('music-analyze-info');
   if (infoEl) infoEl.style.display = 'flex';
+}
+
+async function startRenderShort() {
+  if (!currentJobId) return;
+  const btn = document.getElementById('btn-render-short');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  document.getElementById('shorts-progress-wrap').style.display = '';
+  document.getElementById('shorts-status-label').textContent = 'Generating Short…';
+  const resp = await api.post(`/api/jobs/${currentJobId}/render-short`, {});
+  if (!resp?.id) {
+    alert('Render Short failed to start: ' + JSON.stringify(resp));
+    btn.disabled = false;
+    btn.textContent = '▶ Render Short';
+    document.getElementById('shorts-progress-wrap').style.display = 'none';
+    return;
+  }
+  if (jobWs) { jobWs.close(); jobWs = null; }
+  document.getElementById('log-panel').innerHTML = '';
+  connectJobWs(currentJobId, Date.now() / 1000);
 }
 
 async function startRender() {
@@ -2090,7 +2189,8 @@ function renderGallery() {
     const effDur = Math.min(f.duration ?? _maxSec, _maxSec);
     const durBadge = `<span class="fc-dur">${effDur.toFixed(1)}s</span>`;
     card.innerHTML = `<img src="${_cachedSrc(f.frame_url)}" loading="lazy" onerror="this.style.display='none'">
-      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span>${durBadge}<span class="fc-name">${sceneLabel}</span>${limitBadge}</div>`;
+      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span>${durBadge}<span class="fc-name"></span>${limitBadge}</div>`;
+    card.querySelector('.fc-name').textContent = sceneLabel;
     // Hover → video clip preview
     if (f.frame_url) {
       const clipPath = f.frame_url.replace('_autoframe/frames/', '_autoframe/autocut/').replace(/\.jpg$/, '.mp4');
@@ -2233,8 +2333,9 @@ function saveSettingsField() {
   const ms  = gv('js-max-scene');    if (ms)  data.max_scene     = parseFloat(ms);
   const pf  = gv('js-per-file');     if (pf)  data.per_file      = parseFloat(pf);
   const ti  = gv('js-title');        if (ti)  data.title          = ti;
-  data.no_intro = gc('js-no-intro') || false;
-  data.no_music = gc('js-no-music') || false;
+  data.no_intro    = gc('js-no-intro') || false;
+  data.no_music    = gc('js-no-music') || false;
+  data.shorts_text = gc('js-shorts-text') || false;
   const bs  = gv('js-batch-size');   if (bs)  data.batch_size    = parseInt(bs);
   const cw  = gv('js-clip-workers'); if (cw)  data.clip_workers  = parseInt(cw);
   api.put('/api/job-config', data);
@@ -2772,8 +2873,9 @@ async function populateJobSettings(params) {
   s3SectionInit();
   await setCamsList('js-cam-list', params.cameras || [params.cam_a, params.cam_b].filter(Boolean));
   sv('js-title',    params.title);
-  sc('js-no-intro', params.no_intro);
-  sc('js-no-music', params.no_music);
+  sc('js-no-intro',    params.no_intro);
+  sc('js-no-music',    params.no_music);
+  sc('js-shorts-text', params.shorts_text);
   // Music tab state (set from params first; cfg.music_dir will override below if set)
   if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
   if (params.music_files?.length) musicSelected = new Set(params.music_files);
@@ -2830,8 +2932,9 @@ function readJobSettings() {
   const sdm = gv('js-sd-min-scene'); if (sdm) p.sd_min_scene  = sdm;
   const cameras = readCamsList('js-cam-list'); if (cameras.length) p.cameras = cameras;
   const ti = gv('js-title');     if (ti) p.title = ti;
-  p.no_intro = gc('js-no-intro');
-  p.no_music  = gc('js-no-music');
+  p.no_intro    = gc('js-no-intro');
+  p.no_music    = gc('js-no-music');
+  p.shorts_text = gc('js-shorts-text');
   const md = document.getElementById('music-dir-input').value.trim();
   if (md) p.music_dir = md;
   if (musicSelected.size) p.music_files = [...musicSelected];
@@ -2909,7 +3012,9 @@ async function loadResults(jobId) {
     const filePath = new URLSearchParams((info.url.split('?')[1]) || '').get('path') || '';
     const div = document.createElement('div');
     div.className = 'rf';
-    div.innerHTML = `<div class="rf-name">${name}</div><div class="rf-size">${info.size_mb} MB</div>`;
+    const rfName = document.createElement('div'); rfName.className = 'rf-name'; rfName.textContent = name;
+    const rfSize = document.createElement('div'); rfSize.className = 'rf-size'; rfSize.textContent = `${info.size_mb} MB`;
+    div.appendChild(rfName); div.appendChild(rfSize);
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap';
     const dlBtn = document.createElement('a');
@@ -2921,10 +3026,11 @@ async function loadResults(jobId) {
     dlBtn.style.textDecoration = 'none';
     dlBtn.onclick = e => e.stopPropagation();
     btnRow.appendChild(dlBtn);
+    const isShort = /short/i.test(name);
     const ytBtn = document.createElement('button');
     ytBtn.className = 'btn-sm';
-    ytBtn.textContent = '▲ YT';
-    ytBtn.onclick = e => { e.stopPropagation(); ytModalOpen(filePath, name, info.yt_url || ''); };
+    ytBtn.textContent = isShort ? '▲ YT Shorts' : '▲ YT';
+    ytBtn.onclick = e => { e.stopPropagation(); isShort ? ytShortsModalOpen(filePath, name) : ytModalOpen(filePath, name, info.yt_url || ''); };
     btnRow.appendChild(ytBtn);
     const s3Btn = document.createElement('button');
     s3Btn.className = 'btn-sm';
@@ -4018,7 +4124,7 @@ function _ytProjectMeta(workdir) {
 
 let _ytFileName = null;
 
-const _YT_DEFAULT_FOOTER = '#motorcycle #trip #aiediting #autoedit #autoframe\nhttps://github.com/pawkor/ai-autoedit';
+const _YT_DEFAULT_FOOTER = '#motorcyclelife #motovlog #adventurebike #ktm #roadtrip\nhttps://github.com/pawkor/ai-autoedit';
 let _ytMetaSaved = true;
 
 async function ytModalOpen(filePath, fileName, existingUrl) {
@@ -4086,7 +4192,6 @@ async function _generateYtMeta() {
   const res = await api.post(`/api/jobs/${currentJobId}/generate-yt-meta`, { project_name: projectName, footer });
   btn.disabled = false;
   if (res?.ok) {
-    document.getElementById('yt-title').value = res.title;
     document.getElementById('yt-desc').value  = res.description;
     st.textContent = '';
     _ytMetaSaved = false;
@@ -4099,6 +4204,102 @@ async function _generateYtMeta() {
 
 function ytModalClose() {
   document.getElementById('yt-modal').classList.remove('open');
+}
+
+// ── YouTube Shorts modal ───────────────────────────────────────────────────────
+const _YT_SHORTS_FOOTER = '#shorts #motorcycle #motovlog #adventurebike #ktm #roadtrip\nhttps://github.com/pawkor/ai-autoedit';
+let _ytsFilePath = null, _ytsFileName = null;
+
+async function ytShortsModalOpen(filePath, fileName) {
+  const status = await api.get('/api/youtube/status');
+  if (!status?.authenticated) { alert('Connect YouTube first (Settings ⚙ → YouTube)'); return; }
+  _ytsFilePath = filePath;
+  _ytsFileName = fileName;
+  const workdir = document.getElementById('js-workdir').value;
+  const projectName = _ytProjectMeta(workdir) || workdir.split('/').filter(Boolean).pop() || fileName.replace(/-short_v\d+\.mp4$/i, '');
+
+  // Find main video YouTube URL (non-short file with yt_url)
+  let mainVideoUrl = null;
+  if (currentJobId) {
+    try {
+      const results = await api.get(`/api/jobs/${currentJobId}/result`);
+      for (const [name, info] of Object.entries(results || {})) {
+        if (!/short/i.test(name) && info.yt_url) { mainVideoUrl = info.yt_url; break; }
+      }
+    } catch (_) {}
+  }
+
+  // Load title from project config.ini [job] title field (first line only)
+  let titleVal = projectName;
+  try {
+    const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(workdir)}`);
+    if (cfg?.title) titleVal = cfg.title.split('\n')[0].trim();
+  } catch (_) {}
+
+  document.getElementById('yts-file-name').textContent = fileName;
+  document.getElementById('yts-title').value = titleVal;
+
+  const linkLine = mainVideoUrl ? `Full video: ${mainVideoUrl}` : '';
+  const descParts = [titleVal, linkLine, _YT_SHORTS_FOOTER].filter(Boolean);
+  document.getElementById('yts-desc').value = descParts.join('\n');
+
+  document.getElementById('yts-gen-status').textContent = '';
+  document.querySelector('input[name="yts-privacy"][value="public"]').checked = true;
+
+  const statusEl = document.getElementById('yts-status');
+  const btn = document.getElementById('btn-yts-upload');
+  if (!mainVideoUrl) {
+    statusEl.textContent = '⚠ Main video not yet published on YouTube — upload it first to include a link.';
+    statusEl.style.color = 'var(--yellow, #e5b400)';
+    btn.disabled = true; btn.textContent = '▲ Upload';
+  } else {
+    statusEl.textContent = '';
+    btn.disabled = false; btn.textContent = '▲ Upload';
+  }
+  document.getElementById('yt-shorts-modal').classList.add('open');
+}
+
+function ytShortsModalClose() {
+  document.getElementById('yt-shorts-modal').classList.remove('open');
+}
+
+async function _generateYtShortsMeta() {
+  if (!currentJobId) return;
+  const btn = document.getElementById('btn-yts-gen');
+  const st  = document.getElementById('yts-gen-status');
+  btn.disabled = true; st.textContent = 'generating…';
+  const workdir     = document.getElementById('js-workdir').value;
+  const projectName = _ytProjectMeta(workdir) || workdir.split('/').filter(Boolean).pop() || '';
+  const footer      = _ytFooterFromDesc(document.getElementById('yts-desc').value) || _YT_SHORTS_FOOTER;
+  const res = await api.post(`/api/jobs/${currentJobId}/generate-yt-meta`, { project_name: projectName, footer });
+  btn.disabled = false;
+  if (res?.ok) {
+    document.getElementById('yts-desc').value = res.description;
+    st.textContent = '';
+  } else {
+    st.textContent = '⚠ ' + (res?.error || 'failed');
+    st.style.color = 'var(--red)';
+  }
+}
+
+async function ytShortsUpload() {
+  if (!_ytsFilePath) return;
+  const title   = document.getElementById('yts-title').value.trim();
+  if (!title) { alert('Enter a title'); return; }
+  const privacy = document.querySelector('input[name="yts-privacy"]:checked')?.value || 'public';
+  const desc    = document.getElementById('yts-desc').value.trim();
+  const status  = document.getElementById('yts-status');
+  const btn     = document.getElementById('btn-yts-upload');
+  btn.disabled = true; btn.textContent = 'Uploading…'; status.textContent = '';
+  const res = await api.post('/api/youtube/upload', {
+    file_path: _ytsFilePath, title, description: desc, privacy,
+  });
+  if (!res?.upload_id) {
+    btn.disabled = false; btn.textContent = '▲ Upload';
+    status.textContent = '⚠ Upload failed'; status.style.color = 'var(--red)';
+    return;
+  }
+  _pollYtUpload(res.upload_id, status, btn, _ytsFileName, ytShortsModalClose);
 }
 
 async function ytSaveExistingUrl() {
@@ -4155,26 +4356,30 @@ async function ytUpload() {
     return;
   }
 
-  // Poll progress
+  _pollYtUpload(resp.upload_id, status, btn, _ytFileName, ytModalClose,
+    url => { document.getElementById('yt-existing-url').value = url; });
+}
+
+function _pollYtUpload(uploadId, statusEl, btn, fileName, onClose, onUrl) {
   const poll = setInterval(async () => {
-    const s = await api.get(`/api/youtube/upload/${resp.upload_id}`);
+    const s = await api.get(`/api/youtube/upload/${uploadId}`);
     if (!s) return;
     if (s.status === 'uploading') {
       const spd = s.speed_mbps ? ` · ${s.speed_mbps} Mbps` : '';
-      status.textContent = `Uploading… ${s.pct}%${spd}`;
+      statusEl.textContent = `Uploading… ${s.pct}%${spd}`;
     } else if (s.status === 'done') {
       clearInterval(poll);
-      status.innerHTML = `✓ <a href="${s.url}" target="_blank" style="color:var(--accent)">${s.url}</a>`;
-      status.style.color = 'var(--green)';
+      statusEl.innerHTML = `✓ <a href="${s.url}" target="_blank" style="color:var(--accent)">${s.url}</a>`;
+      statusEl.style.color = 'var(--green)';
       btn.textContent = '✓ Done';
       btn.disabled = false;
-      btn.onclick = ytModalClose;
-      document.getElementById('yt-existing-url').value = s.url;
+      btn.onclick = onClose;
+      if (onUrl) onUrl(s.url);
       if (currentJobId) loadResults(currentJobId);
     } else if (s.status === 'error') {
       clearInterval(poll);
-      status.textContent = 'Error: ' + (s.error || 'upload failed');
-      status.style.color = 'var(--red)';
+      statusEl.textContent = 'Error: ' + (s.error || 'upload failed');
+      statusEl.style.color = 'var(--red)';
       btn.disabled = false;
     }
   }, 2000);

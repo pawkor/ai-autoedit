@@ -36,6 +36,9 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Language switcher (EN / PL) | ✅ | i18n via TRANS map |
 | UI preferences server-side (config.ini) | ✅ | cross-device via webapp/config.ini |
 | Job sort order (newest/oldest) | ✅ | persisted server-side |
+| YouTube Shorts generation (make_shorts.py) | ✅ | top-scored scenes, 1.5s shots, center crop to 9:16, `*-short_vNN.mp4` |
+| Shorts visible in Results tab | ✅ | `*short*` filename detected, separate **▲ YT Shorts** button |
+| ▶ Render Short button in Summary tab | ✅ | streams log + pulsing progress bar, separate from Render Highlight |
 
 ## YouTube integration
 
@@ -48,6 +51,8 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Auto-generate title/description via Claude | ✅ | ↺ button in upload modal |
 | Hashtag / footer line preservation on regen | ✅ | detects trailing hashtag/URL lines |
 | Save title/desc to config.ini | ✅ | persists across modal opens |
+| YouTube Shorts upload (separate flow) | ✅ | dedicated modal: title (from project config.ini), description + ↺ Claude, privacy |
+| Block Shorts upload if full video not yet published | 💡 | require known YouTube URL of full video before allowing Shorts upload |
 | Scheduled / delayed upload | 💡 | useful for time-zone optimised posting |
 | Chapter markers in description | 💡 | derive from scene timestamps |
 

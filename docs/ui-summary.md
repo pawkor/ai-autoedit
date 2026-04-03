@@ -51,3 +51,22 @@ The pipeline renders: scene selection → trimming → concat → intro/outro �
 Kolejne rendery z nową muzyką lub innym threshold tworzą nowy plik (v2, v3…) — poprzednie wersje nie są nadpisywane.
 
 Subsequent renders with new music or a different threshold create a new file (v2, v3…) — previous versions are not overwritten.
+
+---
+
+## ▶ Render Short
+
+Generuje klip pionowy 9:16 (YouTube Shorts) z `make_shorts.py`.
+
+Generates a vertical 9:16 clip (YouTube Shorts) using `make_shorts.py`.
+
+- Top-scored scenes (per-camera normalization w multicam), 1.5s shots, center crop do 9:16 (1080×1920)
+- Losowy offset w scenie: pomija pierwsze 20% (stabilizacja kamery po cięciu) i ostatnie 10%
+- Xfade transitions między ujęciami (zoomin, radial, fadewhite…)
+- Muzyka z `/data/music/shorts/` — onset density, rotacja przez `shorts_used.json`
+- Pasek postępu procentowy (`[X/Y]` z loga) + log w Log tab
+- Wynik: `2025-04-Grecja-04.21-short_v01.mp4` w work_dir, auto-increment `vNN`
+
+Output: `2025-04-Grecja-04.21-short_v01.mp4` in work_dir. Each run auto-increments `vNN`. Re-run with a different `--seed` (CLI) to get different frame offsets from the same scenes.
+
+> Text overlays (`--text`) dostępne z CLI ale domyślnie wyłączone — hashtagi w video nie mają wartości algorytmicznej na YouTube.
