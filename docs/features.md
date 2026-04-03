@@ -52,7 +52,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Hashtag / footer line preservation on regen | ✅ | detects trailing hashtag/URL lines |
 | Save title/desc to config.ini | ✅ | persists across modal opens |
 | YouTube Shorts upload (separate flow) | ✅ | dedicated modal: title (from project config.ini), description + ↺ Claude, privacy |
-| Block Shorts upload if full video not yet published | 💡 | require known YouTube URL of full video before allowing Shorts upload |
+| Block Shorts upload if full video not yet published | ✅ | require known YouTube URL of full video before allowing Shorts upload |
 | Scheduled / delayed upload | 💡 | useful for time-zone optimised posting |
 | Chapter markers in description | 💡 | derive from scene timestamps |
 
@@ -88,6 +88,17 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Graceful stop mid-render | 💡 | currently kills process, no cleanup step |
 | Re-run individual pipeline steps | 💡 | skip already-done steps |
 | Duplicate frame detection | 💡 | skip near-identical scenes (cosine sim) |
+
+## Distribution
+
+| Feature | Status | Notes |
+|---|---|---|
+| Docker Compose (current) | ✅ | Linux, requires Docker + NVIDIA Container Toolkit |
+| Docker Desktop guide (Windows / Mac) | 💡 | CPU-only; Docker Desktop makes it accessible to non-technical users |
+| Standalone installer — Linux AppImage | 💡 | bundles Python + deps; CUDA optional (detect at runtime) |
+| Standalone installer — macOS .pkg / .app | 💡 | CPU-only (no CUDA on Apple Silicon/Intel); homebrew for ffmpeg |
+| Standalone installer — Windows .exe | 💡 | CPU-only or CUDA if NVIDIA driver present; NSIS/Inno Setup |
+| install.sh one-liner (Linux / Mac) | 💡 | creates venv, fetches ffmpeg, launches webapp |
 
 ## Potential community requests (researched)
 
