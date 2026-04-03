@@ -30,7 +30,12 @@ TOP_PERCENT = _cfg.getint("clip_scoring",   "top_percent",   fallback=25)
 NEG_WEIGHT  = _cfg.getfloat("clip_scoring", "neg_weight",    fallback=0.5)
 BATCH_SIZE  = int(os.environ.get("CLIP_BATCH_SIZE",  _cfg.get("clip_scoring", "batch_size",  fallback="64")))
 NUM_WORKERS = int(os.environ.get("CLIP_NUM_WORKERS", _cfg.get("clip_scoring", "num_workers", fallback=str(min(4, os.cpu_count() or 1)))))
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+if torch.cuda.is_available():
+    DEVICE = "cuda"
+elif torch.backends.mps.is_available():
+    DEVICE = "mps"
+else:
+    DEVICE = "cpu"
 
 def _parse_prompts(raw: str) -> list:
     return [line.strip() for line in raw.strip().splitlines() if line.strip()]
@@ -52,6 +57,8 @@ if not NEGATIVE_PROMPTS:
 print(f"Device: {DEVICE}")
 if DEVICE == "cuda":
     print(f"GPU: {torch.cuda.get_device_name(0)}")
+elif DEVICE == "mps":
+    print("GPU: Apple Silicon (MPS)")
 print(f"Batch size: {BATCH_SIZE}")
 
 model, _, preprocess = open_clip.create_model_and_transforms('ViT-L-14', pretrained='openai')
@@ -120,7 +127,7 @@ for batch_imgs, batch_paths, batch_ok in tqdm(loader, total=len(loader)):
     batch_tensor = batch_imgs[valid_mask].to(DEVICE, non_blocking=True)
     valid_paths  = [p for p, ok in zip(batch_paths, batch_ok.tolist()) if ok]
 
-    with torch.no_grad(), torch.amp.autocast(device_type=DEVICE, enabled=(DEVICE == "cuda")):
+    with torch.no_grad(), torch.amp.autocast(device_type=DEVICE if DEVICE != "mps" else "cpu", enabled=(DEVICE == "cuda")):
         img_features = model.encode_image(batch_tensor)
         img_features /= img_features.norm(dim=-1, keepdim=True)
         pf = pos_features.to(img_features.dtype)

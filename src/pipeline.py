@@ -719,7 +719,7 @@ async def run(params: dict, work_dir: Path,
             _m = re.search(r'^Selected:\s*(\d+)', _ln)
             if _m:
                 _est_scenes = int(_m.group(1))
-            _m = re.search(r'^Total:\s*([\d.]+)s', _ln)
+            _m = re.search(r'^Total:.*\(([\d.]+)s\)', _ln) or re.search(r'^Total:\s*([\d.]+)s', _ln)
             if _m:
                 _est_dur = float(_m.group(1))
             _m = re.search(r'Main cam \([^)]+\):\s*(\d+)\s*scenes', _ln)
