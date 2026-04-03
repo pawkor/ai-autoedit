@@ -387,6 +387,17 @@ async def run(params: dict, work_dir: Path,
     total_detect = len(source_files)
     yield f"[2/6] Scene detection ({total_detect} files)..."
 
+    # Invalidate CSV cache when detection params change
+    _detect_params_sig = f"{sd_threshold}|{sd_min_scene}"
+    _detect_params_file = auto_dir / "csv" / ".detect_params"
+    _csv_dir = auto_dir / "csv"
+    _csv_dir.mkdir(parents=True, exist_ok=True)
+    if _detect_params_file.exists() and _detect_params_file.read_text().strip() != _detect_params_sig:
+        stale = list(_csv_dir.glob("*-Scenes.csv"))
+        for f in stale:
+            f.unlink()
+        yield f"  ⚠ Detect params changed — cleared {len(stale)} cached CSV(s)"
+
     to_detect = []
     for sf in source_files:
         csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
@@ -424,6 +435,8 @@ async def run(params: dict, work_dir: Path,
         for _ in range(len(to_detect)):
             yield await completed.get()
         await asyncio.gather(*tasks)
+
+    _detect_params_file.write_text(_detect_params_sig)
 
     # ── [3/6] Split scenes ───────────────────────────────────────────────────
     yield ""

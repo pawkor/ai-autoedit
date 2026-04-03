@@ -1890,7 +1890,8 @@ function startElapsedTimer(startedAt) {
 
 // ── Kill / Remove ──────────────────────────────────────────────────────────────
 async function killJob() {
-  if (!currentJobId || !confirm('Kill running job?')) return;
+  if (!currentJobId) return;
+  if (!await showConfirm('Stop job', 'Stop the running job?\nProgress so far will be lost.', null, 'Stop')) return;
   await api.del(`/api/jobs/${currentJobId}`);
   document.getElementById('btn-kill').style.display = 'none';
   document.getElementById('log-kill-bar').style.display = 'none';
@@ -3023,9 +3024,7 @@ async function rerunCurrentJob() {
 
 // ── Results ───────────────────────────────────────────────────────────────────
 async function deleteResultFile(jobId, filename, card) {
-  const msg = TRANS[currentLang]?.labels?.['confirm.delete_file'];
-  const confirmMsg = typeof msg === 'function' ? msg(filename) : `Delete ${filename} from disk?`;
-  if (!confirm(confirmMsg)) return;
+  if (!await showConfirm('Delete file', `Delete ${filename} from disk?`, null, 'Delete')) return;
   try {
     const resp = await api.del(`/api/jobs/${jobId}/result-file?filename=${encodeURIComponent(filename)}`);
     if (resp?.ok) {
@@ -3664,7 +3663,7 @@ function _fmtSize(b) {
 
 async function _deleteFile(path, rowEl) {
   const name = rowEl.querySelector('.fname')?.textContent || path;
-  if (!confirm(`Delete ${name}?\nThis cannot be undone.`)) return;
+  if (!await showConfirm('Delete file', `Delete ${name}?`, null, 'Delete')) return;
   const r = await api.del(`/api/file?path=${encodeURIComponent(path)}`);
   if (r?.ok) rowEl.remove();
   else alert('Delete failed');
@@ -3675,7 +3674,7 @@ async function deleteCheckedFiles(prefix) {
   const rows = [...list.querySelectorAll('input[type=checkbox]:checked')].map(cb => cb.closest('.fitem'));
   if (!rows.length) return;
   const names = rows.map(r => r.querySelector('.fname')?.textContent).join('\n');
-  if (!confirm(`Delete ${rows.length} file(s)?\n\n${names}\n\nThis cannot be undone.`)) return;
+  if (!await showConfirm('Delete files', `Delete ${rows.length} file(s)?`, names, 'Delete')) return;
   for (const row of rows) {
     const r = await api.del(`/api/file?path=${encodeURIComponent(row.dataset.path)}`);
     if (r?.ok) row.remove();
@@ -4163,7 +4162,7 @@ async function ytConnect() {
 }
 
 async function ytDisconnect() {
-  if (!confirm('Disconnect YouTube?')) return;
+  if (!await showConfirm('Disconnect YouTube', 'Disconnect YouTube account?', null, 'Disconnect')) return;
   await fetch('/api/youtube/disconnect', { method: 'DELETE' });
   ytCheckStatus();
 }
