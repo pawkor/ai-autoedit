@@ -382,45 +382,48 @@ async def run(params: dict, work_dir: Path,
                 fh.write(f"{sf.stem},{matched}\n")
         yield f"  {len(cameras)}-cam: {' / '.join(cameras)}"
 
-    # ── [2/6] Scene detection (sequential with progress) ─────────────────────
+    # ── [2/6] Scene detection (parallel) ─────────────────────────────────────
     yield ""
     total_detect = len(source_files)
     yield f"[2/6] Scene detection ({total_detect} files)..."
 
-    for i, sf in enumerate(source_files, 1):
+    to_detect = []
+    for sf in source_files:
         csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
         if csv.exists():
             count = max(0, sum(1 for _ in open(csv)) - 2)
-            yield f"  [{i}/{total_detect}] ✓ {sf.name} ({count} scenes, cached)"
-            continue
+            yield f"  ✓ {sf.name} ({count} scenes, cached)"
+        else:
+            to_detect.append(sf)
 
-        yield f"  [{i}/{total_detect}] ▶ {sf.name}..."
-        fps = await _probe_fps(sf, ffprobe)
-        fps_args = ["-f", str(fps)] if fps else ["-f", "3"]
-        proc = await asyncio.create_subprocess_exec(
-            "scenedetect", *fps_args, "-i", str(sf),
-            "detect-content", "--threshold", sd_threshold,
-            "--min-scene-len", sd_min_scene,
-            "list-scenes", "-o", str(auto_dir / "csv"),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        buf = b""
-        while True:
-            chunk = await proc.stderr.read(256)
-            if not chunk:
-                break
-            buf += chunk
-            parts = buf.replace(b"\r", b"\n").split(b"\n")
-            buf = parts[-1]
-            for part in parts[:-1]:
-                line = part.decode("utf-8", errors="replace").strip()
-                if line:
-                    yield f"\r    {line}"
-        await proc.wait()
-        count = max(0, sum(1 for _ in open(csv)) - 2) if csv.exists() else 0
-        status = "✓" if csv.exists() else "✗"
-        yield f"  [{i}/{total_detect}] {status} {sf.name}: {count} scenes"
+    if to_detect:
+        workers = min(len(to_detect), int(params.get("max_detect_workers") or os.cpu_count() or 4))
+        yield f"  Running {len(to_detect)} files in parallel (workers={workers})..."
+        sem = asyncio.Semaphore(workers)
+        completed = asyncio.Queue()
+
+        async def _detect_one(sf):
+            async with sem:
+                fps = await _probe_fps(sf, ffprobe)
+                fps_args = ["-f", str(fps)] if fps else ["-f", "3"]
+                proc = await asyncio.create_subprocess_exec(
+                    "scenedetect", *fps_args, "-i", str(sf),
+                    "detect-content", "--threshold", sd_threshold,
+                    "--min-scene-len", sd_min_scene,
+                    "list-scenes", "-o", str(auto_dir / "csv"),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+            csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
+            count = max(0, sum(1 for _ in open(csv)) - 2) if csv.exists() else 0
+            status = "✓" if csv.exists() else "✗"
+            await completed.put(f"  {status} {sf.name}: {count} scenes")
+
+        tasks = [asyncio.create_task(_detect_one(sf)) for sf in to_detect]
+        for _ in range(len(to_detect)):
+            yield await completed.get()
+        await asyncio.gather(*tasks)
 
     # ── [3/6] Split scenes ───────────────────────────────────────────────────
     yield ""

@@ -182,64 +182,48 @@ if dual_cam:
     other_cams  = all_cam_names[1:]
 
     # ── Build absolute timestamp map from PySceneDetect CSVs ─────────────────
-    # ts_map[scene_name] = seconds since midnight (day-relative, or since UTC epoch
-    # when falling back to creation_time metadata — consistent within one day's footage)
+    # Primary: creation_time from MP4 metadata (epoch seconds) — works for all
+    # cameras including Osmo Action which doesn't encode time in filenames.
+    # Fallback: HHMMSS parsed from filename (seconds since midnight).
 
     ts_map: dict[str, float] = {}
-    _skipped_csvs: list[Path] = []   # CSVs whose stems had no filename timestamp
     if os.path.isdir(CSV_DIR):
-        for csv_path in sorted(Path(CSV_DIR).glob("*-Scenes.csv")):
-            stem = csv_path.stem[:-len("-Scenes")]
-            m = _re.search(r'_(\d{6})(?:_\d+)*$', stem)
-            if not m:
-                _skipped_csvs.append(csv_path)
-                continue
-            hms = m.group(1)
-            file_start = int(hms[0:2]) * 3600 + int(hms[2:4]) * 60 + int(hms[4:6])
-            try:
-                sdf = pd.read_csv(csv_path, skiprows=1)
-                for _, row in sdf.iterrows():
-                    snum = int(row["Scene Number"])
-                    key  = f"{stem}-scene-{snum:03d}"
-                    secs = float(row.get("Start Time (seconds)", 0) or 0)
-                    ts_map[key] = file_start + secs
-            except Exception:
-                pass
-
-    # Fallback: for CSVs without a filename timestamp, probe the source file
-    # for creation_time metadata (MP4 container stores it reliably).
-    if _skipped_csvs:
         _work_dir = Path(os.getcwd())
         _ffprobe  = _cfg.get("paths", "ffprobe", fallback="ffprobe")
 
-        def _creation_time_secs(stem: str) -> float | None:
-            """Return seconds-since-epoch from creation_time tag, or None."""
+        def _get_file_start(stem: str) -> float | None:
+            """Return file start time: creation_time epoch (primary), filename HHMMSS (fallback)."""
             cam = cam_map.get(stem)
-            if not cam:
-                return None
-            for ext in (".mp4", ".MP4", ".mov", ".MOV"):
-                p = _work_dir / cam / (stem + ext)
-                if p.exists():
-                    try:
-                        out = subprocess.check_output(
-                            [_ffprobe, "-v", "quiet", "-print_format", "json",
-                             "-show_format", str(p)],
-                            stderr=subprocess.DEVNULL, timeout=10,
-                        )
-                        tags = _json.loads(out)["format"].get("tags", {})
-                        ct = tags.get("creation_time", "")
-                        if ct:
-                            from datetime import datetime, timezone
-                            dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
-                            return dt.timestamp()
-                    except Exception:
-                        pass
+            if cam:
+                for ext in (".mp4", ".MP4", ".mov", ".MOV"):
+                    p = _work_dir / cam / (stem + ext)
+                    if p.exists():
+                        try:
+                            out = subprocess.check_output(
+                                [_ffprobe, "-v", "quiet", "-print_format", "json",
+                                 "-show_format", str(p)],
+                                stderr=subprocess.DEVNULL, timeout=10,
+                            )
+                            tags = _json.loads(out)["format"].get("tags", {})
+                            ct = tags.get("creation_time", "")
+                            if ct:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                                return dt.timestamp()
+                        except Exception:
+                            pass
+            # Fallback: HHMMSS from filename
+            m = _re.search(r'_(\d{6})(?:_\d+)*$', stem)
+            if m:
+                hms = m.group(1)
+                return int(hms[0:2]) * 3600 + int(hms[2:4]) * 60 + int(hms[4:6])
             return None
 
-        for csv_path in _skipped_csvs:
+        for csv_path in sorted(Path(CSV_DIR).glob("*-Scenes.csv")):
             stem = csv_path.stem[:-len("-Scenes")]
-            file_start = _creation_time_secs(stem)
+            file_start = _get_file_start(stem)
             if file_start is None:
+                print(f"  Warning: no timestamp for {stem} (no creation_time, no filename timestamp)")
                 continue
             try:
                 sdf = pd.read_csv(csv_path, skiprows=1)

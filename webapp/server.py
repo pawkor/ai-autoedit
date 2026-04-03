@@ -339,7 +339,11 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
         job.save()
 
         try:
-            async for raw_line in pipeline.run(job.params, job.work_dir(),
+            run_params = {**job.params,
+                          "max_detect_workers": int(wcfg("max_detect_workers", str(os.cpu_count() or 4))),
+                          "batch_size":         int(wcfg("clip_batch_size", "64")),
+                          "clip_workers":       int(wcfg("clip_workers", "4"))}
+            async for raw_line in pipeline.run(run_params, job.work_dir(),
                                                analyze_only=analyze_only,
                                                selected_track=selected_track):
                 # \r prefix = ffmpeg progress bar update (overwrite previous line)
@@ -420,7 +424,10 @@ async def set_data_root(data: dict):
 @app.get("/api/settings")
 async def get_settings():
     return {
-        "max_concurrent_jobs": int(wcfg("max_concurrent_jobs", "1")),
+        "max_concurrent_jobs":  int(wcfg("max_concurrent_jobs",  "1")),
+        "max_detect_workers":   int(wcfg("max_detect_workers",   str(os.cpu_count() or 4))),
+        "clip_batch_size":      int(wcfg("clip_batch_size",      "64")),
+        "clip_workers":         int(wcfg("clip_workers",         "4")),
         "port":                int(wcfg("port", "8000")),
         "theme":               wcfg("theme", ""),
         "lang":                wcfg("lang", ""),
@@ -1075,8 +1082,6 @@ class JobParams(BaseModel):
     description:  Optional[str] = None
     positive:     Optional[str] = None
     negative:     Optional[str] = None
-    batch_size:    Optional[int]   = None
-    clip_workers:  Optional[int]   = None
     sd_threshold:  Optional[float] = None
     sd_min_scene:  Optional[str]   = None
 
@@ -1102,8 +1107,6 @@ _JOB_CONFIG_MAP = {
     "music_dir":    ("music", "dir"),
     "positive":     ("clip_prompts", "positive"),
     "negative":     ("clip_prompts", "negative"),
-    "batch_size":   ("clip_scoring", "batch_size"),
-    "clip_workers": ("clip_scoring", "num_workers"),
     "yt_title":     ("youtube", "title"),
     "yt_desc":      ("youtube", "description"),
     "shorts_text":  ("shorts",  "text_overlays"),
@@ -1127,8 +1130,8 @@ def read_job_config(work_dir: Path) -> dict:
                 raw = cp.get(section, key)
                 if field in ("no_intro", "no_music"):
                     result[field] = raw.strip().lower() in ("true", "1", "yes")
-                elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold"):
-                    result[field] = float(raw)
+                elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold", "sd_min_scene"):
+                    result[field] = float(raw.rstrip('s').strip())
                 elif field == "cameras":
                     result[field] = [c.strip() for c in raw.split(",") if c.strip()]
                 else:
@@ -1212,6 +1215,8 @@ def save_job_config(work_dir: Path, params: dict):
         else:
             sv = str(v)
         sv = sv.replace("\n", "\\n")
+        if field == "sd_min_scene":
+            sv = sv.rstrip('s').strip() + 's'  # ensure PySceneDetect format e.g. "10s"
         updates.setdefault(section, {})[key] = sv
 
     if updates:
@@ -1898,6 +1903,19 @@ async def job_frames(job_id: str):
     return {"frames": frames, "back_cam": {"avg_take_sec": avg_back_cam_take_sec}}
 
 
+def _probe_duration(path: Path) -> Optional[float]:
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        val = r.stdout.strip()
+        return round(float(val), 1) if val else None
+    except Exception:
+        return None
+
+
 @app.get("/api/jobs/{job_id}/result")
 async def job_result(job_id: str):
     job = jobs.get(job_id)
@@ -1910,8 +1928,9 @@ async def job_result(job_id: str):
     def _add(p: Path):
         if p.exists():
             files[p.name] = {
-                "url":     f"/api/file?path={p}",
-                "size_mb": round(p.stat().st_size / 1_048_576, 1),
+                "url":          f"/api/file?path={p}",
+                "size_mb":      round(p.stat().st_size / 1_048_576, 1),
+                "duration_sec": _probe_duration(p),
             }
 
     # Versioned music mixes — newest version first
@@ -2002,20 +2021,23 @@ async def generate_yt_meta(job_id: str, data: dict):
         user_msg = (
             f"Project: {project_name}\n"
             f"Ride description: {ride_info}\n\n"
-            "Write a YouTube title and a 2–3 sentence description body for this motorcycle highlight reel.\n"
-            "Format: first line = title (max 100 chars), then blank line, then description body.\n"
-            "No hashtags, no URLs, no quotes around the title."
+            "Write a YouTube title and bilingual description for this motorcycle highlight reel.\n"
+            "Format (follow exactly):\n"
+            "<title — max 100 chars, no quotes>\n\n"
+            "<Polish (Latin script only, no Cyrillic): 2–3 sentences, each on its own line, NO blank lines between sentences>\n\n"
+            "<English: 2–3 sentences, each on its own line, NO blank lines between sentences>\n\n"
+            "Polish block must use only Latin characters. Single newline between sentences within each block, blank line only between the two language blocks. No hashtags, no URLs."
         )
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=300,
+            max_tokens=500,
             messages=[{"role": "user", "content": user_msg}],
         )
         text = msg.content[0].text.strip()
         parts = text.split("\n\n", 1)
         title    = parts[0].strip().lstrip("#").strip()
         body     = parts[1].strip() if len(parts) > 1 else ""
-        full_desc = (body + "\n" + footer) if footer else body
+        full_desc = (body + "\n\n" + footer) if footer else body
         return {"ok": True, "title": title, "description": full_desc}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
