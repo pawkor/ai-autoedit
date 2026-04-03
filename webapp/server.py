@@ -44,6 +44,21 @@ STATIC_DIR  = WEBAPP_DIR / "static"
 JOBS_DIR    = WEBAPP_DIR / "jobs"
 BROWSE_ROOT = Path(os.environ.get("BROWSE_ROOT", str(Path.home())))
 
+def _resolve_data_root() -> Optional[Path]:
+    """Return the user data root: /data if non-empty (Docker), else from webapp config."""
+    data_path = Path('/data')
+    try:
+        if data_path.is_dir() and any(data_path.iterdir()):
+            return data_path
+    except PermissionError:
+        pass
+    stored = wcfg('data_root', '')
+    if stored and Path(stored).is_dir():
+        return Path(stored)
+    return None
+
+DATA_ROOT: Optional[Path] = _resolve_data_root()
+
 # ── S3 (optional) ─────────────────────────────────────────────────────────────
 S3_CLIENT = None
 S3_BUCKET  = os.environ.get("S3_BUCKET", "").strip()
@@ -382,7 +397,24 @@ async def favicon():
 
 @app.get("/api/config")
 async def get_config():
-    return {"browse_root": str(BROWSE_ROOT)}
+    return {
+        "browse_root":        str(BROWSE_ROOT),
+        "data_root":          str(DATA_ROOT) if DATA_ROOT else None,
+        "data_root_configured": DATA_ROOT is not None,
+    }
+
+
+@app.post("/api/config/data-root")
+async def set_data_root(data: dict):
+    path = data.get("path", "").strip()
+    if not path or not Path(path).is_dir():
+        raise HTTPException(400, "Invalid directory")
+    if not str(Path(path).resolve()).startswith(str(BROWSE_ROOT)):
+        raise HTTPException(403, "Outside allowed root")
+    save_wcfg({"data_root": path})
+    global DATA_ROOT
+    DATA_ROOT = Path(path)
+    return {"ok": True}
 
 
 @app.get("/api/settings")
@@ -1002,7 +1034,7 @@ async def yt_download_sse(url: str = Query(...)):
 
 @app.get("/api/browse")
 async def browse(path: str = Query(default=None)):
-    root = Path(path).resolve() if path else BROWSE_ROOT
+    root = Path(path).resolve() if path else (DATA_ROOT or BROWSE_ROOT)
     if not str(root).startswith(str(BROWSE_ROOT)):
         raise HTTPException(403, "Outside allowed root")
     try:
@@ -1542,22 +1574,23 @@ async def get_analyze_result(job_id: str):
                         float(job.params.get("threshold") or 0.148))
             est_scenes = int((df["score"] >= threshold).sum())
             result["estimated_scenes"] = result.get("estimated_scenes", est_scenes)
-            if "estimated_duration_sec" not in result:
-                # avg scene duration from PySceneDetect CSVs
+            if not result.get("estimated_duration_sec"):
+                # avg scene duration from PySceneDetect CSVs — cap by per_file and max_scene
                 avg_dur, cnt = 0.0, 0
                 max_scene = float(job.params.get("max_scene") or 10)
+                per_file  = float(job.params.get("per_file")  or max_scene)
+                cap = min(max_scene, per_file)
                 for csv_path in (job.auto_dir() / "csv").glob("*-Scenes.csv"):
                     try:
                         sdf = pd.read_csv(csv_path, skiprows=1)
                         for _, row in sdf.iterrows():
                             d = float(row.get("Length (seconds)", 0) or 0)
                             if d > 0:
-                                avg_dur += d; cnt += 1
+                                avg_dur += min(d, cap); cnt += 1
                     except Exception:
                         pass
-                avg_dur = (avg_dur / cnt) if cnt else max_scene * 0.6
-                result["estimated_duration_sec"] = round(
-                    est_scenes * min(avg_dur, max_scene), 1)
+                avg_dur = (avg_dur / cnt) if cnt else cap * 0.6
+                result["estimated_duration_sec"] = round(est_scenes * avg_dur, 1)
     except Exception:
         pass
     if result:

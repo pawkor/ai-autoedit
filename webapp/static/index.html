@@ -284,7 +284,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #music-list-header .mh-cb { width:13px; flex-shrink:0; }
 #music-list-header .mh-play { width:16px; flex-shrink:0; }
 #music-list-header .mh-title { flex:1; min-width:0; }
-#music-list-header .mh-meta { flex-shrink:0; }
+#music-list-header .mh-genre { flex-shrink:0; }
+#music-list-header .mh-dur  { flex-shrink:0; min-width:36px; text-align:right; }
 #music-list-header .mh-bpm { flex-shrink:0; min-width:48px; text-align:right; }
 #music-list-header .mh-energy { width:36px; flex-shrink:0; text-align:right; }
 .mt { display:flex; align-items:center; gap:9px; padding:7px 14px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
@@ -299,7 +300,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .mt-seek { display:none; width:100%; max-width:100%; box-sizing:border-box; accent-color:var(--accent); cursor:pointer; height:16px; margin-top:2px; padding:0; }
 .mt-playing .mt-title { overflow-y:visible; }
 .mt-playing .mt-seek { display:block; }
-.mt-meta { font-size:10px; color:var(--muted); white-space:nowrap; flex-shrink:0; }
+.mt-genre { font-size:10px; color:var(--muted); white-space:nowrap; flex-shrink:0; }
+.mt-dur   { font-size:10px; color:var(--muted); white-space:nowrap; flex-shrink:0; min-width:36px; text-align:right; }
 .mt-bpm  { font-size:10px; color:var(--muted); white-space:nowrap; flex-shrink:0; min-width:48px; text-align:right; }
 .mt-energy { width:36px; height:4px; background:var(--border); border-radius:2px; flex-shrink:0; }
 .mt-energy-fill { height:100%; border-radius:2px; background:var(--accent); }
@@ -582,6 +584,13 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           </div>
           <div id="gallery-status" style="margin-top:2px">
             <span id="gallery-stats-text" style="flex:1;min-width:0">—</span>
+            <div id="sd-progress-wrap" style="display:none;flex:1;min-width:0;align-items:center;gap:6px">
+              <span style="font-size:11px;color:var(--muted);white-space:nowrap">Scene detect</span>
+              <div style="flex:1;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;min-width:40px">
+                <div id="sd-progress-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.3s ease"></div>
+              </div>
+              <span id="sd-progress-pct" style="font-size:11px;color:var(--accent);font-weight:600;min-width:3ch;text-align:right">0%</span>
+            </div>
             <button id="btn-gallery-to-music" class="btn-sm" style="display:none;margin-left:auto" data-i18n="btn.to_music" onclick="switchTab('music')">→ Music</button>
           </div>
         </div>
@@ -646,7 +655,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
             <span class="mh-cb"></span>
             <span class="mh-play"></span>
             <span class="mh-title" onclick="sortMusic('title')">Title / Artist</span>
-            <span class="mh-meta" onclick="sortMusic('genre')">Genre · Dur</span>
+            <span class="mh-genre" onclick="sortMusic('genre')">Genre</span>
+            <span class="mh-dur"   onclick="sortMusic('dur')">Dur</span>
             <span class="mh-bpm"  onclick="sortMusic('bpm')">BPM</span>
             <span class="mh-energy" onclick="sortMusic('energy')">Nrg</span>
           </div>
@@ -793,6 +803,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 <!-- Dir browser modal -->
 <div id="dir-modal">
   <div id="dir-box">
+    <p id="dir-hint" style="display:none;padding:8px 12px;margin:0;font-size:12px;color:var(--fg);background:var(--bg2);border-bottom:1px solid var(--border)"></p>
     <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" data-i18n="btn.dir_up" onclick="dirUp()">↑ Up</button><button class="icon-btn" onclick="closeDirBrowser()" title="Close" style="margin-left:auto">✕</button></div>
     <div id="dir-list"></div>
     <div id="dir-footer">
@@ -1203,7 +1214,7 @@ let _filterScore = '', _filterTime = '';
 let _ytFilePath = null;
 let _refreshing=false;
 let musicTracks=[], musicSelected=new Set();
-let jobPhase=null, analyzeResult=null, pinnedTrack=null;
+let jobPhase=null, analyzeResult=null, pinnedTrack=null, _sdTotal=0;
 const _frameCache = new Map(); // original url → blob URL
 let _galleryDirty = true;
 let _musicSort = { key: null, asc: true };
@@ -1259,7 +1270,10 @@ function _playTrack(file, btn, seek) {
 
 // Strip BROWSE_ROOT prefix so paths show as  moto/2025/...  not  /data/moto/2025/...
 let _browseRoot = '';
-fetch('/api/config').then(r=>r.json()).then(cfg=>{ _browseRoot = cfg.browse_root || ''; }).catch(()=>{});
+fetch('/api/config').then(r=>r.json()).then(cfg=>{
+  _browseRoot = cfg.browse_root || '';
+  if (!cfg.data_root_configured) _showDataRootModal();
+}).catch(()=>{});
 function trimPath(p) {
   if (!p) return p || '';
   if (_browseRoot && p.startsWith(_browseRoot + '/')) return p.slice(_browseRoot.length + 1);
@@ -1460,6 +1474,9 @@ async function openJob(jobId) {
   document.getElementById('js-cam-list').innerHTML = '';
   document.getElementById('music-list').innerHTML = '';
   document.getElementById('music-count').textContent = '—';
+  _sdTotal = 0;
+  document.getElementById('sd-progress-wrap').style.display = 'none';
+  document.getElementById('gallery-stats-text').style.display = '';
   document.getElementById('gallery-stats-text').textContent = '—';
   document.getElementById('js-description').value = '';
   document.getElementById('js-positive').value = '';
@@ -1554,6 +1571,29 @@ function connectJobWs(jobId, startedAt) {
     const msg = JSON.parse(e.data);
     if (msg.type==='log') {
       appendLog(msg.line);
+      // Scene detection progress bar
+      const sdStart = msg.line.match(/\[2\/6\] Scene detection \((\d+) files\)/);
+      if (sdStart) {
+        _sdTotal = parseInt(sdStart[1]);
+        document.getElementById('gallery-stats-text').style.display = 'none';
+        const w = document.getElementById('sd-progress-wrap');
+        w.style.display = 'flex';
+        document.getElementById('sd-progress-bar').style.width = '0%';
+        document.getElementById('sd-progress-pct').textContent = '0%';
+      } else if (_sdTotal > 0) {
+        if (msg.line.match(/^\s*\[3\/6\]/)) {
+          _sdTotal = 0;
+          document.getElementById('sd-progress-wrap').style.display = 'none';
+          document.getElementById('gallery-stats-text').style.display = '';
+        } else {
+          const m = msg.line.match(/^\s*\[(\d+)\/(\d+)\]/);
+          if (m && parseInt(m[2]) === _sdTotal) {
+            const pct = Math.round(parseInt(m[1]) / _sdTotal * 100);
+            document.getElementById('sd-progress-bar').style.width = pct + '%';
+            document.getElementById('sd-progress-pct').textContent = pct + '%';
+          }
+        }
+      }
       if (jobPhase === 'shorts') {
         const m = msg.line.match(/\[\s*(\d+)\/(\d+)\]/);
         if (m) {
@@ -1923,6 +1963,9 @@ async function loadFrames(jobId) {
   if (job?.params?.per_file  != null) currentJobPerFile  = parseFloat(job.params.per_file);
   if (job?.params?.min_take  != null) currentJobMinTake  = parseFloat(job.params.min_take);
   await loadOverrides();
+  _sdTotal = 0;
+  document.getElementById('sd-progress-wrap').style.display = 'none';
+  document.getElementById('gallery-stats-text').style.display = '';
   document.getElementById('gallery-stats-text').textContent = '—';
 
   let threshold = job?.params?.threshold;
@@ -2685,7 +2728,8 @@ function _sortedTracks(tracks) {
   return [...tracks].sort((a, b) => {
     let va, vb;
     if (_musicSort.key === 'title')  { va = (a.artist || '') + a.title; vb = (b.artist || '') + b.title; }
-    if (_musicSort.key === 'genre')  { va = (a.genre || '') + (a.duration || 0); vb = (b.genre || '') + (b.duration || 0); }
+    if (_musicSort.key === 'genre')  { va = a.genre || ''; vb = b.genre || ''; }
+    if (_musicSort.key === 'dur')    { va = a.duration || 0; vb = b.duration || 0; }
     if (_musicSort.key === 'bpm')    { va = a.bpm || 0; vb = b.bpm || 0; }
     if (_musicSort.key === 'energy') { va = a.energy_norm || 0; vb = b.energy_norm || 0; }
     if (va < vb) return _musicSort.asc ? -1 : 1;
@@ -2739,8 +2783,11 @@ function renderMusicList() {
     titleWrap.appendChild(titleText);
     const dur = t.duration ? fmtDur(t.duration) : '?';
     const meta = document.createElement('span');
-    meta.className = 'mt-meta';
-    meta.textContent = `${t.genre || '—'} · ${dur}`;
+    meta.className = 'mt-genre';
+    meta.textContent = t.genre || '—';
+    const durSpan = document.createElement('span');
+    durSpan.className = 'mt-dur';
+    durSpan.textContent = dur;
     const bpm = document.createElement('span');
     bpm.className = 'mt-bpm';
     bpm.textContent = t.bpm ? `${Math.round(t.bpm)} BPM` : '';
@@ -2764,6 +2811,7 @@ function renderMusicList() {
     row.appendChild(playBtn);
     row.appendChild(titleWrap);
     row.appendChild(meta);
+    row.appendChild(durSpan);
     row.appendChild(bpm);
     row.appendChild(energyWrap);
     row.onclick = e => { if (e.target !== cb && e.target !== playBtn && e.target !== seek) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); } };
@@ -3082,12 +3130,30 @@ function playVideo(url, card) {
 
 // ── Dir browser ───────────────────────────────────────────────────────────────
 let _dirSelectCb = null;
+function _showDataRootModal() {
+  const hint = document.getElementById('dir-hint');
+  hint.textContent = 'Select the root directory where your video recordings are stored.';
+  hint.style.display = '';
+  openDirBrowser(null, async p => {
+    hint.style.display = 'none';
+    const r = await api.post('/api/config/data-root', { path: p });
+    if (r?.ok) location.reload();
+    else alert('Failed to save data root: ' + (r?.detail || 'unknown error'));
+  });
+}
+
 async function openDirBrowser(startPath, callback) {
   _dirSelectCb = callback || null;
   document.getElementById('dir-modal').classList.add('open');
   await browseTo((startPath || '').trim() || null);
 }
-function closeDirBrowser() { document.getElementById('dir-modal').classList.remove('open'); _dirSelectCb = null; }
+function closeDirBrowser() {
+  document.getElementById('dir-modal').classList.remove('open');
+  const hint = document.getElementById('dir-hint');
+  hint.style.display = 'none';
+  hint.textContent = '';
+  _dirSelectCb = null;
+}
 function selectCurrentDir() {
   if (_dirSelectCb) _dirSelectCb(browsePath);
   closeDirBrowser();
