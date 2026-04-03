@@ -24,6 +24,9 @@ webapp/youtube_token.json
 webapp/youtube_flow.json
 webapp/config.ini
 
+# Tauri build artifacts — never commit (may contain bundled secrets)
+tauri/src-tauri/target/
+
 # OS
 .DS_Store
 Thumbs.db
