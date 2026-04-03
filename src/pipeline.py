@@ -392,11 +392,13 @@ async def run(params: dict, work_dir: Path,
     _detect_params_file = auto_dir / "csv" / ".detect_params"
     _csv_dir = auto_dir / "csv"
     _csv_dir.mkdir(parents=True, exist_ok=True)
-    if _detect_params_file.exists() and _detect_params_file.read_text().strip() != _detect_params_sig:
+    _stored_sig = _detect_params_file.read_text().strip() if _detect_params_file.exists() else None
+    if _stored_sig != _detect_params_sig:
         stale = list(_csv_dir.glob("*-Scenes.csv"))
         for f in stale:
             f.unlink()
-        yield f"  ⚠ Detect params changed — cleared {len(stale)} cached CSV(s)"
+        if stale:
+            yield f"  ⚠ Detect params changed — cleared {len(stale)} cached CSV(s)"
 
     to_detect = []
     for sf in source_files:

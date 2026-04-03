@@ -4152,13 +4152,21 @@ async function ytCheckStatus() {
 }
 
 async function ytConnect() {
+  const win = window.open('', 'yt-auth', 'width=620,height=720');
   const data = await api.get(`/api/youtube/auth?origin=${encodeURIComponent(window.location.origin)}`);
-  if (!data?.url) { alert('Failed to get auth URL — is youtube_client_secrets.json in place?'); return; }
-  const win = window.open(data.url, 'yt-auth', 'width=620,height=720,noopener');
-  if (!win) { alert('Pop-up blocked — allow pop-ups and try again.'); return; }
-  const timer = setInterval(() => {
-    if (win.closed) { clearInterval(timer); ytCheckStatus(); }
-  }, 1000);
+  if (!data?.url) { win.close(); alert('Failed to get auth URL — is youtube_client_secrets.json in place?'); return; }
+  win.location.href = data.url;
+  let winClosedAt = null;
+  const timer = setInterval(async () => {
+    if (win.closed && !winClosedAt) winClosedAt = Date.now();
+    const data = await api.get('/api/youtube/status');
+    if (data?.authenticated) {
+      clearInterval(timer);
+      ytCheckStatus();
+    } else if (winClosedAt && Date.now() - winClosedAt > 5000) {
+      clearInterval(timer);
+    }
+  }, 800);
 }
 
 async function ytDisconnect() {
