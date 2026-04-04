@@ -52,7 +52,20 @@ USERS_FILE   = Path(__file__).resolve().parent / "users.json"
 _sessions: dict[str, str] = {}   # token → username
 
 def _hash_pw(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    # pbkdf2 with per-password salt; format: "pbkdf2:<salt_hex>:<hash_hex>"
+    import secrets as _sec
+    salt = _sec.token_bytes(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    return f"pbkdf2:{salt.hex()}:{h.hex()}"
+
+def _verify_pw(password: str, stored: str) -> bool:
+    if stored.startswith("pbkdf2:"):
+        _, salt_hex, hash_hex = stored.split(":")
+        salt = bytes.fromhex(salt_hex)
+        h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+        return h.hex() == hash_hex
+    # legacy SHA-256 (migrate on next login)
+    return hashlib.sha256(password.encode()).hexdigest() == stored
 
 def _load_users() -> list[dict]:
     if USERS_FILE.exists():
@@ -453,8 +466,7 @@ async def auth_login(request: Request, data: dict = Body(...)):
     if not username or not password:
         raise HTTPException(400, "Username and password required")
     users = _load_users()
-    pw_hash = _hash_pw(password)
-    match = next((u for u in users if u["username"] == username and u["password_hash"] == pw_hash), None)
+    match = next((u for u in users if u["username"] == username and _verify_pw(password, u["password_hash"])), None)
     if not match:
         raise HTTPException(401, "Invalid credentials")
     token = secrets.token_hex(32)
@@ -2320,7 +2332,8 @@ async def yt_auth(origin: str = Query(...)):
 async def yt_callback(code: str = Query(None), error: str = Query(None)):
     from fastapi.responses import HTMLResponse
     if error:
-        return HTMLResponse(f"<h2>YouTube auth error: {error}</h2>")
+        import html as _html
+        return HTMLResponse(f"<h2>YouTube auth error: {_html.escape(error)}</h2>")
     flow_file = WEBAPP_DIR / "youtube_flow.json"
     if not flow_file.exists():
         return HTMLResponse("<h2>OAuth flow not started — please try again.</h2>")
