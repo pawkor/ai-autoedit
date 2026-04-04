@@ -1,10 +1,10 @@
-# Zakładka Gallery / Gallery tab
+# Zakładka Select scenes / Select scenes tab
 
-![Galeria scen](img/AI-autoedit-gallery.png)
+![Selekcja scen](img/AI-autoedit-select-scene.png)
 
-Gallery pokazuje klatkę środkową każdej wykrytej sceny z jej wynikiem CLIP, posortowane chronologicznie.
+Zakładka **Select scenes** pokazuje klatkę środkową każdej wykrytej sceny z jej wynikiem CLIP, posortowane chronologicznie.
 
-Gallery shows the midpoint frame of each detected scene with its CLIP score, sorted chronologically.
+The **Select scenes** tab shows the midpoint frame of each detected scene with its CLIP score, sorted chronologically.
 
 ---
 
@@ -106,6 +106,6 @@ Clears all manual overrides and re-runs the automatic threshold search for the c
 
 ## → Music
 
-Przycisk w prawym górnym rogu galerii przenosi bezpośrednio na zakładkę Music.
+Przycisk w prawym górnym rogu zakładki przenosi bezpośrednio na zakładkę Music.
 
-Button in the top-right of the gallery switches directly to the Music tab.
+Button in the top-right of the tab switches directly to the Music tab.

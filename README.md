@@ -22,9 +22,9 @@ AI-autoedit solves this: a CLIP model scores each scene semantically — underst
 
 - [Lista projektów i nowy projekt / Project list & New project](docs/ui-projects.md)
 - [Settings](docs/ui-settings.md)
-- [Gallery](docs/ui-gallery.md)
+- [Select scenes](docs/ui-gallery.md)
 - [Music](docs/ui-music.md)
-- [Summary & Render](docs/ui-summary.md)
+- [Render](docs/ui-summary.md)
 - [Log](docs/ui-log.md)
 - [Results & YouTube upload](docs/ui-results.md)
 

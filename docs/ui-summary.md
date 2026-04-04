@@ -1,10 +1,10 @@
-# Zakładka Summary / Summary tab
+# Zakładka Render / Render tab
 
-![Podsumowanie](img/AI-autoedit-summary.png)
+![Render](img/AI-autoedit-render.png)
 
-Zakładka **Summary** zbiera wyniki analizy i daje dostęp do renderowania.
+Zakładka **Render** zbiera wyniki analizy i daje dostęp do renderowania.
 
-The **Summary** tab aggregates analysis results and provides access to rendering.
+The **Render** tab aggregates analysis results and provides access to rendering.
 
 ---
 
@@ -14,18 +14,18 @@ The **Summary** tab aggregates analysis results and provides access to rendering
 |------|------|
 | Scenes detected | Łączna liczba wykrytych scen |
 | Scenes selected | Liczba scen wybranych do highlight (po threshold, overrides i balansowaniu kamer) |
-| Scoring | Aktualny próg CLIP (zsynchronizowany z Gallery) |
+| Scoring | Aktualny próg CLIP (zsynchronizowany z Select scenes) |
 | Est. duration | Szacowany czas highlight na podstawie wybranych scen |
 
-Wartości aktualizują się na żywo po każdej zmianie threshold lub kliknięciu klatki w Gallery.
+Wartości aktualizują się na żywo po każdej zmianie threshold lub kliknięciu klatki w Select scenes.
 
-Values update live after every threshold change or Gallery frame click.
+Values update live after every threshold change or Select scenes frame click.
 
 | Field | Description |
 |-------|-------------|
 | Scenes detected | Total number of detected scenes |
 | Scenes selected | Scenes selected for the highlight (after threshold, overrides, and camera balancing) |
-| Scoring | Current CLIP threshold (synced with Gallery) |
+| Scoring | Current CLIP threshold (synced with Select scenes) |
 | Est. duration | Estimated highlight duration based on selected scenes |
 
 ---

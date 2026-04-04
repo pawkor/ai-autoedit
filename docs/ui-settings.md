@@ -8,7 +8,7 @@ The **Settings** tab lets you change all pipeline parameters without editing fil
 
 ## Sekcje / Sections
 
-### Source
+### Source / Proxy media
 
 ![Ustawienia — jedna kamera](img/AI-autoedit-settings-single-cam.png)
 
@@ -23,6 +23,22 @@ Working directory with MP4 files (read-only — set when the project is created)
 Lista podkatalogów kamer. Cam A = źródło audio; pozostałe kamery są wyciszane w mikście. Przycisk **+ Add camera** dodaje kolejny wiersz. Przycisk 📁 przy każdej kamerze otwiera przeglądarkę plików dla tego podkatalogu.
 
 List of camera subdirectories. Cam A = audio source; other cameras are muted in the mix. **+ Add camera** adds a row. The 📁 button next to each camera opens the file browser for that subfolder.
+
+**Proxy media**
+
+Sekcja **Proxy media** (po prawej stronie Source) tworzy zmniejszone kopie plików źródłowych (480p, 20 fps CFR) używane jako wejście do wykrywania scen. Proxy drastycznie skraca czas detekcji przy zachowaniu identycznych cięć.
+
+The **Proxy media** section (to the right of Source) creates downscaled copies of source files (480p, 20 fps CFR) used as input for scene detection. Proxies dramatically reduce detection time while producing identical cut points.
+
+| Element | Opis / Description |
+|---------|-------------------|
+| Status | Liczba gotowych proxy / całkowita liczba plików źródłowych (np. `12/33`) |
+| Pasek postępu | Widoczny podczas tworzenia; znika po zakończeniu |
+| **▶ Create proxies** | Uruchamia tworzenie proxy sekwencyjnie dla brakujących plików. Proxy tworzone są atomowo (`.mp4.tmp` → `.mp4`), więc przerwanie jest bezpieczne — wznowienie pomija gotowe pliki |
+
+Proxy są przechowywane w `_autoframe/proxy/` i nie wliczają się do plików wynikowych. Otworzenie projektu automatycznie uruchamia tworzenie proxy jeśli brakuje jakichkolwiek plików.
+
+Proxies are stored in `_autoframe/proxy/` and are not included in output files. Opening a project automatically starts proxy creation if any files are missing.
 
 ---
 

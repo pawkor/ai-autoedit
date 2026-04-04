@@ -20,15 +20,17 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Feature | Status | Notes |
 |---|---|---|
 | Settings tab (all pipeline params) | ✅ | |
-| Gallery with score cards + duration badge | ✅ | |
-| Gallery manual overrides (include/exclude) | ✅ | persist across binary search |
+| Proxy media (480p/20fps CFR for fast scene detection) | ✅ | atomic `.tmp` → `.mp4`, auto-started on project open |
+| Select scenes tab with score cards + duration badge | ✅ | |
+| Select scenes manual overrides (include/exclude) | ✅ | persist across binary search |
 | Target duration binary search | ✅ | + fill logic when target unreachable |
-| Gallery hover → video clip preview | ✅ | 500ms delay, reuses file-tip overlay |
+| Select scenes hover → video clip preview | ✅ | 500ms delay, reuses file-tip overlay |
 | Music tab with BPM/energy sort | ✅ | |
 | Music → Target dur. sort button | ✅ | picks closest track to target |
 | Music checkbox selection persistence | ✅ | saved to job params on toggle |
-| Summary tab with duration estimate | ✅ | dual-cam aware |
+| Render tab with duration estimate | ✅ | dual-cam aware |
 | Log tab with live streaming | ✅ | |
+| Log filter dropdown (Steps / Info / All) | ✅ | CSS class-based, persists in session |
 | Results tab with file listing | ✅ | |
 | File browser (dir picker for new project) | ✅ | |
 | Video preview on hover in file browser | ✅ | |
@@ -38,7 +40,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Job sort order (newest/oldest) | ✅ | persisted server-side |
 | YouTube Shorts generation (make_shorts.py) | ✅ | top-scored scenes, 1.5s shots, center crop to 9:16, `*-short_vNN.mp4` |
 | Shorts visible in Results tab | ✅ | `*short*` filename detected, separate **▲ YT Shorts** button |
-| ▶ Render Short button in Summary tab | ✅ | streams log + pulsing progress bar, separate from Render Highlight |
+| ▶ Render Short button in Render tab | ✅ | streams log + pulsing progress bar, separate from Render Highlight |
 
 ## YouTube integration
 

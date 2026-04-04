@@ -299,40 +299,48 @@ async def create_proxy(params: dict, work_dir: Path):
         n = f.name.lower()
         return n.endswith(".mp4") and not n.startswith("highlight") and not n.endswith(".lrv")
 
+    # Build per-camera file lists
     if cameras:
-        source_files = sorted(
-            f for cam in cameras
-            for f in (work_dir / cam).glob("*.mp4")
-            if _is_source(f)
-        )
+        cam_files = {cam: sorted(f for f in (work_dir / cam).glob("*.mp4") if _is_source(f))
+                     for cam in cameras}
     else:
-        source_files = sorted(f for f in work_dir.glob("*.mp4") if _is_source(f))
+        cam_files = {"": sorted(f for f in work_dir.glob("*.mp4") if _is_source(f))}
 
-    total    = len(source_files)
-    finished = 0
+    source_files = [f for fs in cam_files.values() for f in fs]
+    file_cam     = {f: cam for cam, fs in cam_files.items() for f in fs}
 
-    for sf in source_files:
-        proxy = _proxy_path(sf, work_dir, auto_dir, cameras)
-        proxy_tmp = proxy.with_suffix(".mp4.tmp")
+    total        = len(source_files)
+    finished     = 0
+    cam_finished = {cam: 0 for cam in cam_files}
+    cam_totals   = {cam: len(fs) for cam, fs in cam_files.items()}
 
-        # Already done
-        if proxy.exists():
-            finished += 1
-            yield {"done": False, "total": total, "finished": finished,
-                   "current_file": sf.name}
-            continue
+    def _cams_st():
+        return {cam: {"total": cam_totals[cam], "finished": cam_finished[cam]}
+                for cam in cam_files}
 
-        # Skip if another process is already building this proxy
-        if proxy_tmp.exists():
-            yield {"done": False, "total": total, "finished": finished,
-                   "current_file": sf.name, "skipped": True}
-            continue
+    # Per-camera queues for parallel processing
+    queue: asyncio.Queue = asyncio.Queue()
+    current_files: dict = {cam: "" for cam in cam_files}
 
-        proxy.parent.mkdir(parents=True, exist_ok=True)
-        yield {"done": False, "total": total, "finished": finished,
-               "current_file": sf.name}
+    async def _run_cam(cam: str, files: list):
+        nonlocal finished
+        for sf in files:
+            proxy     = _proxy_path(sf, work_dir, auto_dir, cameras)
+            proxy_tmp = proxy.with_suffix(".mp4.tmp")
 
-        try:
+            if proxy.exists():
+                finished += 1
+                cam_finished[cam] += 1
+                await queue.put({"cam": cam, "file": sf.name})
+                continue
+
+            if proxy_tmp.exists():
+                await queue.put({"cam": cam, "file": sf.name, "skipped": True})
+                continue
+
+            proxy.parent.mkdir(parents=True, exist_ok=True)
+            await queue.put({"cam": cam, "file": sf.name})
+
             proc = await asyncio.create_subprocess_exec(
                 ffmpeg, "-y", "-i", str(sf),
                 "-vf", "scale=-2:480,fps=20",
@@ -347,18 +355,41 @@ async def create_proxy(params: dict, work_dir: Path):
             if proc.returncode == 0 and proxy_tmp.exists():
                 proxy_tmp.rename(proxy)
                 finished += 1
+                cam_finished[cam] += 1
             else:
                 proxy_tmp.unlink(missing_ok=True)
                 err_msg = stderr_bytes.decode("utf-8", errors="replace").strip().splitlines()
                 err_tail = " | ".join(err_msg[-3:]) if err_msg else f"rc={proc.returncode}"
-                yield {"done": False, "total": total, "finished": finished,
-                       "current_file": sf.name,
-                       "error": f"ffmpeg failed for {sf.name}: {err_tail}"}
-        except asyncio.CancelledError:
-            proxy_tmp.unlink(missing_ok=True)
-            raise
+                await queue.put({"cam": cam, "file": sf.name,
+                                 "error": f"ffmpeg failed for {sf.name}: {err_tail}"})
 
-    yield {"done": True, "total": total, "finished": finished}
+        await queue.put({"cam": cam, "done": True})
+
+    cam_tasks = [asyncio.create_task(_run_cam(cam, files))
+                 for cam, files in cam_files.items()]
+    n_done = 0
+    try:
+        while n_done < len(cam_tasks):
+            msg = await queue.get()
+            if msg.get("done"):
+                n_done += 1
+                continue
+            current_files[msg["cam"]] = msg.get("file", "")
+            upd: dict = {
+                "done": False, "total": total, "finished": finished,
+                "current_cam": msg["cam"], "current_file": msg.get("file", ""),
+                "current_files": dict(current_files), "cams": _cams_st(),
+            }
+            if "error" in msg:
+                upd["error"] = msg["error"]
+            yield upd
+    except (asyncio.CancelledError, GeneratorExit):
+        for t in cam_tasks:
+            t.cancel()
+        await asyncio.gather(*cam_tasks, return_exceptions=True)
+        raise
+
+    yield {"done": True, "total": total, "finished": finished, "cams": _cams_st()}
 
 
 async def run(params: dict, work_dir: Path,

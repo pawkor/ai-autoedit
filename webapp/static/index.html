@@ -406,13 +406,22 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <div class="tab" data-i18n="tab.summary" onclick="switchTab('summary')">Render</div>
       <div class="tab" data-i18n="tab.results" onclick="switchTab('results')">Results</div>
       <div class="tab" data-i18n="tab.log" onclick="switchTab('log')">Log</div>
+      <div id="log-filter-widget" style="display:none;position:relative;margin-left:4px">
+        <button id="log-filter-trigger" onclick="_toggleLogFilterMenu(event)">Info ▾</button>
+        <div id="log-filter-menu">
+          <div class="lfm-item" data-lf="steps" onclick="setLogFilter('steps')">Steps</div>
+          <div class="lfm-item active" data-lf="info"  onclick="setLogFilter('info')">Info</div>
+          <div class="lfm-item" data-lf="all"   onclick="setLogFilter('all')">All</div>
+        </div>
+      </div>
     </div>
     <div id="tab-content">
 
       <!-- Settings tab -->
       <div id="job-settings-panel" style="display:none;flex:1;overflow-y:auto;padding:20px;flex-direction:column;gap:0">
-        <div style="display:flex;gap:0;margin-bottom:0">
-          <div class="fsec" style="flex:0 0 auto;margin-bottom:0">
+        <div style="display:grid;grid-template-columns:auto 1fr;margin-bottom:20px">
+          <!-- SOURCE -->
+          <div class="fsec" style="margin-bottom:0;padding-right:16px">
             <h3 data-i18n="sec.source">Source</h3>
             <div class="frow">
               <div class="ff wide">
@@ -429,62 +438,50 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               <button class="btn-sm" style="align-self:flex-start" onclick="addCamRow('js-cam-list')">+ Add camera</button>
             </div>
           </div>
-          <div style="width:1px;background:var(--border);align-self:stretch;margin:0 4px"></div>
-          <div class="fsec" id="js-proxy-section" style="flex:1;margin-bottom:0">
+          <!-- PROXY MEDIA -->
+          <div class="fsec" id="js-proxy-section" style="margin-bottom:0;border-left:1px solid var(--border);padding-left:16px">
             <h3 data-i18n="sec.proxy">Proxy media</h3>
-            <div style="font-size:11px;margin-bottom:5px">
-              <span id="js-proxy-label" style="color:var(--muted)">—</span>
-              <span id="js-proxy-count" style="color:var(--accent);font-weight:600;margin-left:6px"></span>
-            </div>
-            <div id="js-proxy-progress" style="display:none;margin-bottom:5px">
-              <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
-                <span id="js-proxy-file" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-                <span id="js-proxy-pct" style="color:var(--accent);font-weight:600;min-width:5ch;text-align:right"></span>
-              </div>
-              <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
-                <div id="js-proxy-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s"></div>
-              </div>
-            </div>
+            <div id="js-proxy-bars" style="margin-bottom:6px"></div>
             <button class="btn-sm" id="btn-proxy-start" onclick="startProxy()">▶ Create proxies</button>
           </div>
-        </div>
-        <div id="js-s3-section" class="fsec" style="display:none">
-          <h3>S3 source
-            <button class="btn-sm" style="font-weight:normal;text-transform:none;letter-spacing:0;margin-left:8px" title="Refresh file list" onclick="s3LoadFileList()">↺</button>
-          </h3>
-          <div id="js-s3-list-wrap" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;margin-bottom:6px;background:var(--bg2)">
-            <div id="js-s3-list" style="padding:6px 8px;font-size:11px;color:var(--muted)">—</div>
-          </div>
-          <div id="js-s3-fetch-progress" style="display:none;margin-bottom:8px">
-            <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
-              <span id="js-s3-fetch-file" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-              <span id="js-s3-fetch-speed" style="color:var(--muted)"></span>
-              <span id="js-s3-fetch-pct" style="color:var(--accent);font-weight:600;min-width:5ch;text-align:right"></span>
+          <!-- S3 source — spans both columns, shown only when configured -->
+          <div id="js-s3-section" class="fsec" style="display:none;grid-column:1/-1">
+            <h3>S3 source
+              <button class="btn-sm" style="font-weight:normal;text-transform:none;letter-spacing:0;margin-left:8px" title="Refresh file list" onclick="s3LoadFileList()">↺</button>
+            </h3>
+            <div id="js-s3-list-wrap" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;margin-bottom:6px;background:var(--bg2)">
+              <div id="js-s3-list" style="padding:6px 8px;font-size:11px;color:var(--muted)">—</div>
             </div>
-            <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
-              <div id="js-s3-fetch-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.2s"></div>
+            <div id="js-s3-fetch-progress" style="display:none;margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
+                <span id="js-s3-fetch-file" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                <span id="js-s3-fetch-speed" style="color:var(--muted)"></span>
+                <span id="js-s3-fetch-pct" style="color:var(--accent);font-weight:600;min-width:5ch;text-align:right"></span>
+              </div>
+              <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
+                <div id="js-s3-fetch-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.2s"></div>
+              </div>
+            </div>
+            <div class="frow" style="gap:6px;align-items:center">
+              <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                <input type="checkbox" id="js-s3-all" onchange="_s3ToggleAll(this.checked)">
+                <span style="color:var(--muted)">All missing</span>
+              </label>
+              <button class="btn-sm" id="btn-s3-fetch" onclick="s3FetchSources()">↓ Fetch selected</button>
+              <span id="js-s3-fetch-status" style="font-size:11px;color:var(--muted);align-self:center"></span>
+              <button class="btn-sm" style="margin-left:auto;color:var(--red);border-color:var(--red)" onclick="s3PurgeLocal()">✕ Purge local</button>
             </div>
           </div>
-          <div class="frow" style="gap:6px;align-items:center">
-            <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
-              <input type="checkbox" id="js-s3-all" onchange="_s3ToggleAll(this.checked)">
-              <span style="color:var(--muted)">All missing</span>
-            </label>
-            <button class="btn-sm" id="btn-s3-fetch" onclick="s3FetchSources()">↓ Fetch selected</button>
-            <span id="js-s3-fetch-status" style="font-size:11px;color:var(--muted);align-self:center"></span>
-            <button class="btn-sm" style="margin-left:auto;color:var(--red);border-color:var(--red)" onclick="s3PurgeLocal()">✕ Purge local</button>
-          </div>
-        </div>
-        <div style="display:flex;gap:20px;margin-bottom:20px">
-          <div class="fsec" style="flex:0 0 auto;margin-bottom:0">
+          <!-- SCENE DETECTION -->
+          <div class="fsec" style="margin-bottom:0;padding-right:16px;border-top:1px solid var(--border);padding-top:16px">
             <h3 data-i18n="sec.scene_detect">Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(requires Analyze)</span></h3>
             <div class="frow">
               <div class="ff"><label data-i18n-tip="sd_threshold" data-i18n="lbl.sd_threshold">Detect threshold</label><input type="number" id="js-sd-threshold" placeholder="20" min="5" max="100" step="1" onchange="saveSettingsField()"></div>
               <div class="ff"><label data-i18n-tip="sd_min_scene" data-i18n="lbl.sd_min_scene">Min scene len</label><input type="number" id="js-sd-min-scene" placeholder="10" min="1" max="120" step="1" style="width:60px" onchange="saveSettingsField()"></div>
             </div>
           </div>
-          <div style="width:1px;background:var(--border);align-self:stretch;margin:0 4px"></div>
-          <div class="fsec" style="flex:1;margin-bottom:0">
+          <!-- SCENE SELECTION -->
+          <div class="fsec" style="margin-bottom:0;border-left:1px solid var(--border);border-top:1px solid var(--border);padding-left:16px;padding-top:16px">
             <h3 data-i18n="sec.scene_sel">Scene selection</h3>
             <div class="frow">
               <div class="ff"><label data-i18n-tip="max_scene" data-i18n="lbl.max_scene">Max scene sec</label><input type="number" id="js-max-scene" oninput="markManual('js')" onchange="saveSettingsField()"></div>
@@ -548,17 +545,9 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 
       <!-- Log tab: split log + stats -->
       <div id="log-split">
-        <div style="padding:4px 14px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;min-height:28px">
-          <div id="log-kill-inline" style="display:none">
+        <div id="log-kill-header" style="display:none;padding:4px 14px;background:var(--bg2);border-bottom:1px solid var(--border);min-height:28px">
+          <div id="log-kill-inline">
             <button id="btn-kill-log" onclick="killJob()" style="background:transparent;border:1px solid var(--red);color:var(--red);padding:2px 10px;cursor:pointer;font-family:var(--font);font-size:11px;border-radius:3px">■ Stop job</button>
-          </div>
-          <div id="log-filter-widget" style="margin-left:auto;position:relative">
-            <button id="log-filter-trigger" onclick="_toggleLogFilterMenu(event)">Info ▾</button>
-            <div id="log-filter-menu">
-              <div class="lfm-item" data-lf="steps" onclick="setLogFilter('steps')">Steps</div>
-              <div class="lfm-item active" data-lf="info"  onclick="setLogFilter('info')">Info</div>
-              <div class="lfm-item" data-lf="all"   onclick="setLogFilter('all')">All</div>
-            </div>
           </div>
         </div>
         <div id="log-panel" class="lf-info"></div>
@@ -1648,7 +1637,7 @@ async function openJob(jobId) {
   document.getElementById('frames-grid').innerHTML = '';
   document.getElementById('rf-files').innerHTML = '';
   document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-inline').style.display = 'none';
+  document.getElementById('log-kill-header').style.display = 'none';
   document.getElementById('jh-path').textContent = '…';
   document.getElementById('jh-status').textContent = '';
   document.getElementById('jh-elapsed').textContent = '';
@@ -1682,7 +1671,7 @@ async function openJob(jobId) {
 
   if (job.status === 'running') {
     document.getElementById('btn-kill').style.display = '';
-  document.getElementById('log-kill-inline').style.display = '';
+  document.getElementById('log-kill-header').style.display = '';
     startElapsedTimer(job.started_at);
   } else if (job.status === 'queued') {
     document.getElementById('jh-status').textContent = 'queued';
@@ -1768,12 +1757,12 @@ function connectJobWs(jobId, startedAt) {
       setStatusDot(msg.status);
       if (msg.status==='running') {
         document.getElementById('btn-kill').style.display = '';
-  document.getElementById('log-kill-inline').style.display = '';
+  document.getElementById('log-kill-header').style.display = '';
         document.getElementById('jh-status').textContent = '';
         startElapsedTimer(startedAt);
       } else {
         document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-inline').style.display = 'none';
+  document.getElementById('log-kill-header').style.display = 'none';
         if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
         if (msg.phase === 'analyzed') {
           loadFrames(jobId);
@@ -2072,7 +2061,7 @@ async function killJob() {
   if (!await showConfirm('Stop job', 'Stop the running job?\nProgress so far will be lost.', null, 'Stop')) return;
   await api.del(`/api/jobs/${currentJobId}`);
   document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-inline').style.display = 'none';
+  document.getElementById('log-kill-header').style.display = 'none';
 }
 
 async function removeJob(jobId) {
@@ -2103,6 +2092,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', TAB_NAMES[i] === name));
   document.getElementById('job-settings-panel').style.display = name==='settings' ? 'flex' : 'none';
   document.getElementById('log-split').style.display          = name==='log'      ? 'flex' : 'none';
+  document.getElementById('log-filter-widget').style.display  = name==='log'      ? ''     : 'none';
   document.getElementById('gallery-panel').classList.toggle('active', name==='gallery');
   document.getElementById('music-panel').classList.toggle('active', name==='music');
   document.getElementById('summary-panel').classList.toggle('active', name==='summary');
@@ -3505,13 +3495,8 @@ let _proxyPollTimer = null;
 
 async function startProxy() {
   if (!currentJobId) return;
-  // First check current status
-  const st = await api.get(`/api/jobs/${currentJobId}/proxy-status`);
-  if (st && st.done && st.finished >= st.total && st.total > 0) {
-    _updateProxyUI(st);
-    return; // already complete
-  }
-  // Kick off (server is idempotent if already running)
+  // Always kick off — server checks actual proxy files, not cached status.
+  // Idempotent: does nothing if already running.
   await api.post(`/api/jobs/${currentJobId}/start-proxy`, {});
   _pollProxyStatus();
 }
@@ -3528,57 +3513,89 @@ function _pollProxyStatus() {
 }
 
 function _updateProxyUI(st) {
-  const label    = document.getElementById('js-proxy-label');
-  const count    = document.getElementById('js-proxy-count');
-  const progress = document.getElementById('js-proxy-progress');
-  const file     = document.getElementById('js-proxy-file');
-  const pct      = document.getElementById('js-proxy-pct');
-  const bar      = document.getElementById('js-proxy-bar');
-  if (!label) return;
+  const bars = document.getElementById('js-proxy-bars');
+  if (!bars) return;
 
   const total    = st.total || 0;
   const finished = st.finished || 0;
-  const pctVal   = total > 0 ? Math.round(finished / total * 100) : 0;
+  const cams     = st.cams || null;
 
   if (st.not_started) {
-    label.textContent = 'Not started';
-    count.textContent = '';
-    progress.style.display = 'none';
+    bars.innerHTML = '<span style="font-size:11px;color:var(--muted)">—</span>';
     return;
   }
   if (st.done) {
+    let msg, color;
     if (st.cancelled) {
-      label.textContent = 'Cancelled';
-      label.style.color = 'var(--muted)';
+      msg = 'Cancelled'; color = 'var(--muted)';
     } else if (st.error) {
-      label.textContent = 'Error: ' + st.error;
-      label.style.color = 'var(--red)';
-      appendLog(`[proxy] Error: ${st.error}`);
+      msg = 'Error: ' + st.error; color = 'var(--red)';
+      appendLog('[proxy] Error: ' + st.error);
     } else if (finished < total) {
-      label.textContent = `Done — ${finished}/${total} (${total - finished} failed)`;
-      label.style.color = 'var(--red)';
+      msg = `Done — ${finished}/${total} (${total - finished} failed)`; color = 'var(--red)';
     } else {
-      label.textContent = `Done — ${finished}/${total} proxy files`;
-      label.style.color = 'var(--muted)';
+      msg = `Done — ${finished}/${total} proxy files`; color = 'var(--muted)';
     }
-    count.textContent = '';
-    progress.style.display = 'none';
+    bars.innerHTML = `<span style="font-size:11px;color:${color}">${msg}</span>`;
     return;
   }
-  // Running
-  if (st.error) {
-    label.textContent = '⚠ ' + st.error;
-    label.style.color = 'var(--red)';
-    appendLog(`[proxy] ${st.error}`);
+
+  // Running — per-cam bars
+  if (cams && Object.keys(cams).length > 0) {
+    bars.innerHTML = '';
+    for (const [cam, info] of Object.entries(cams)) {
+      const pct = info.total > 0 ? Math.round(info.finished / info.total * 100) : 0;
+      const isCurrent = st.current_cam === cam;
+
+      const row = document.createElement('div');
+      row.style.cssText = 'margin-bottom:7px';
+
+      const labelRow = document.createElement('div');
+      labelRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:2px';
+
+      const camSpan = document.createElement('span');
+      camSpan.style.cssText = 'color:var(--fg);font-weight:600;min-width:40px';
+      camSpan.textContent = cam || '—';
+
+      const fileSpan = document.createElement('span');
+      fileSpan.style.cssText = 'color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px';
+      fileSpan.textContent = isCurrent ? (st.current_file || '') : '';
+
+      const countSpan = document.createElement('span');
+      countSpan.style.cssText = 'color:var(--accent);font-weight:600;white-space:nowrap';
+      countSpan.textContent = `${info.finished}/${info.total}`;
+
+      labelRow.append(camSpan, fileSpan, countSpan);
+
+      const track = document.createElement('div');
+      track.style.cssText = 'background:var(--bg3);border-radius:3px;height:3px;overflow:hidden';
+      const fill = document.createElement('div');
+      fill.style.cssText = `background:var(--accent);height:100%;width:${pct}%;transition:width 0.3s`;
+      track.appendChild(fill);
+
+      row.append(labelRow, track);
+      bars.appendChild(row);
+    }
+    if (st.error) {
+      const err = document.createElement('div');
+      err.style.cssText = 'font-size:10px;color:var(--red);margin-top:2px';
+      err.textContent = '⚠ ' + st.error;
+      bars.appendChild(err);
+      appendLog('[proxy] ' + st.error);
+    }
   } else {
-    label.textContent = 'Creating proxies…';
-    label.style.color = 'var(--muted)';
+    // Fallback: single bar (no cam info yet)
+    const pct = total > 0 ? Math.round(finished / total * 100) : 0;
+    bars.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:2px">
+        <span style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${st.current_file || 'Creating proxies…'}</span>
+        <span style="color:var(--accent);font-weight:600">${finished}/${total}</span>
+      </div>
+      <div style="background:var(--bg3);border-radius:3px;height:3px;overflow:hidden">
+        <div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.3s"></div>
+      </div>`;
+    if (st.error) appendLog('[proxy] ' + st.error);
   }
-  count.textContent = `${finished}/${total}`;
-  progress.style.display = '';
-  file.textContent  = st.current_file || '';
-  pct.textContent   = pctVal + '%';
-  bar.style.width   = pctVal + '%';
 }
 
 function s3FetchSources() {

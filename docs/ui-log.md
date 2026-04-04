@@ -10,6 +10,24 @@ Po prawej stronie wykresy zasobów systemowych aktualizowane co sekundę: CPU, R
 
 On the right: system resource graphs updated every second — CPU, RAM, GPU, VRAM — and the job queue.
 
+## Filtr logów / Log filter
+
+Rozwijane menu **Info ▾** w nagłówku loga pozwala ograniczyć widoczne wpisy:
+
+| Poziom | Widoczne linie |
+|--------|---------------|
+| **Steps** | Tylko główne kroki pipeline (nagłówki faz) |
+| **Info** | Kroki + linie informacyjne (domyślnie) |
+| **All** | Wszystko — włącznie z postępem per-plik |
+
+The **Info ▾** dropdown in the log header filters visible entries:
+
+| Level | Visible lines |
+|-------|---------------|
+| **Steps** | Main pipeline steps only (phase headers) |
+| **Info** | Steps + informational lines (default) |
+| **All** | Everything — including per-file progress |
+
 ## ■ Stop job
 
 Przycisk **■ Stop job** widoczny nad logiem gdy job jest uruchomiony. Wysyła SIGTERM do procesu — job zatrzymuje się, pliki częściowe pozostają na dysku (można wznowić przez Re-analyze).
