@@ -226,7 +226,9 @@ if dual_cam:
                 print(f"  Warning: no timestamp for {stem} (no creation_time, no filename timestamp)")
                 continue
             try:
-                sdf = pd.read_csv(csv_path, skiprows=1)
+                sdf = pd.read_csv(csv_path)
+                if "Scene Number" not in sdf.columns:
+                    sdf = pd.read_csv(csv_path, skiprows=1)
                 for _, row in sdf.iterrows():
                     snum = int(row["Scene Number"])
                     key  = f"{stem}-scene-{snum:03d}"
@@ -319,6 +321,7 @@ if dual_cam:
         back_entries.append({
             "tuple": (sc, fp, dur, take, float(row['score']), row['camera']),
             "ts":    adj_ts,
+            "dur":   dur,
         })
     back_entries.sort(key=lambda e: (e["ts"] or 0))
 
@@ -335,7 +338,15 @@ if dual_cam:
                 continue
             if main_ts is None or be["ts"] is None:
                 continue
-            dist = abs(be["ts"] - main_ts)
+            # Distance is 0 if main_ts falls inside the back scene's time range,
+            # otherwise the gap to the nearer edge (start or end).
+            be_end = be["ts"] + be["dur"]
+            if main_ts < be["ts"]:
+                dist = be["ts"] - main_ts
+            elif main_ts > be_end:
+                dist = main_ts - be_end
+            else:
+                dist = 0.0
             if dist <= TIMESTAMP_MATCH_SEC and dist < best_dist:
                 best_dist = dist
                 best = be

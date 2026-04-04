@@ -6,10 +6,12 @@ Run: uvicorn webapp.server:app --host 0.0.0.0 --port 8000
 
 import asyncio
 import configparser
+import hashlib
 import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -43,6 +45,30 @@ WEBAPP_DIR  = Path(__file__).resolve().parent
 STATIC_DIR  = WEBAPP_DIR / "static"
 JOBS_DIR    = WEBAPP_DIR / "jobs"
 BROWSE_ROOT = Path(os.environ.get("BROWSE_ROOT", str(Path.home())))
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+ENABLE_AUTH  = os.environ.get("ENABLE_AUTH", "false").lower() in ("1", "true", "yes")
+USERS_FILE   = Path(__file__).resolve().parent / "users.json"
+_sessions: dict[str, str] = {}   # token → username
+
+def _hash_pw(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def _load_users() -> list[dict]:
+    if USERS_FILE.exists():
+        try:
+            return json.loads(USERS_FILE.read_text()).get("users", [])
+        except Exception:
+            return []
+    return []
+
+def _save_users(users: list[dict]):
+    USERS_FILE.write_text(json.dumps({"users": users}))
+
+def _get_session_user(request: Request) -> Optional[str]:
+    token = request.cookies.get("ae_session")
+    return _sessions.get(token) if token else None
+
 
 def _resolve_data_root() -> Optional[Path]:
     """Return the user data root: /data if non-empty (Docker), else from webapp config."""
@@ -168,12 +194,33 @@ job_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 _threshold_searches: dict[str, dict] = {}   # search_id → status dict
 _threshold_tasks:    dict[str, asyncio.Task] = {}  # search_id → running task
 
+# ── Proxy-creation state (one task per job) ────────────────────────────────────
+_proxy_tasks:  dict[str, asyncio.Task] = {}   # job_id → running task
+_proxy_status: dict[str, dict] = {}           # job_id → status dict
+
 # ── App ────────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="autoframe")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _NO_CACHE_EXTS = {".html", ".js", ".css", ".json", ".txt", ".svg", ".ico"}
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not ENABLE_AUTH:
+        return await call_next(request)
+    path = request.url.path
+    # Always allow: auth endpoints, static assets, main page, websockets, favicon
+    if (path.startswith("/api/auth/") or
+            path.startswith("/static/") or
+            path.startswith("/ws/") or
+            path in ("/", "/favicon.ico")):
+        return await call_next(request)
+    # Require valid session for everything else
+    if _get_session_user(request) is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def no_cache_middleware(request: Request, call_next):
@@ -385,6 +432,99 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
+
+# ── Auth endpoints ─────────────────────────────────────────────────────────────
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request):
+    users = _load_users()
+    user = _get_session_user(request)
+    return {
+        "enabled":       ENABLE_AUTH,
+        "has_users":     len(users) > 0,
+        "authenticated": not ENABLE_AUTH or user is not None,
+        "username":      user,
+    }
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request, data: dict = Body(...)):
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        raise HTTPException(400, "Username and password required")
+    users = _load_users()
+    pw_hash = _hash_pw(password)
+    match = next((u for u in users if u["username"] == username and u["password_hash"] == pw_hash), None)
+    if not match:
+        raise HTTPException(401, "Invalid credentials")
+    token = secrets.token_hex(32)
+    _sessions[token] = username
+    response = JSONResponse({"ok": True, "username": username})
+    response.set_cookie("ae_session", token, httponly=True, samesite="strict", max_age=86400 * 30)
+    return response
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request):
+    token = request.cookies.get("ae_session")
+    if token:
+        _sessions.pop(token, None)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("ae_session")
+    return response
+
+@app.get("/api/auth/users")
+async def get_auth_users(request: Request):
+    users = _load_users()
+    if ENABLE_AUTH and users and not _get_session_user(request):
+        raise HTTPException(401)
+    return [{"username": u["username"]} for u in users]
+
+@app.post("/api/auth/users")
+async def create_auth_user(request: Request, data: dict = Body(...)):
+    # Allow creating first user without auth (bootstrap); subsequent requires auth
+    if ENABLE_AUTH:
+        existing = _load_users()
+        if existing and not _get_session_user(request):
+            raise HTTPException(401)
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        raise HTTPException(400, "Username and password required")
+    users = _load_users()
+    if any(u["username"] == username for u in users):
+        raise HTTPException(409, "User already exists")
+    users.append({"username": username, "password_hash": _hash_pw(password)})
+    _save_users(users)
+    return {"ok": True}
+
+@app.delete("/api/auth/users/{username}")
+async def delete_auth_user(request: Request, username: str):
+    if ENABLE_AUTH and not _get_session_user(request):
+        raise HTTPException(401)
+    users = _load_users()
+    new_users = [u for u in users if u["username"] != username]
+    if len(new_users) == len(users):
+        raise HTTPException(404, "User not found")
+    if not new_users:
+        raise HTTPException(400, "Cannot delete last user")
+    _save_users(new_users)
+    return {"ok": True}
+
+@app.patch("/api/auth/users/{username}")
+async def update_auth_user(request: Request, username: str, data: dict = Body(...)):
+    if ENABLE_AUTH and not _get_session_user(request):
+        raise HTTPException(401)
+    password = data.get("password") or ""
+    if not password:
+        raise HTTPException(400, "Password required")
+    users = _load_users()
+    user = next((u for u in users if u["username"] == username), None)
+    if not user:
+        raise HTTPException(404, "User not found")
+    user["password_hash"] = _hash_pw(password)
+    _save_users(users)
+    return {"ok": True}
+
 
 @app.get("/")
 async def index():
@@ -662,15 +802,6 @@ async def delete_file_endpoint(path: str = Query(...)):
     f.unlink()
     return {"ok": True}
 
-
-@app.get("/api/serve-file")
-async def serve_file_simple(path: str = Query(...)):
-    f = Path(path).resolve()
-    if not str(f).startswith(str(BROWSE_ROOT)):
-        raise HTTPException(403)
-    if not f.is_file():
-        raise HTTPException(404)
-    return FileResponse(str(f))
 
 
 @app.get("/api/s3/status")
@@ -1130,7 +1261,11 @@ def read_job_config(work_dir: Path) -> dict:
                 raw = cp.get(section, key)
                 if field in ("no_intro", "no_music"):
                     result[field] = raw.strip().lower() in ("true", "1", "yes")
-                elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold", "sd_min_scene"):
+                elif field == "sd_min_scene":
+                    # Keep as string with "s" suffix (e.g. "10s") — not a plain float
+                    v = float(raw.rstrip('s').strip())
+                    result[field] = f"{int(v) if v == int(v) else v}s"
+                elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold"):
                     result[field] = float(raw.rstrip('s').strip())
                 elif field == "cameras":
                     result[field] = [c.strip() for c in raw.split(",") if c.strip()]
@@ -1146,6 +1281,14 @@ def read_job_config(work_dir: Path) -> dict:
         if legacy:
             result["cameras"] = legacy
     return result
+
+
+def _read_scenes_csv(csv_path: Path) -> "pd.DataFrame":
+    """Read a PySceneDetect *-Scenes.csv tolerating 1- or 2-row headers."""
+    sdf = pd.read_csv(csv_path)
+    if "Scene Number" not in sdf.columns:
+        sdf = pd.read_csv(csv_path, skiprows=1)
+    return sdf
 
 
 def update_config_ini(cfg_path: Path, updates: dict[str, dict[str, str]]):
@@ -1325,6 +1468,18 @@ def _resolve_params(d: dict, work_dir: Path) -> dict:
         d["max_scene"] = cfg_chain[0].get("max_scene") or _gf("scene_selection", "max_scene_sec", 10)
     if d.get("per_file") is None:
         d["per_file"]  = cfg_chain[0].get("per_file")  or _gf("scene_selection", "max_per_file_sec", 45)
+    if d.get("sd_threshold") is None:
+        d["sd_threshold"] = cfg_chain[0].get("sd_threshold") or _gf("scene_detection", "threshold", 20)
+    if d.get("sd_min_scene") is None:
+        raw = cfg_chain[0].get("sd_min_scene")   # already "10s" string from read_job_config
+        if raw is None:
+            try:
+                gs = global_cp.get("scene_detection", "min_scene_len").rstrip('s').strip()
+                v  = float(gs)
+                raw = f"{int(v) if v == int(v) else v}s"
+            except Exception:
+                raw = None
+        d["sd_min_scene"] = raw if raw else "10s"
     return d
 
 
@@ -1501,6 +1656,46 @@ async def cancel_threshold_search(search_id: str):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{job_id}/start-proxy")
+async def start_proxy(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    # If already running, return current status
+    existing = _proxy_tasks.get(job_id)
+    if existing and not existing.done():
+        return {"ok": True, "already_running": True}
+
+    _proxy_status[job_id] = {"done": False, "total": 0, "finished": 0, "current_file": ""}
+
+    async def _run():
+        try:
+            async for update in pipeline.create_proxy(job.params, job.work_dir()):
+                _proxy_status[job_id] = update
+        except asyncio.CancelledError:
+            _proxy_status[job_id] = {"done": True, "cancelled": True,
+                                     "total": _proxy_status.get(job_id, {}).get("total", 0),
+                                     "finished": _proxy_status.get(job_id, {}).get("finished", 0)}
+        except Exception as e:
+            _proxy_status[job_id] = {"done": True, "error": str(e)}
+        finally:
+            _proxy_tasks.pop(job_id, None)
+
+    task = asyncio.create_task(_run())
+    _proxy_tasks[job_id] = task
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{job_id}/proxy-status")
+async def get_proxy_status(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(404)
+    st = _proxy_status.get(job_id)
+    if st is None:
+        return {"done": False, "total": 0, "finished": 0, "current_file": "", "not_started": True}
+    return st
+
+
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str):
     job = jobs.get(job_id)
@@ -1587,7 +1782,7 @@ async def get_analyze_result(job_id: str):
                 cap = min(max_scene, per_file)
                 for csv_path in (job.auto_dir() / "csv").glob("*-Scenes.csv"):
                     try:
-                        sdf = pd.read_csv(csv_path, skiprows=1)
+                        sdf = _read_scenes_csv(csv_path)
                         for _, row in sdf.iterrows():
                             d = float(row.get("Length (seconds)", 0) or 0)
                             if d > 0:
@@ -1837,19 +2032,33 @@ async def job_frames(job_id: str):
     if not scores_csv.exists():
         raise HTTPException(404, "No scores yet")
 
-    # Build scene-duration lookup from per-video Scenes CSVs
+    # Build scene-duration lookup.
+    # Prefer duration_cache.json (actual ffprobe values, built during DRY_RUN).
+    # PySceneDetect CSV "Length (seconds)" is inflated ~10x for VFR files due to
+    # container timebase mismatch, so it's only used when no cache entry exists.
     durations: dict[str, float] = {}
+    csv_durations: dict[str, float] = {}
     if csv_dir.exists():
         for csv_path in csv_dir.glob("*-Scenes.csv"):
             video_prefix = csv_path.stem[:-len("-Scenes")]
             try:
-                sdf = pd.read_csv(csv_path, skiprows=1)
+                sdf = _read_scenes_csv(csv_path)
                 for _, srow in sdf.iterrows():
                     snum = int(srow["Scene Number"])
                     key  = f"{video_prefix}-scene-{snum:03d}"
-                    durations[key] = round(float(srow["Length (seconds)"]), 2)
+                    csv_durations[key] = round(float(srow["Length (seconds)"]), 2)
             except Exception:
                 pass
+    durations = dict(csv_durations)
+    dur_cache_path = job.auto_dir() / "duration_cache.json"
+    if dur_cache_path.exists():
+        try:
+            raw = json.loads(dur_cache_path.read_text())
+            # Cache keys have .mp4 suffix; strip it. Override CSV values with accurate probed durations.
+            for k, v in raw.items():
+                durations[k.removesuffix(".mp4")] = v
+        except Exception:
+            pass
 
     df = pd.read_csv(scores_csv).sort_values("scene")
     df = df.dropna(subset=["score"])

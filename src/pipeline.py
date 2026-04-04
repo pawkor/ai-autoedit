@@ -71,6 +71,22 @@ async def _probe_duration(path: Path, ffprobe: str) -> float | None:
         return None
 
 
+async def _probe_video_duration(path: Path, ffprobe: str) -> float | None:
+    """Return video stream duration (not container duration).
+    Falls back to container duration if video stream has no duration tag."""
+    proc = await asyncio.create_subprocess_exec(
+        ffprobe, "-v", "quiet", "-select_streams", "v:0",
+        "-show_entries", "stream=duration",
+        "-of", "csv=p=0", str(path),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    try:
+        return float(out.strip())
+    except Exception:
+        return await _probe_duration(path, ffprobe)
+
+
 async def _run(cmd: list, cwd=None, env=None) -> tuple[int, str]:
     """Run command, return (returncode, combined output)."""
     proc = await asyncio.create_subprocess_exec(
@@ -125,6 +141,18 @@ def _back_cam_sources(cam_src_csv: Path, main_cam: str) -> set[str]:
     with open(cam_src_csv) as _f:
         return {r["source"] for r in _csv_mod.DictReader(_f)
                 if r.get("camera") != main_cam}
+
+
+def _proxy_path(sf: Path, work_dir: Path, auto_dir: Path, cameras: list) -> Path:
+    """Return proxy file path for source file sf."""
+    proxy_dir = auto_dir / "proxy"
+    for cam in cameras:
+        try:
+            rel = sf.relative_to(work_dir / cam)
+            return proxy_dir / cam / rel.with_suffix(".mp4")
+        except ValueError:
+            continue
+    return proxy_dir / sf.with_suffix(".mp4").name
 
 
 async def estimate(params: dict, work_dir: Path) -> dict:
@@ -245,6 +273,92 @@ async def find_threshold_iter(params: dict, work_dir: Path, target_sec: float):
         yield {**best, "done": True}
     else:
         yield {"done": True, "error": "No result"}
+
+
+async def create_proxy(params: dict, work_dir: Path):
+    """
+    Async generator — creates 480p/20fps CFR proxy files for scene detection.
+    Yields progress dicts: {done, total, current_file, finished, error?}
+    Final dict: {done: True, finished, total}
+    """
+    cp          = _load_cfg(work_dir)
+    ffmpeg      = os.path.expanduser(_s(cp, "paths", "ffmpeg", "ffmpeg"))
+    work_subdir = _s(cp, "paths", "work_subdir", "_autoframe")
+    auto_dir    = work_dir / work_subdir
+
+    _raw_cams = params.get("cameras") or []
+    if isinstance(_raw_cams, str):
+        _raw_cams = [c.strip() for c in _raw_cams.split(",") if c.strip()]
+    if not _raw_cams:
+        _ca = str(params.get("cam_a") or "")
+        _cb = str(params.get("cam_b") or "")
+        _raw_cams = [c for c in [_ca, _cb] if c]
+    cameras = _raw_cams
+
+    def _is_source(f: Path) -> bool:
+        n = f.name.lower()
+        return n.endswith(".mp4") and not n.startswith("highlight") and not n.endswith(".lrv")
+
+    if cameras:
+        source_files = sorted(
+            f for cam in cameras
+            for f in (work_dir / cam).glob("*.mp4")
+            if _is_source(f)
+        )
+    else:
+        source_files = sorted(f for f in work_dir.glob("*.mp4") if _is_source(f))
+
+    total    = len(source_files)
+    finished = 0
+
+    for sf in source_files:
+        proxy = _proxy_path(sf, work_dir, auto_dir, cameras)
+        proxy_tmp = proxy.with_suffix(".mp4.tmp")
+
+        # Already done
+        if proxy.exists():
+            finished += 1
+            yield {"done": False, "total": total, "finished": finished,
+                   "current_file": sf.name}
+            continue
+
+        # Skip if another process is already building this proxy
+        if proxy_tmp.exists():
+            yield {"done": False, "total": total, "finished": finished,
+                   "current_file": sf.name, "skipped": True}
+            continue
+
+        proxy.parent.mkdir(parents=True, exist_ok=True)
+        yield {"done": False, "total": total, "finished": finished,
+               "current_file": sf.name}
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ffmpeg, "-y", "-i", str(sf),
+                "-vf", "scale=-2:480,fps=20",
+                "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
+                "-fps_mode", "cfr", "-an",
+                "-f", "mp4",
+                str(proxy_tmp),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr_bytes = await proc.communicate()
+            if proc.returncode == 0 and proxy_tmp.exists():
+                proxy_tmp.rename(proxy)
+                finished += 1
+            else:
+                proxy_tmp.unlink(missing_ok=True)
+                err_msg = stderr_bytes.decode("utf-8", errors="replace").strip().splitlines()
+                err_tail = " | ".join(err_msg[-3:]) if err_msg else f"rc={proc.returncode}"
+                yield {"done": False, "total": total, "finished": finished,
+                       "current_file": sf.name,
+                       "error": f"ffmpeg failed for {sf.name}: {err_tail}"}
+        except asyncio.CancelledError:
+            proxy_tmp.unlink(missing_ok=True)
+            raise
+
+    yield {"done": True, "total": total, "finished": finished}
 
 
 async def run(params: dict, work_dir: Path,
@@ -387,24 +501,53 @@ async def run(params: dict, work_dir: Path,
     total_detect = len(source_files)
     yield f"[2/6] Scene detection ({total_detect} files)..."
 
-    # Invalidate CSV cache when detection params change
+    # Invalidate CSV cache when detection params change.
+    # Normalise threshold to "22" not "22.0" so int/float variants compare equal.
+    def _norm_detect_sig(s: str) -> str:
+        try:
+            t, m = s.split("|", 1)
+            v = float(t)
+            return f"{int(v) if v == int(v) else v}|{m}"
+        except Exception:
+            return s
     _detect_params_sig = f"{sd_threshold}|{sd_min_scene}"
     _detect_params_file = auto_dir / "csv" / ".detect_params"
     _csv_dir = auto_dir / "csv"
     _csv_dir.mkdir(parents=True, exist_ok=True)
     _stored_sig = _detect_params_file.read_text().strip() if _detect_params_file.exists() else None
-    if _stored_sig != _detect_params_sig:
-        stale = list(_csv_dir.glob("*-Scenes.csv"))
-        for f in stale:
+    if _norm_detect_sig(_stored_sig or "") != _norm_detect_sig(_detect_params_sig):
+        stale_csv    = list(_csv_dir.glob("*-Scenes.csv"))
+        stale_clips  = list((auto_dir / "autocut").glob("*.mp4"))
+        stale_frames = list((auto_dir / "frames").glob("*.jpg"))
+        for f in stale_csv + stale_clips + stale_frames:
             f.unlink()
-        if stale:
-            yield f"  ⚠ Detect params changed — cleared {len(stale)} cached CSV(s)"
+        # Scores reference old clip filenames → must be regenerated too
+        for stale_score in [auto_dir / "scene_scores.csv", auto_dir / "scores_prompts.hash",
+                             auto_dir / "duration_cache.json", auto_dir / "validation_ok.txt"]:
+            stale_score.unlink(missing_ok=True)
+        msg_parts = []
+        if stale_csv:    msg_parts.append(f"{len(stale_csv)} CSV(s)")
+        if stale_clips:  msg_parts.append(f"{len(stale_clips)} clip(s)")
+        if stale_frames: msg_parts.append(f"{len(stale_frames)} frame(s)")
+        if msg_parts:
+            yield f"  ⚠ Detect params changed — cleared {', '.join(msg_parts)}"
+
+    def _count_csv_scenes(p: Path) -> int:
+        """Count scene data rows, tolerating 1 or 2 header lines and leading blank lines."""
+        try:
+            with open(p) as fh:
+                return sum(
+                    1 for ln in fh
+                    if ln.strip() and not ln.lstrip().startswith("Scene Number")
+                )
+        except Exception:
+            return 0
 
     to_detect = []
     for sf in source_files:
         csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
         if csv.exists():
-            count = max(0, sum(1 for _ in open(csv)) - 2)
+            count = _count_csv_scenes(csv)
             yield f"  ✓ {sf.name} ({count} scenes, cached)"
         else:
             to_detect.append(sf)
@@ -417,10 +560,18 @@ async def run(params: dict, work_dir: Path,
 
         async def _detect_one(sf):
             async with sem:
-                fps = await _probe_fps(sf, ffprobe)
-                fps_args = ["-f", str(fps)] if fps else ["-f", "3"]
+                proxy      = _proxy_path(sf, work_dir, auto_dir, cameras)
+                proxy_tmp  = proxy.with_suffix(".mp4.tmp")
+                # Wait for in-progress proxy (poll every 2s, up to 30 min)
+                for _ in range(900):
+                    if proxy.exists():
+                        break
+                    if not proxy_tmp.exists():
+                        break  # proxy not started — use original
+                    await asyncio.sleep(2)
+                detect_src = str(proxy) if proxy.exists() else str(sf)
                 proc = await asyncio.create_subprocess_exec(
-                    "scenedetect", *fps_args, "-i", str(sf),
+                    "scenedetect", "-i", detect_src,
                     "detect-content", "--threshold", sd_threshold,
                     "--min-scene-len", sd_min_scene,
                     "list-scenes", "-o", str(auto_dir / "csv"),
@@ -428,6 +579,13 @@ async def run(params: dict, work_dir: Path,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 await proc.wait()
+            # scenedetect names CSV after the input stem; if we used proxy,
+            # rename to the original stem so the rest of pipeline finds it.
+            if proxy.exists():
+                proxy_csv = auto_dir / "csv" / f"{proxy.stem}-Scenes.csv"
+                orig_csv  = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
+                if proxy_csv.exists() and not orig_csv.exists():
+                    proxy_csv.rename(orig_csv)
             csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
             count = max(0, sum(1 for _ in open(csv)) - 2) if csv.exists() else 0
             status = "✓" if csv.exists() else "✗"
@@ -450,10 +608,7 @@ async def run(params: dict, work_dir: Path,
         if not csv.exists():
             yield f"  [{split_i}/{total_split}] ✗ {sf.name}: no CSV, skipping"
             continue
-        try:
-            expected = max(0, sum(1 for _ in open(csv)) - 2)
-        except Exception:
-            expected = 0
+        expected = _count_csv_scenes(csv)
         existing = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
         if existing >= expected > 0:
             yield f"  [{split_i}/{total_split}] ✓ {sf.name} ({existing} scenes, cached)"
@@ -972,7 +1127,7 @@ async def run(params: dict, work_dir: Path,
             _st_path = Path(selected_track)
             if _st_path.exists():
                 video_to_mix = final or highlight
-                vid_dur      = await _probe_duration(video_to_mix, ffprobe) or 0
+                vid_dur      = await _probe_video_duration(video_to_mix, ffprobe) or 0
                 yield f"  Track (pinned): {_st_path.stem}"
                 output_music = _next_version(work_dir / f"{_output_name(work_dir)}.mp4")
                 fade_start = vid_dur - music_fade
@@ -1034,7 +1189,7 @@ async def run(params: dict, work_dir: Path,
                     energy_target = min(0.9, max(0.2, (avg_score - 0.14) * 10))
 
                     video_to_mix = final or highlight
-                    vid_dur      = await _probe_duration(video_to_mix, ffprobe) or 0
+                    vid_dur      = await _probe_video_duration(video_to_mix, ffprobe) or 0
 
                     tracks = list(all_tracks)
                     if music_genre:

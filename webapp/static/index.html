@@ -78,6 +78,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 /* ── Form ── */
 .fsec { margin-bottom:20px; }
 .fsec h3 { font-size:10px; color:var(--text); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; }
+#summary-panel .fsec h3 { margin-left:-20px; margin-right:-20px; padding-left:20px; padding-right:20px; }
 .frow { display:flex; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
 .ff { display:flex; flex-direction:column; gap:3px; min-width:110px; }
 .ff.wide { flex:1; }
@@ -187,11 +188,11 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .step { padding:2px 9px; border-radius:10px; font-size:10px; background:var(--bg3); border:1px solid var(--border); color:var(--muted); transition:all .2s; }
 .step.active { border-color:var(--yellow); color:var(--yellow); }
 .step.done   { border-color:var(--green); color:var(--green); }
-#job-tabs { padding:0 14px; border-bottom:1px solid var(--border); display:flex; gap:0; flex-shrink:0; align-items:center; }
-.tab { padding:7px 13px; cursor:pointer; font-size:12px; color:var(--muted); border-bottom:2px solid transparent; }
-.tab:hover { color:var(--text); }
-.tab.active { color:var(--accent); border-bottom-color:var(--accent); }
-.tab[data-badge]::after { content:attr(data-badge); margin-left:4px; font-size:9px; }
+#job-tabs { padding:6px 14px; border-bottom:1px solid var(--border); display:flex; gap:5px; flex-shrink:0; align-items:center; flex-wrap:wrap; }
+.tab { padding:4px 10px; cursor:pointer; font-size:11px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; text-align:center; line-height:1.3; transition:border-color .15s, color .15s, background .15s; }
+.tab:hover { border-color:var(--accent); }
+.tab.active { color:var(--accent); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, var(--bg3)); }
+.tab[data-badge]::after { content:attr(data-badge); margin-left:3px; font-size:9px; vertical-align:top; }
 .tab[data-badge="✓"]::after { color:var(--green); }
 .tab[data-badge="●"]::after { color:var(--yellow); }
 .tab[data-badge="○"]::after { color:var(--border); }
@@ -204,6 +205,20 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .log-step { color:var(--accent); font-weight:bold; }
 .log-ok   { color:var(--green); }
 .log-err  { color:var(--red); }
+/* Steps: only step headers + errors */
+#log-panel.lf-steps .log-ok,
+#log-panel.lf-steps .log-info,
+#log-panel.lf-steps .log-progress { display:none; }
+/* Info: everything except raw progress bars */
+#log-panel.lf-info .log-progress { display:none; }
+#log-filter-widget { position:relative; }
+#log-filter-trigger { background:transparent; border:1px solid var(--border); color:var(--muted); padding:2px 8px; cursor:pointer; font-family:var(--font); font-size:10px; border-radius:3px; white-space:nowrap; }
+#log-filter-trigger:hover { border-color:var(--accent); color:var(--accent); }
+#log-filter-menu { display:none; position:absolute; right:0; top:calc(100% + 4px); background:var(--bg2); border:1px solid var(--border); border-radius:4px; min-width:90px; z-index:200; box-shadow:0 4px 12px rgba(0,0,0,.4); }
+#log-filter-menu.open { display:block; }
+.lfm-item { padding:5px 12px; cursor:pointer; font-size:11px; color:var(--text); }
+.lfm-item:hover { background:var(--bg3); }
+.lfm-item.active { color:var(--accent); }
 .log-info { color:var(--blue); }
 #summary-panel { flex:1; overflow-y:auto; padding:20px; flex-direction:column; gap:14px; display:none; }
 #summary-panel.active { display:flex; }
@@ -386,31 +401,51 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
     </div>
     <div id="job-tabs">
       <div class="tab" data-i18n="tab.settings" onclick="switchTab('settings')">Settings</div>
-      <div class="tab" data-i18n="tab.gallery" onclick="switchTab('gallery')">Gallery</div>
+      <div class="tab" data-i18n="tab.gallery" onclick="switchTab('gallery')">Select scenes</div>
       <div class="tab" data-i18n="tab.music" onclick="switchTab('music')">Music</div>
-      <div class="tab" data-i18n="tab.summary" onclick="switchTab('summary')">Summary</div>
-      <div class="tab" data-i18n="tab.log" onclick="switchTab('log')">Log</div>
+      <div class="tab" data-i18n="tab.summary" onclick="switchTab('summary')">Render</div>
       <div class="tab" data-i18n="tab.results" onclick="switchTab('results')">Results</div>
+      <div class="tab" data-i18n="tab.log" onclick="switchTab('log')">Log</div>
     </div>
     <div id="tab-content">
 
       <!-- Settings tab -->
       <div id="job-settings-panel" style="display:none;flex:1;overflow-y:auto;padding:20px;flex-direction:column;gap:0">
-        <div class="fsec">
-          <h3 data-i18n="sec.source">Source</h3>
-          <div class="frow">
-            <div class="ff wide">
-            <label data-i18n="lbl.working_dir">Working directory</label>
-            <div class="dir-pick">
-              <input type="text" id="js-workdir" readonly size="32" style="color:var(--muted);flex:0 0 auto">
-              <button id="js-workdir-browse-btn" class="btn-sm" title="Browse files" onclick="_openWorkdirFileBrowser()">📁</button>
+        <div style="display:flex;gap:0;margin-bottom:0">
+          <div class="fsec" style="flex:0 0 auto;margin-bottom:0">
+            <h3 data-i18n="sec.source">Source</h3>
+            <div class="frow">
+              <div class="ff wide">
+              <label data-i18n="lbl.working_dir">Working directory</label>
+              <div class="dir-pick">
+                <input type="text" id="js-workdir" readonly size="32" style="color:var(--muted);flex:0 0 auto">
+                <button id="js-workdir-browse-btn" class="btn-sm" title="Browse files" onclick="_openWorkdirFileBrowser()">📁</button>
+              </div>
+            </div>
+            </div>
+            <div class="frow" style="flex-direction:column;gap:4px">
+              <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.cam_subfolders">Camera subfolders (A = audio source)</label>
+              <div id="js-cam-list"></div>
+              <button class="btn-sm" style="align-self:flex-start" onclick="addCamRow('js-cam-list')">+ Add camera</button>
             </div>
           </div>
-          </div>
-          <div class="frow" style="flex-direction:column;gap:4px">
-            <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.cam_subfolders">Camera subfolders (A = audio source)</label>
-            <div id="js-cam-list"></div>
-            <button class="btn-sm" style="align-self:flex-start" onclick="addCamRow('js-cam-list')">+ Add camera</button>
+          <div style="width:1px;background:var(--border);align-self:stretch;margin:0 4px"></div>
+          <div class="fsec" id="js-proxy-section" style="flex:1;margin-bottom:0">
+            <h3 data-i18n="sec.proxy">Proxy media</h3>
+            <div style="font-size:11px;margin-bottom:5px">
+              <span id="js-proxy-label" style="color:var(--muted)">—</span>
+              <span id="js-proxy-count" style="color:var(--accent);font-weight:600;margin-left:6px"></span>
+            </div>
+            <div id="js-proxy-progress" style="display:none;margin-bottom:5px">
+              <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
+                <span id="js-proxy-file" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                <span id="js-proxy-pct" style="color:var(--accent);font-weight:600;min-width:5ch;text-align:right"></span>
+              </div>
+              <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
+                <div id="js-proxy-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s"></div>
+              </div>
+            </div>
+            <button class="btn-sm" id="btn-proxy-start" onclick="startProxy()">▶ Create proxies</button>
           </div>
         </div>
         <div id="js-s3-section" class="fsec" style="display:none">
@@ -506,17 +541,27 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
           </div>
         </div>
         <div style="display:flex;align-items:stretch;gap:10px;margin-top:4px">
-          <button class="btn-primary" onclick="rerunFromSettings()"
+          <button class="btn-primary" onclick="rerunFromSettings()" data-i18n="btn.rerun"
             style="align-self:stretch;font-size:15px;padding:0 10px;white-space:nowrap;line-height:1.2">Analyze</button>
         </div>
       </div>
 
       <!-- Log tab: split log + stats -->
       <div id="log-split">
-        <div id="log-kill-bar" style="display:none;padding:6px 14px;background:var(--bg2);border-bottom:1px solid var(--border)">
-          <button id="btn-kill-log" onclick="killJob()" style="background:transparent;border:1px solid var(--red);color:var(--red);padding:3px 12px;cursor:pointer;font-family:var(--font);font-size:12px;border-radius:3px">■ Stop job</button>
+        <div style="padding:4px 14px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;min-height:28px">
+          <div id="log-kill-inline" style="display:none">
+            <button id="btn-kill-log" onclick="killJob()" style="background:transparent;border:1px solid var(--red);color:var(--red);padding:2px 10px;cursor:pointer;font-family:var(--font);font-size:11px;border-radius:3px">■ Stop job</button>
+          </div>
+          <div id="log-filter-widget" style="margin-left:auto;position:relative">
+            <button id="log-filter-trigger" onclick="_toggleLogFilterMenu(event)">Info ▾</button>
+            <div id="log-filter-menu">
+              <div class="lfm-item" data-lf="steps" onclick="setLogFilter('steps')">Steps</div>
+              <div class="lfm-item active" data-lf="info"  onclick="setLogFilter('info')">Info</div>
+              <div class="lfm-item" data-lf="all"   onclick="setLogFilter('all')">All</div>
+            </div>
+          </div>
         </div>
-        <div id="log-panel"></div>
+        <div id="log-panel" class="lf-info"></div>
         <div id="stats-panel">
           <div>
             <div class="stat-label">CPU</div>
@@ -563,7 +608,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
               onblur="_applyTargetMin(this)"
               onfocus="this.select()">
             <span style="font-size:11px;color:var(--muted)">min</span>
-            <span id="target-dur-warn" style="font-size:11px;margin-left:6px;display:none"></span>
+            <span id="target-dur-warn" style="font-size:11px;margin-left:6px;display:none" data-tip="Maximum achievable duration with current settings.&#10;Limited by Max per file (sec) × number of source files.&#10;Lower the threshold further or increase Max per file to get more content."></span>
             <button class="btn-sm" style="margin-left:6px;padding:1px 6px;font-size:14px;line-height:1" title="Clear manual overrides and re-run target search" onclick="resetThreshold()">↺</button>
             <span style="margin-left:8px;color:var(--muted);font-size:11px">Filter:</span>
             <input class="gf-filter-input" id="filter-score" type="text" placeholder="score" title="Score prefix — Enter to apply (e.g. 0.8 → 0.800–0.899)"
@@ -620,7 +665,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
             <input type="text" id="music-s3-prefix" placeholder="music/" value="music/"
               style="width:100px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none"
               onkeydown="if(event.key==='Enter')s3MusicBrowse()">
-            <button class="btn-sm" onclick="s3MusicBrowse()">Browse S3</button>
+            <button class="btn-sm" onclick="s3MusicBrowse()" data-i18n="btn.browse_s3">Browse S3</button>
             <span id="music-s3-status" style="font-size:11px;color:var(--muted)"></span>
             <button class="btn-sm" id="btn-music-s3-close" style="display:none;margin-left:auto" onclick="document.getElementById('music-s3-wrap').style.display='none';this.style.display='none'">✕ Close</button>
           </div>
@@ -658,43 +703,49 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <!-- Summary tab -->
       <div id="summary-panel">
         <div class="fsec">
-          <h3 data-i18n="sec.analysis_results">ANALYSIS RESULTS</h3>
-          <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
-            <div>Scenes detected: <span id="sum-scene-count" style="color:var(--accent)">—</span></div>
-            <div>Scenes selected: <span id="sum-scene-selected" style="color:var(--accent)">—</span></div>
-            <div>Scoring:         <span id="sum-threshold"   style="color:var(--accent)">—</span></div>
-            <div>Est. duration:   <span id="sum-duration"    style="color:var(--accent)">—</span></div>
-          </div>
-        </div>
-        <div class="fsec">
-          <h3 data-i18n="sec.music_selection">MUSIC SELECTION</h3>
-          <div id="sum-track" style="font-size:12px;color:var(--muted)" data-i18n="misc.no_pin">No track pinned — will auto-select.</div>
-          <button class="btn-sm" style="margin-top:6px" data-i18n="btn.change_music" onclick="switchTab('music')">← Change in Music tab</button>
-        </div>
-        <div class="fsec">
           <h3 data-i18n="sec.render">RENDER</h3>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="btn-render" class="btn-primary" onclick="startRender()" data-i18n="btn.render">▶ Render Highlight</button>
-            <button id="btn-render-short" class="btn-primary" onclick="startRenderShort()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text)">▶ Render Short</button>
+          <div style="display:flex;align-items:flex-start;gap:20px">
+            <!-- Left: buttons + progress bars (width = button row width) -->
+            <div style="display:inline-flex;flex-direction:column;gap:0;flex-shrink:0">
+              <div style="display:flex;gap:8px;flex-wrap:nowrap">
+                <button id="btn-render" class="btn-primary" onclick="startRender()" data-i18n="btn.render">▶ Render Highlight</button>
+                <button id="btn-render-short" class="btn-primary" onclick="startRenderShort()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text)" data-i18n="btn.render_short">▶ Render Short</button>
+              </div>
+              <div id="render-progress-wrap" style="display:none;margin-top:10px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
+                  <span id="render-status-label" style="color:var(--muted)" data-i18n="misc.rendering">Rendering…</span>
+                  <span id="render-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
+                  <span id="render-eta" style="color:var(--muted)"></span>
+                </div>
+                <div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden">
+                  <div id="render-progress-bar" style="height:8px;background:var(--accent);width:0%;transition:width .4s ease"></div>
+                </div>
+              </div>
+              <div id="shorts-progress-wrap" style="display:none;margin-top:10px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
+                  <span id="shorts-status-label" style="color:var(--muted)" data-i18n="misc.generating_short">Generating Short…</span>
+                  <span id="shorts-pct" style="margin-left:auto;color:var(--muted)"></span>
+                </div>
+                <div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden">
+                  <div id="shorts-progress-bar" style="height:8px;background:var(--accent);width:0%;transition:width .4s ease"></div>
+                </div>
+              </div>
+            </div>
+            <!-- Vertical divider -->
+            <div style="width:1px;background:var(--border);align-self:stretch;flex-shrink:0"></div>
+            <!-- Right: Highlight Song -->
+            <div style="flex:1;min-width:0">
+              <div style="font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--muted);margin-bottom:6px" data-i18n="sec.highlight_song">HIGHLIGHT SONG</div>
+              <div id="sum-track" style="font-size:12px;color:var(--muted)" data-i18n="misc.no_pin">No track pinned — will auto-select.</div>
+            </div>
           </div>
-          <div id="render-progress-wrap" style="display:none;margin-top:12px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
-              <span id="render-status-label" style="color:var(--muted)">Rendering…</span>
-              <span id="render-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
-              <span id="render-eta" style="color:var(--muted)"></span>
-            </div>
-            <div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden">
-              <div id="render-progress-bar" style="height:8px;background:var(--accent);width:0%;transition:width .4s ease"></div>
-            </div>
-          </div>
-          <div id="shorts-progress-wrap" style="display:none;margin-top:12px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
-              <span id="shorts-status-label" style="color:var(--muted)">Generating Short…</span>
-              <span id="shorts-pct" style="margin-left:auto;color:var(--muted)"></span>
-            </div>
-            <div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden">
-              <div id="shorts-progress-bar" style="height:8px;background:var(--accent);width:0%;transition:width .4s ease"></div>
-            </div>
+        </div>
+        <div class="fsec">
+          <h3 data-i18n="sec.analysis_results">STATS</h3>
+          <div style="display:flex;align-items:center;font-size:12px;gap:0">
+            <span data-i18n="lbl.scenes_count_prefix">Scenes</span>&nbsp;<span id="sum-scene-selected" style="color:var(--accent)">—</span>/<span id="sum-scene-count" style="color:var(--accent)">—</span>
+            <div style="width:1px;background:var(--border);height:1.1em;margin:0 14px;flex-shrink:0"></div>
+            <span data-i18n="lbl.est_duration">Est. duration:</span>&nbsp;<span id="sum-duration" style="color:var(--accent)">—</span>
           </div>
         </div>
       </div>
@@ -735,12 +786,12 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       </div>
     </div>
     <div id="files-footer">
-      <label><input type="checkbox" id="files-all" onchange="_toggleAllFilesModal(this.checked)"> All</label>
-      <button class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_deleteCheckedFilesModal()">✕ Delete selected</button>
-      <button class="btn-sm" onclick="_createFolderInFiles()">+ New folder</button>
-      <button class="btn-sm" onclick="document.getElementById('files-upload-input').click()">⬆ Upload</button>
+      <label><input type="checkbox" id="files-all" onchange="_toggleAllFilesModal(this.checked)"><span data-i18n="btn.all"> All</span></label>
+      <button class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_deleteCheckedFilesModal()" data-i18n="btn.delete_selected">✕ Delete selected</button>
+      <button class="btn-sm" onclick="_createFolderInFiles()" data-i18n="btn.create_folder">+ New folder</button>
+      <button class="btn-sm" onclick="document.getElementById('files-upload-input').click()" data-i18n="btn.upload">⬆ Upload</button>
       <input type="file" id="files-upload-input" multiple style="display:none" onchange="startUploadModal(this)">
-      <button class="btn-sm" onclick="closeFileBrowser()">Close</button>
+      <button class="btn-sm" onclick="closeFileBrowser()" data-i18n="btn.close">Close</button>
     </div>
   </div>
 </div>
@@ -754,8 +805,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <div id="confirm-files" style="display:none"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-sm" onclick="_confirmCancel()">Cancel</button>
-      <button id="btn-confirm-ok" class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_confirmOk()">Delete</button>
+      <button class="btn-sm" onclick="_confirmCancel()" data-i18n="btn.cancel">Cancel</button>
+      <button id="btn-confirm-ok" class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_confirmOk()" data-i18n="btn.delete">Delete</button>
     </div>
   </div>
 </div>
@@ -782,7 +833,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-sm" onclick="s3ModalClose()">Cancel</button>
+      <button class="btn-sm" onclick="s3ModalClose()" data-i18n="btn.cancel">Cancel</button>
       <button class="btn-primary" id="btn-s3-upload" onclick="s3ModalUpload()">▲ Upload</button>
     </div>
   </div>
@@ -846,17 +897,22 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
         <label>YouTube</label>
         <div id="yt-connect-row" style="display:flex;align-items:center;gap:8px;margin-top:4px">
           <span id="yt-status-dot" style="font-size:11px;color:var(--muted)">…</span>
-          <button class="btn-sm" id="btn-yt-connect" onclick="ytConnect()">Connect</button>
-          <button class="btn-sm" id="btn-yt-disconnect" style="display:none" onclick="ytDisconnect()">Disconnect</button>
+          <button class="btn-sm" id="btn-yt-connect" onclick="ytConnect()" data-i18n="btn.yt_connect">Connect</button>
+          <button class="btn-sm" id="btn-yt-disconnect" style="display:none" onclick="ytDisconnect()" data-i18n="btn.yt_disconnect">Disconnect</button>
         </div>
         <div id="yt-secrets-hint" style="display:none;font-size:10px;color:var(--muted);margin-top:4px">
           Place <code>youtube_client_secrets.json</code> in <code>webapp/</code> first.
         </div>
       </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn-sm" data-i18n="btn.cancel" onclick="closeSettings()">Cancel</button>
-      <button class="btn-primary" data-i18n="btn.save" onclick="saveSettings()">Save</button>
+    <div class="modal-footer" style="justify-content:flex-end;gap:0">
+      <div style="flex:1">
+        <button class="btn-sm" id="btn-settings-manage-users" onclick="closeSettings();openManageUsers()" style="display:none">👤 Manage users</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn-sm" data-i18n="btn.cancel" onclick="closeSettings()">Cancel</button>
+        <button class="btn-primary" data-i18n="btn.save" onclick="saveSettings()">Save</button>
+      </div>
     </div>
   </div>
 </div>
@@ -905,13 +961,13 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
         <div style="display:flex;gap:6px;margin-top:4px">
           <input type="text" id="yt-existing-url" placeholder="https://youtu.be/…"
                  style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 7px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none">
-          <button type="button" class="btn-sm" onclick="ytSaveExistingUrl()">Save link</button>
+          <button type="button" class="btn-sm" onclick="ytSaveExistingUrl()" data-i18n="btn.save_link">Save link</button>
         </div>
       </div>
       <div id="yt-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>
     </div>
     <div class="modal-footer">
-      <button type="button" class="btn-sm" onclick="ytModalClose()">Cancel</button>
+      <button type="button" class="btn-sm" onclick="ytModalClose()" data-i18n="btn.cancel">Cancel</button>
       <button type="button" class="btn-primary" id="btn-yt-upload" onclick="ytUpload()">▲ Upload</button>
     </div>
   </div>
@@ -945,8 +1001,51 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
       <div id="yts-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>
     </div>
     <div class="modal-footer">
-      <button type="button" class="btn-sm" onclick="ytShortsModalClose()">Cancel</button>
+      <button type="button" class="btn-sm" onclick="ytShortsModalClose()" data-i18n="btn.cancel">Cancel</button>
       <button type="button" class="btn-primary" id="btn-yts-upload" onclick="ytShortsUpload()">▲ Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- Login modal -->
+<div id="login-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:3000;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px 28px;min-width:300px;max-width:360px;width:90%">
+    <h3 style="margin:0 0 18px;font-size:15px;color:var(--text)">AI-autoedit — Sign in</h3>
+    <div class="ff" style="margin-bottom:10px">
+      <label style="font-size:11px;color:var(--muted)">Username</label>
+      <input id="login-username" type="text" autocomplete="username" style="width:100%;box-sizing:border-box" onkeydown="if(event.key==='Enter')_authLogin()">
+    </div>
+    <div class="ff" style="margin-bottom:16px">
+      <label style="font-size:11px;color:var(--muted)">Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" style="width:100%;box-sizing:border-box" onkeydown="if(event.key==='Enter')_authLogin()">
+    </div>
+    <div id="login-error" style="font-size:11px;color:var(--red);min-height:14px;margin-bottom:10px"></div>
+    <button class="btn-primary" style="width:100%" onclick="_authLogin()">Sign in</button>
+  </div>
+</div>
+
+<!-- Manage Users modal -->
+<div id="users-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:3000;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px 24px;min-width:320px;max-width:420px;width:90%">
+    <div class="modal-header" style="margin-bottom:14px">
+      <span style="font-size:14px;font-weight:600">Manage Users</span>
+      <button class="icon-btn" id="users-modal-close" onclick="_usersModalClose()">✕</button>
+    </div>
+    <div id="users-first-run-msg" style="display:none;font-size:12px;color:var(--text);background:color-mix(in srgb,var(--accent) 12%,var(--bg3));border:1px solid var(--accent);border-radius:5px;padding:9px 12px;margin-bottom:14px">
+      First run with auth enabled. Create a user to continue.
+    </div>
+    <div id="users-list" style="margin-bottom:14px;max-height:180px;overflow-y:auto"></div>
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Add user</div>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <input id="new-user-name" type="text" placeholder="Username" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')document.getElementById('new-user-pw').focus()">
+        <input id="new-user-pw" type="password" placeholder="Password" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')_authCreateUser()">
+      </div>
+      <div id="users-error" style="font-size:11px;color:var(--red);min-height:13px;margin-bottom:6px"></div>
+      <button class="btn-primary btn-sm" onclick="_authCreateUser()">+ Add user</button>
+    </div>
+    <div id="users-reload-row" style="display:none;margin-top:14px;text-align:center">
+      <button class="btn-primary" onclick="location.reload()">↺ Reload</button>
     </div>
   </div>
 </div>
@@ -967,13 +1066,15 @@ const TRANS = {
     labels: {
       // tabs
       'tab.settings':        'Settings',
-      'tab.gallery':         'Gallery',
+      'tab.gallery':         'Select scenes',
       'tab.music':           'Music',
-      'tab.summary':         'Summary',
+      'tab.summary':         'Render',
       'tab.log':             'Log',
       'tab.results':         'Results',
       // sections
       'sec.source':          'Source',
+      'sec.proxy':           'Proxy media',
+      'sec.scene_detect':    'Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(requires Analyze)</span>',
       'sec.scene_sel':       'Scene selection',
       'sec.intro_music':     'Intro / music',
       'sec.about_ride':      'About this ride',
@@ -983,6 +1084,8 @@ const TRANS = {
       // labels
       'lbl.working_dir':     'Working directory',
       'lbl.cam_subfolders':  'Camera subfolders (A = audio source)',
+      'lbl.sd_threshold':    'Detect threshold',
+      'lbl.sd_min_scene':    'Min scene len',
       'lbl.threshold':       'Scoring',
       'lbl.max_scene':       'Max scene sec',
       'lbl.per_file':        'Max per file sec',
@@ -1007,6 +1110,7 @@ const TRANS = {
       'btn.start':           '▶ Analyze',
       'btn.rerun':           'Analyze',
       'btn.render':          '▶ Render Highlight',
+      'btn.render_short':    '▶ Render Short',
       'btn.to_music':        '→ Music',
       'btn.to_summary':      '→ Summary',
       'btn.change_music':    '← Change in Music tab',
@@ -1021,6 +1125,13 @@ const TRANS = {
       'btn.all':             'All',
       'btn.none':            'None',
       'btn.cancel':          'Cancel',
+      'btn.close':           'Close',
+      'btn.delete':          'Delete',
+      'btn.delete_selected': '✕ Delete selected',
+      'btn.save_link':       'Save link',
+      'btn.yt_connect':      'Connect',
+      'btn.yt_disconnect':   'Disconnect',
+      'btn.browse_s3':       'Browse S3',
       'btn.create_folder':   '+ New folder',
       'btn.upload':          '⬆ Upload',
       'btn.select_folder':   'Select this folder',
@@ -1034,11 +1145,14 @@ const TRANS = {
       'step.5': '5 CLIP',
       'step.6': '6 Select+Encode',
       // sections (summary)
-      'sec.analysis_results': 'ANALYSIS RESULTS',
-      'sec.music_selection':  'MUSIC SELECTION',
-      'sec.render':           'RENDER',
+      'sec.analysis_results':  'STATS',
+      'sec.music_selection':   'MUSIC SELECTION',
+      'sec.render':            'RENDER',
+      'sec.highlight_song':    'HIGHLIGHT SONG',
+      'lbl.scenes_count_prefix': 'Scenes',
+      'lbl.est_duration':      'Est. duration:',
       // misc
-      'misc.newest':         'newest',
+      'misc.newest':           'newest',
       'misc.oldest':         'oldest',
       'misc.no_gpu':         'GPU not detected',
       'misc.running':        'Running',
@@ -1048,7 +1162,9 @@ const TRANS = {
       'misc.new_job':        'NEW JOB',
       'misc.welcome_sub':    'AI highlight reel pipeline',
       'misc.welcome_hint':   '← Click <strong style="color:var(--accent)">+ New</strong> to start a job',
-      'misc.no_pin':         'No track pinned — will auto-select.',
+      'misc.no_pin':           'No track pinned — will auto-select.',
+      'misc.rendering':        'Rendering…',
+      'misc.generating_short': 'Generating Short…',
     },
     placeholders: {
       'ph.filter_tracks': 'Filter tracks...',
@@ -1067,13 +1183,15 @@ const TRANS = {
     labels: {
       // tabs
       'tab.settings':        'Ustawienia',
-      'tab.gallery':         'Galeria',
+      'tab.gallery':         'Wybór scen',
       'tab.music':           'Muzyka',
-      'tab.summary':         'Podsumowanie',
+      'tab.summary':         'Render',
       'tab.log':             'Log',
       'tab.results':         'Wyniki',
       // sections
       'sec.source':          'Źródło',
+      'sec.proxy':           'Proxy media',
+      'sec.scene_detect':    'Detekcja scen <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(wymaga analizy)</span>',
       'sec.scene_sel':       'Dobór scen',
       'sec.intro_music':     'Intro / muzyka',
       'sec.about_ride':      'O tej jeździe',
@@ -1083,6 +1201,8 @@ const TRANS = {
       // labels
       'lbl.working_dir':     'Katalog roboczy',
       'lbl.cam_subfolders':  'Podfoldery kamer (A = źródło audio)',
+      'lbl.sd_threshold':    'Próg detekcji',
+      'lbl.sd_min_scene':    'Min dł. sceny',
       'lbl.threshold':       'Scoring',
       'lbl.max_scene':       'Max czas sceny (s)',
       'lbl.per_file':        'Max czas z pliku (s)',
@@ -1105,8 +1225,9 @@ const TRANS = {
       'btn.new':             '+ Nowe',
       'btn.browse':          'Przeglądaj',
       'btn.start':           '▶ Analizuj',
-      'btn.rerun':           'Analyze',
+      'btn.rerun':           'Analizuj',
       'btn.render':          '▶ Renderuj highlight',
+      'btn.render_short':    '▶ Render Short',
       'btn.to_music':        '→ Muzyka',
       'btn.to_summary':      '→ Podsumowanie',
       'btn.change_music':    '← Zmień w zakładce Muzyka',
@@ -1120,6 +1241,13 @@ const TRANS = {
       'btn.all':             'Wszystkie',
       'btn.none':            'Żadne',
       'btn.cancel':          'Anuluj',
+      'btn.close':           'Zamknij',
+      'btn.delete':          'Usuń',
+      'btn.delete_selected': '✕ Usuń zaznaczone',
+      'btn.save_link':       'Zapisz link',
+      'btn.yt_connect':      'Połącz',
+      'btn.yt_disconnect':   'Rozłącz',
+      'btn.browse_s3':       'Przeglądaj S3',
       'btn.create_folder':   '+ Nowy folder',
       'btn.upload':          '⬆ Prześlij',
       'btn.select_folder':   'Wybierz ten folder',
@@ -1145,10 +1273,15 @@ const TRANS = {
       'misc.welcome_sub':    'Pipeline do highlight reel z AI',
       'misc.welcome_hint':   '← Kliknij <strong style="color:var(--accent)">+ Nowe</strong>, aby zacząć',
       // sections (summary)
-      'sec.analysis_results': 'WYNIKI ANALIZY',
-      'sec.music_selection':  'WYBÓR MUZYKI',
-      'sec.render':           'RENDEROWANIE',
+      'sec.analysis_results':  'STATYSTYKI',
+      'sec.music_selection':   'WYBÓR MUZYKI',
+      'sec.render':            'RENDEROWANIE',
+      'sec.highlight_song':    'UTWÓR MUZYCZNY',
+      'lbl.scenes_count_prefix': 'Sceny',
+      'lbl.est_duration':      'Szac. czas:',
       'misc.no_pin':         'Brak przypięcia — automat.',
+      'misc.rendering':        'Renderowanie…',
+      'misc.generating_short': 'Generowanie Shorta…',
     },
     placeholders: {
       'ph.filter_tracks': 'Filtruj ścieżki...',
@@ -1271,7 +1404,8 @@ function _playTrack(file, btn, seek) {
 
 // Strip BROWSE_ROOT prefix so paths show as  moto/2025/...  not  /data/moto/2025/...
 let _browseRoot = '';
-fetch('/api/config').then(r=>r.json()).then(cfg=>{
+fetch('/api/config').then(r=>r.ok?r.json():null).then(cfg=>{
+  if (!cfg) return;
   _browseRoot = cfg.browse_root || '';
   if (!cfg.data_root_configured) _showDataRootModal();
 }).catch(()=>{});
@@ -1300,6 +1434,25 @@ function toggleSortOrder() {
 
 const THEMES = ['dark', 'light', 'gruvbox', 'nord', 'solarized'];
 let currentTheme = localStorage.getItem('theme') || 'dark';
+
+let _logFilter = localStorage.getItem('logFilter') || 'info';
+function setLogFilter(f) {
+  _logFilter = f;
+  localStorage.setItem('logFilter', f);
+  const panel = document.getElementById('log-panel');
+  panel.classList.remove('lf-steps', 'lf-info', 'lf-all');
+  panel.classList.add('lf-' + f);
+  const label = {steps: 'Steps', info: 'Info', all: 'All'}[f] || f;
+  const trigger = document.getElementById('log-filter-trigger');
+  if (trigger) trigger.textContent = label + ' ▾';
+  document.querySelectorAll('.lfm-item').forEach(el => el.classList.toggle('active', el.dataset.lf === f));
+  document.getElementById('log-filter-menu')?.classList.remove('open');
+}
+function _toggleLogFilterMenu(e) {
+  e.stopPropagation();
+  document.getElementById('log-filter-menu').classList.toggle('open');
+}
+document.addEventListener('click', () => document.getElementById('log-filter-menu')?.classList.remove('open'));
 
 function applyTheme(name) {
   if (!THEMES.includes(name)) name = 'dark';
@@ -1344,8 +1497,10 @@ async function refreshJobList() {
 }
 setInterval(refreshJobList, 3000);
 refreshJobList();
+initAuth();
 setLang(currentLang);
 applyTheme(currentTheme);
+setLogFilter(_logFilter);
 // Sync UI prefs from server (authoritative across all devices)
 api.get('/api/settings').then(s => {
   if (!s) return;
@@ -1452,6 +1607,7 @@ async function saveJobPrompts() {
 async function openJob(jobId) {
   if (jobWs) { jobWs.close(); jobWs=null; }
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
+  if (_proxyPollTimer) { clearInterval(_proxyPollTimer); _proxyPollTimer=null; }
   currentJobId = jobId;
   jobPhase = null;
   analyzeResult = null;
@@ -1477,6 +1633,7 @@ async function openJob(jobId) {
   document.getElementById('music-count').textContent = '—';
   _sdTotal = 0;
   document.getElementById('sd-progress-wrap').style.display = 'none';
+  _updateProxyUI({not_started: true});
   document.getElementById('gallery-stats-text').style.display = '';
   document.getElementById('gallery-stats-text').textContent = '—';
   document.getElementById('js-description').value = '';
@@ -1491,7 +1648,7 @@ async function openJob(jobId) {
   document.getElementById('frames-grid').innerHTML = '';
   document.getElementById('rf-files').innerHTML = '';
   document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-bar').style.display = 'none';
+  document.getElementById('log-kill-inline').style.display = 'none';
   document.getElementById('jh-path').textContent = '…';
   document.getElementById('jh-status').textContent = '';
   document.getElementById('jh-elapsed').textContent = '';
@@ -1506,6 +1663,13 @@ async function openJob(jobId) {
   currentJobMaxScene = job.params.max_scene != null ? parseFloat(job.params.max_scene) : null;
   currentJobPerFile  = job.params.per_file  != null ? parseFloat(job.params.per_file)  : null;
   _overridesChangedSinceRender = false;
+  // Restore pinned track from persisted job state
+  if (job.selected_track) {
+    pinnedTrack = job.selected_track;
+    const name = pinnedTrack.split('/').pop().replace(/\.[^.]+$/, '');
+    const sumTrack = document.getElementById('sum-track');
+    if (sumTrack) sumTrack.textContent = '🎵 ' + name;
+  }
   await populateJobSettings(job.params);
   updatePhaseUI();
 
@@ -1518,7 +1682,7 @@ async function openJob(jobId) {
 
   if (job.status === 'running') {
     document.getElementById('btn-kill').style.display = '';
-  document.getElementById('log-kill-bar').style.display = '';
+  document.getElementById('log-kill-inline').style.display = '';
     startElapsedTimer(job.started_at);
   } else if (job.status === 'queued') {
     document.getElementById('jh-status').textContent = 'queued';
@@ -1530,18 +1694,10 @@ async function openJob(jobId) {
     const panel = document.getElementById('log-panel');
     const frag = document.createDocumentFragment();
     for (const line of job.log) {
-      const isProgress = PROGRESS_RE.test(line);
       const div = document.createElement('div');
-      div.className = isProgress ? 'log-line log-progress' : 'log-line';
-      if (isProgress) { div.style.color = 'var(--muted)'; }
-      else {
-        const stepM = line.match(/^\[(\d+[a-z]?)(?:\/\d+)?\]/);
-        if (stepM)                           { div.classList.add('log-step'); activateStep(parseInt(stepM[1])); }
-        else if (/✓|cached/i.test(line))            { div.classList.add('log-ok'); }
-        else if (/\[\d+\/\d+\] checked/.test(line)) { div.classList.add('log-ok'); }
-        else if (/error|failed/i.test(line))         { div.classList.add('log-err'); }
-      }
-      div.textContent = line;
+      div.className = 'log-line';
+      const kind = _classifyLogLine(div, line);
+      if (kind === 'step') activateStep(parseInt(line.match(/^\[(\d+[a-z]?)/)[1]));
       frag.appendChild(div);
     }
     panel.appendChild(frag);
@@ -1563,6 +1719,7 @@ async function openJob(jobId) {
     loadResults(jobId);
   }
   refreshJobList();
+  startProxy();
 }
 
 function connectJobWs(jobId, startedAt) {
@@ -1606,16 +1763,17 @@ function connectJobWs(jobId, startedAt) {
         }
       }
     } else if (msg.type==='status') {
+      const prevPhase = jobPhase;
       if (msg.phase) { jobPhase = msg.phase; updatePhaseUI(); }
       setStatusDot(msg.status);
       if (msg.status==='running') {
         document.getElementById('btn-kill').style.display = '';
-  document.getElementById('log-kill-bar').style.display = '';
+  document.getElementById('log-kill-inline').style.display = '';
         document.getElementById('jh-status').textContent = '';
         startElapsedTimer(startedAt);
       } else {
         document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-bar').style.display = 'none';
+  document.getElementById('log-kill-inline').style.display = 'none';
         if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
         if (msg.phase === 'analyzed') {
           loadFrames(jobId);
@@ -1624,7 +1782,7 @@ function connectJobWs(jobId, startedAt) {
           loadFrames(jobId);
           loadResults(jobId);
           loadAnalyzeResult(jobId);
-          if (msg.phase === 'shorts' || jobPhase === 'shorts') {
+          if (msg.phase === 'shorts' || prevPhase === 'shorts') {
             const btnS = document.getElementById('btn-render-short');
             if (btnS) { btnS.disabled = false; btnS.textContent = '▶ Render Short'; }
             const sbar = document.getElementById('shorts-progress-bar');
@@ -1656,7 +1814,7 @@ function connectJobWs(jobId, startedAt) {
 function t_(key) { return TRANS[currentLang]?.labels?.[key] || ''; }
 
 function updatePhaseUI() {
-  const analyzed = jobPhase === 'analyzed' || jobPhase === 'done';
+  const analyzed = jobPhase === 'analyzed' || jobPhase === 'done' || jobPhase === 'failed';
   const rendering = jobPhase === 'rendering';
 
   const btnGallery = document.getElementById('btn-gallery-to-music');
@@ -1700,8 +1858,6 @@ async function loadAnalyzeResult(jobId) {
   // This ensures the Summary tab always reflects the most recent completed render.
   if (data.actual_selected_scenes != null && data.actual_duration_sec != null) {
     const durStr = fmtDur(data.actual_duration_sec);
-    const thr = data.actual_threshold ?? data.auto_threshold;
-    document.getElementById('sum-threshold').textContent = thr != null ? parseFloat(thr).toFixed(3) : '—';
     document.getElementById('sum-duration').textContent = durStr;
     document.getElementById('sum-scene-selected').textContent = data.actual_selected_scenes;
     document.getElementById('music-est-duration').textContent = durStr;
@@ -1712,7 +1868,6 @@ async function loadAnalyzeResult(jobId) {
     calculateGalleryStats();
   } else {
     // Analysis phase, threshold not yet set → use crude analysis estimate
-    document.getElementById('sum-threshold').textContent = data.auto_threshold ?? '—';
     const dur = data.estimated_duration_sec || 0;
     const durStr = dur ? fmtDur(dur, '~') : '—';
     document.getElementById('sum-duration').textContent = durStr;
@@ -1777,14 +1932,47 @@ async function startRender() {
 // ── Log ───────────────────────────────────────────────────────────────────────
 const PROGRESS_RE = /^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|/;
 
+
+function _classifyLogLine(div, line) {
+  if (PROGRESS_RE.test(line)) {
+    div.classList.add('log-progress');
+    div.style.color = 'var(--muted)';
+    div.textContent = line;
+    return 'progress';
+  }
+  const stepM = line.match(/^\[(\d+[a-z]?)(?:\/\d+)?\]/);
+  if (stepM) {
+    div.classList.add('log-step');
+    const ts = new Date().toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    div.textContent = `${ts}  ${line}`;
+    return 'step';
+  }
+  if (/✓|cached/i.test(line) || /→.*_v\d+\.mp4/.test(line) || /\[\d+\/\d+\] checked/.test(line)) {
+    div.classList.add('log-ok');
+    div.textContent = line;
+    return 'ok';
+  }
+  if (/error|failed/i.test(line)) {
+    div.classList.add('log-err');
+    div.textContent = line;
+    return 'err';
+  }
+  div.classList.add('log-info');
+  div.textContent = line;
+  return 'info';
+}
+
 function appendLog(line) {
   const panel = document.getElementById('log-panel');
-  const isProgress = PROGRESS_RE.test(line);
   const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
 
-  if (isProgress) {
+  if (PROGRESS_RE.test(line)) {
     // Update existing progress line in place, or create one
-    const last = panel.lastElementChild;
+    let last = panel.lastElementChild;
+    // Skip past any non-visible (display:none) elements to find last visible progress line
+    while (last && last.classList.contains('log-progress') && getComputedStyle(last).display === 'none') {
+      last = last.previousElementSibling;
+    }
     if (last && last.classList.contains('log-progress')) {
       last.textContent = line;
     } else {
@@ -1795,7 +1983,6 @@ function appendLog(line) {
       panel.appendChild(div);
     }
     if (atBottom) panel.scrollTop = panel.scrollHeight;
-    // Update render progress bar from progress lines
     if (jobPhase === 'rendering') {
       const pm = line.match(/\]\s*(\d+)%\s+([\d.]+)\//);
       if (pm) {
@@ -1814,17 +2001,8 @@ function appendLog(line) {
 
   const div = document.createElement('div');
   div.className = 'log-line';
-  const stepM = line.match(/^\[(\d+[a-z]?)(?:\/\d+)?\]/);
-  if (stepM) {
-    div.classList.add('log-step');
-    activateStep(parseInt(stepM[1]));
-    const ts = new Date().toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-    div.textContent = `${ts}  ${line}`;
-  } else if (/✓|cached/i.test(line))                   { div.classList.add('log-ok'); div.textContent = line; }
-  else if (/→.*_v\d+\.mp4/.test(line))                 { div.classList.add('log-ok'); div.textContent = line; }
-  else if (/\[\d+\/\d+\] checked/.test(line))          { div.classList.add('log-ok'); div.textContent = line; }
-  else if (/error|failed/i.test(line))                  { div.classList.add('log-err'); div.textContent = line; }
-  else { div.textContent = line; }
+  const kind = _classifyLogLine(div, line);
+  if (kind === 'step') activateStep(parseInt(line.match(/^\[(\d+[a-z]?)/)[1]));
   panel.appendChild(div);
   if (atBottom) panel.scrollTop = panel.scrollHeight;
 
@@ -1894,7 +2072,7 @@ async function killJob() {
   if (!await showConfirm('Stop job', 'Stop the running job?\nProgress so far will be lost.', null, 'Stop')) return;
   await api.del(`/api/jobs/${currentJobId}`);
   document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-bar').style.display = 'none';
+  document.getElementById('log-kill-inline').style.display = 'none';
 }
 
 async function removeJob(jobId) {
@@ -1910,11 +2088,11 @@ async function removeJob(jobId) {
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const TAB_NAMES = ['settings', 'gallery', 'music', 'summary', 'log', 'results'];
+const TAB_NAMES = ['settings', 'gallery', 'music', 'summary', 'results', 'log'];
 
 function stopVideo() {
   const v = document.getElementById('video-player');
-  v.pause(); v.src = '';
+  v.pause(); v.removeAttribute('src'); v.load();
   document.getElementById('video-wrap').style.display = 'none';
   document.querySelectorAll('.rf').forEach(c=>c.classList.remove('playing'));
 }
@@ -2040,8 +2218,10 @@ function _computePerFileCuts() {
 // Passes threshold + per-file budget checks (no camera balance). Used as input for balancing.
 function _passesPreBalance(f) {
   const ov = manualOverrides[f.scene];
-  if (ov === 'include') return true;
-  if (ov === 'exclude') return false;
+  // Manual overrides are outside the balance computation — they are added/removed
+  // on top of the balanced set in isIncluded(). Including them here would cause
+  // rebalancing to drop/add unrelated scenes when the user toggles one scene.
+  if (ov === 'include' || ov === 'exclude') return false;
   if (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value)) return false;
   return !_perFileCuts.has(f.scene);
 }
@@ -2158,7 +2338,6 @@ function toggleFrame(scene) {
   }
   _overridesChangedSinceRender = true;
   saveOverrides();
-  _scheduleEstimate();
   // Update only this card in-place — no full grid re-render
   const card = document.querySelector(`[data-scene="${CSS.escape(scene)}"]`);
   if (card) {
@@ -2320,38 +2499,47 @@ function _estimateTotalDuration(mainDur, mainCount) {
 }
 
 function _balancedEstimate() {
-  // _computeBalancedScenes() already ran (called from _computePerFileCuts).
-  // isIncluded() now reflects camera balance, so just filter directly.
-  // balanced includes ALL cameras — do NOT scale by camRatio here.
+  // balanced = main-cam scenes only (back cam is not in framesData / scene_scores.csv).
   const balanced = framesData.filter(f => isIncluded(f));
+  const scaledCount = balanced.length;
   const camRatio = analyzeResult?.cam_ratio ?? 1.0;
 
-  // Scale duration/count from exact dry-run values proportionally to current threshold.
-  // Divide by estAll (total across all cams), not estMain (main cam only) — otherwise
-  // dual-cam inflates the factor by ~camRatio (≈2×).
-  const estAll  = analyzeResult?.estimated_scenes || 0;
-  const estDur  = analyzeResult?.estimated_duration_sec || 0;
-  let duration, scaledCount;
-  {
-    const mainDur = _estimateDuration(balanced);
-    duration    = _estimateTotalDuration(mainDur, balanced.length);
-    scaledCount = balanced.length;
+  // Scale from the server's last dry-run estimate using ONLY the manual-override delta.
+  // We avoid using balanced.length as a ratio denominator because it can be 2× serverMain
+  // when perFile is unset (perFileCuts skips, all above-threshold scenes land in balanced).
+  // Instead: serverMain + count(force-include) - count(force-exclude) is accurate.
+  const serverDur  = analyzeResult?.estimated_duration_sec;
+  const serverMain = analyzeResult?.estimated_main_scenes ?? analyzeResult?.estimated_scenes;
+  if (serverDur > 0 && serverMain > 0) {
+    let delta = 0;
+    for (const ov of Object.values(manualOverrides)) {
+      if (ov === 'include') delta++;
+      if (ov === 'exclude') delta--;
+    }
+    const duration = Math.max(0, Math.round(serverDur * (serverMain + delta) / serverMain));
+    return { scenes: balanced, duration, scaledCount, camRatio };
   }
-  return { scenes: balanced, duration, scaledCount, camRatio: analyzeResult?.cam_ratio ?? 1.0 };
+
+  // Fallback used only before any binary-search/estimate has run.
+  const mainDur = _estimateDuration(balanced);
+  const duration = _estimateTotalDuration(mainDur, balanced.length);
+  return { scenes: balanced, duration, scaledCount, camRatio };
 }
 
 function calculateGalleryStats() {
   if (_targetSearchActive) return; // progress bar is shown; don't overwrite with stale estimate
-  // If actual render data matches current threshold and no overrides, show actual values
   const v = _galleryThreshold;
-  const actualThr = analyzeResult?.actual_threshold ?? analyzeResult?.auto_threshold;
+  // useActual: threshold matches last render (actual_threshold)
+  const renderThr = analyzeResult?.actual_threshold;
   const useActual = v !== null && analyzeResult?.actual_selected_scenes != null &&
                     analyzeResult?.actual_duration_sec != null && !_overridesChangedSinceRender &&
-                    actualThr != null && Math.abs(v - actualThr) < 0.0015;
+                    renderThr != null && Math.abs(v - renderThr) < 0.0015;
+  // useEstimated: threshold matches last server estimate (auto_threshold, set by binary search)
+  const estThr = analyzeResult?.auto_threshold;
   const useEstimated = !useActual && !_overridesChangedSinceRender &&
                        analyzeResult?.estimated_scenes > 0 &&
                        analyzeResult?.estimated_duration_sec > 0 &&
-                       actualThr != null && Math.abs(v - actualThr) < 0.0015;
+                       estThr != null && Math.abs(v - estThr) < 0.0015;
   if (useActual) {
     document.getElementById('gallery-stats-text').textContent =
       `${analyzeResult.actual_selected_scenes} / ${framesData.length} scenes · ${fmtDur(analyzeResult.actual_duration_sec)}`;
@@ -2434,21 +2622,21 @@ function _syncThresholdDisplay() {
   if (_galleryThreshold === null) return;
   _computePerFileCuts();
   const v = _galleryThreshold;
-  document.getElementById('sum-threshold').textContent = v.toFixed(3);
   if (!framesData.length) return;
 
   // If threshold matches the last actual run and overrides haven't changed since, show actual output.
   // Otherwise fall back to the live estimate (simulates what a re-run would produce).
-  const actualThr = analyzeResult?.actual_threshold ?? analyzeResult?.auto_threshold;
+  const renderThr = analyzeResult?.actual_threshold;
   const useActual = analyzeResult?.actual_selected_scenes != null &&
                     analyzeResult?.actual_duration_sec   != null &&
                     !_overridesChangedSinceRender &&
-                    actualThr != null && Math.abs(v - actualThr) < 0.0015;
+                    renderThr != null && Math.abs(v - renderThr) < 0.0015;
 
+  const estThr = analyzeResult?.auto_threshold;
   const useEstimated = !useActual && !_overridesChangedSinceRender &&
                        analyzeResult?.estimated_scenes > 0 &&
                        analyzeResult?.estimated_duration_sec > 0 &&
-                       actualThr != null && Math.abs(v - actualThr) < 0.0015;
+                       estThr != null && Math.abs(v - estThr) < 0.0015;
   let scenes, durStr;
   if (useActual) {
     scenes  = analyzeResult.actual_selected_scenes;
@@ -2714,9 +2902,11 @@ function sortMusic(key) {
 
 function _sortedTracks(tracks) {
   const targetFromInput = _parseTargetInput(document.getElementById('gallery-target-min')?.value);
-  const targetDur = (targetFromInput > 0 ? targetFromInput : null)
-    ?? analyzeResult?._live_est_dur
-    ?? analyzeResult?.estimated_duration_sec
+  // Sort music by actual estimated highlight duration, not target.
+  // Target is a goal for scene selection; music must match what will actually be rendered.
+  const targetDur = analyzeResult?._live_est_dur
+    ?? (analyzeResult?.estimated_duration_sec > 0 ? analyzeResult.estimated_duration_sec : null)
+    ?? (targetFromInput > 0 ? targetFromInput : null)
     ?? 0;
   if (!_musicSort.key) {
     // Default: sort by closeness to target duration, alternating longer/shorter
@@ -2980,7 +3170,7 @@ function readJobSettings() {
   if (_galleryThreshold !== null) p.threshold = _galleryThreshold;
   const ms = gv('js-max-scene'); if (ms) p.max_scene = parseFloat(ms);
   const pf = gv('js-per-file');  if (pf) p.per_file  = parseFloat(pf);
-  const sdt = gv('js-sd-threshold'); if (sdt) p.sd_threshold = parseFloat(sdt);
+  const sdt = gv('js-sd-threshold'); p.sd_threshold = sdt ? parseFloat(sdt) : 20;
   const sdm = gv('js-sd-min-scene'); if (sdm) p.sd_min_scene  = sdm;
   const cameras = readCamsList('js-cam-list'); if (cameras.length) p.cameras = cameras;
   const ti = gv('js-title');     if (ti) p.title = ti;
@@ -3308,6 +3498,87 @@ function _s3UpdateAllChk() {
   if (!allEl) return;
   allEl.indeterminate = chk.length > 0 && chk.length < all.length;
   allEl.checked = all.length > 0 && chk.length === all.length;
+}
+
+// ── Proxy media ───────────────────────────────────────────────────────────────
+let _proxyPollTimer = null;
+
+async function startProxy() {
+  if (!currentJobId) return;
+  // First check current status
+  const st = await api.get(`/api/jobs/${currentJobId}/proxy-status`);
+  if (st && st.done && st.finished >= st.total && st.total > 0) {
+    _updateProxyUI(st);
+    return; // already complete
+  }
+  // Kick off (server is idempotent if already running)
+  await api.post(`/api/jobs/${currentJobId}/start-proxy`, {});
+  _pollProxyStatus();
+}
+
+function _pollProxyStatus() {
+  if (_proxyPollTimer) clearInterval(_proxyPollTimer);
+  _proxyPollTimer = setInterval(async () => {
+    if (!currentJobId) { clearInterval(_proxyPollTimer); return; }
+    const st = await api.get(`/api/jobs/${currentJobId}/proxy-status`);
+    if (!st) return;
+    _updateProxyUI(st);
+    if (st.done) { clearInterval(_proxyPollTimer); _proxyPollTimer = null; }
+  }, 1000);
+}
+
+function _updateProxyUI(st) {
+  const label    = document.getElementById('js-proxy-label');
+  const count    = document.getElementById('js-proxy-count');
+  const progress = document.getElementById('js-proxy-progress');
+  const file     = document.getElementById('js-proxy-file');
+  const pct      = document.getElementById('js-proxy-pct');
+  const bar      = document.getElementById('js-proxy-bar');
+  if (!label) return;
+
+  const total    = st.total || 0;
+  const finished = st.finished || 0;
+  const pctVal   = total > 0 ? Math.round(finished / total * 100) : 0;
+
+  if (st.not_started) {
+    label.textContent = 'Not started';
+    count.textContent = '';
+    progress.style.display = 'none';
+    return;
+  }
+  if (st.done) {
+    if (st.cancelled) {
+      label.textContent = 'Cancelled';
+      label.style.color = 'var(--muted)';
+    } else if (st.error) {
+      label.textContent = 'Error: ' + st.error;
+      label.style.color = 'var(--red)';
+      appendLog(`[proxy] Error: ${st.error}`);
+    } else if (finished < total) {
+      label.textContent = `Done — ${finished}/${total} (${total - finished} failed)`;
+      label.style.color = 'var(--red)';
+    } else {
+      label.textContent = `Done — ${finished}/${total} proxy files`;
+      label.style.color = 'var(--muted)';
+    }
+    count.textContent = '';
+    progress.style.display = 'none';
+    return;
+  }
+  // Running
+  if (st.error) {
+    label.textContent = '⚠ ' + st.error;
+    label.style.color = 'var(--red)';
+    appendLog(`[proxy] ${st.error}`);
+  } else {
+    label.textContent = 'Creating proxies…';
+    label.style.color = 'var(--muted)';
+  }
+  count.textContent = `${finished}/${total}`;
+  progress.style.display = '';
+  file.textContent  = st.current_file || '';
+  pct.textContent   = pctVal + '%';
+  bar.style.width   = pctVal + '%';
 }
 
 function s3FetchSources() {
@@ -3852,7 +4123,7 @@ function _showFilePreview(path, e, delay = 400) {
   clearTimeout(_previewTimer);
   _previewTimer = setTimeout(() => {
     const v = document.getElementById('file-tip-video');
-    v.src = `/api/serve-file?path=${encodeURIComponent(path)}`;
+    v.src = `/api/file?path=${encodeURIComponent(path)}`;
     v.addEventListener('loadedmetadata', () => {
       v.currentTime = Math.min(3, v.duration * 0.05);
       v.play().catch(() => {});
@@ -3875,7 +4146,7 @@ function _hideFilePreview() {
   const tip = document.getElementById('file-tip');
   tip.style.display = 'none';
   const v = document.getElementById('file-tip-video');
-  v.pause(); v.src = '';
+  v.pause(); v.removeAttribute('src'); v.load();
 }
 
 // ── Scene parameter calculator ───────────────────────────────────────────────
@@ -4460,6 +4731,159 @@ function _pollYtUpload(uploadId, statusEl, btn, fileName, onClose, onUrl) {
       btn.disabled = false;
     }
   }, 2000);
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+let _authEnabled = false;
+
+async function initAuth() {
+  const s = await api.get('/api/auth/status').catch(() => null);
+  if (!s) return;
+  _authEnabled = s.enabled;
+  if (!s.enabled) return;
+
+  document.getElementById('btn-settings-manage-users').style.display = '';
+
+  if (!s.authenticated) {
+    if (!s.has_users) {
+      // First run — must create a user before continuing
+      openManageUsers(true);
+    } else {
+      _showLoginModal();
+    }
+  }
+}
+
+function _showLoginModal() {
+  const m = document.getElementById('login-modal');
+  m.style.display = 'flex';
+  setTimeout(() => document.getElementById('login-username')?.focus(), 50);
+}
+
+async function _authLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = 'Enter username and password'; return; }
+  const res = await api.post('/api/auth/login', { username, password }).catch(() => null);
+  if (!res?.ok) {
+    errEl.textContent = 'Invalid credentials';
+    document.getElementById('login-password').value = '';
+    return;
+  }
+  document.getElementById('login-modal').style.display = 'none';
+  document.getElementById('btn-settings-manage-users').style.display = '';
+  fetch('/api/config').then(r=>r.ok?r.json():null).then(cfg=>{
+    if (!cfg) return;
+    _browseRoot = cfg.browse_root || '';
+    if (!cfg.data_root_configured) _showDataRootModal();
+  }).catch(()=>{});
+  refreshJobList();
+}
+
+async function authLogout() {
+  await api.post('/api/auth/logout', {}).catch(() => null);
+  location.reload();
+}
+
+async function openManageUsers(firstRun = false) {
+  const modal = document.getElementById('users-modal');
+  const closeBtn = document.getElementById('users-modal-close');
+  const firstRunMsg = document.getElementById('users-first-run-msg');
+  if (firstRun) {
+    closeBtn.style.display = 'none';
+    firstRunMsg.style.display = '';
+    document.getElementById('users-reload-row').style.display = 'none';
+  } else {
+    closeBtn.style.display = '';
+    firstRunMsg.style.display = 'none';
+  }
+  modal.style.display = 'flex';
+  await _renderUsersList(firstRun);
+  setTimeout(() => document.getElementById('new-user-name')?.focus(), 50);
+}
+
+function _usersModalClose() {
+  document.getElementById('users-modal').style.display = 'none';
+}
+
+async function _renderUsersList(firstRun = false) {
+  const list = document.getElementById('users-list');
+  const users = await api.get('/api/auth/users').catch(() => null);
+  if (!users) { list.textContent = 'Error loading users'; return; }
+
+  if (firstRun && users.length > 0) {
+    // First user created — show reload button
+    document.getElementById('users-modal-close').style.display = '';
+    document.getElementById('users-reload-row').style.display = '';
+  }
+
+  if (!users.length) { list.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 0">No users yet.</div>'; return; }
+
+  list.innerHTML = users.map(u => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:12px">${u.username}</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <span id="pw-edit-${u.username}" style="font-size:11px;color:var(--accent);cursor:pointer" onclick="_startEditPw('${u.username}')">change pw</span>
+        <button class="icon-btn" style="font-size:11px;color:var(--red)" onclick="_authDeleteUser('${u.username}')" title="Delete user">✕</button>
+      </div>
+    </div>
+    <div id="pw-row-${u.username}" style="display:none;padding:4px 0 6px">
+      <input type="password" id="pw-input-${u.username}" placeholder="New password" style="width:100%;box-sizing:border-box;font-size:11px"
+             onblur="_savePwIfValue('${u.username}')"
+             onkeydown="if(event.key==='Enter')_savePw('${u.username}');else if(event.key==='Escape')_cancelEditPw('${u.username}')">
+    </div>
+  `).join('');
+}
+
+function _startEditPw(username) {
+  document.getElementById(`pw-row-${username}`).style.display = '';
+  document.getElementById(`pw-input-${username}`)?.focus();
+}
+function _cancelEditPw(username) {
+  document.getElementById(`pw-row-${username}`).style.display = 'none';
+  document.getElementById(`pw-input-${username}`).value = '';
+}
+async function _savePwIfValue(username) {
+  const inp = document.getElementById(`pw-input-${username}`);
+  if (inp?.value) await _savePw(username);
+  else _cancelEditPw(username);
+}
+async function _savePw(username) {
+  const inp = document.getElementById(`pw-input-${username}`);
+  const pw = inp?.value || '';
+  if (!pw) return;
+  await api.patch(`/api/auth/users/${username}`, { password: pw }).catch(() => null);
+  inp.value = '';
+  _cancelEditPw(username);
+}
+
+async function _authDeleteUser(username) {
+  const firstRun = document.getElementById('users-first-run-msg').style.display !== 'none';
+  await api.del(`/api/auth/users/${encodeURIComponent(username)}`).catch(() => null);
+  await _renderUsersList(firstRun);
+}
+
+async function _authCreateUser() {
+  const name = document.getElementById('new-user-name').value.trim();
+  const pw   = document.getElementById('new-user-pw').value;
+  const err  = document.getElementById('users-error');
+  err.textContent = '';
+  if (!name || !pw) { err.textContent = 'Username and password required'; return; }
+  const firstRun = document.getElementById('users-first-run-msg').style.display !== 'none';
+  const res = await api.post('/api/auth/users', { username: name, password: pw }).catch(() => null);
+  if (!res?.ok) {
+    err.textContent = res ? 'User already exists' : 'Error creating user';
+    return;
+  }
+  document.getElementById('new-user-name').value = '';
+  document.getElementById('new-user-pw').value = '';
+  if (firstRun) {
+    location.reload();
+  } else {
+    await _renderUsersList(false);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

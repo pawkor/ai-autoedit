@@ -505,7 +505,10 @@ def main():
 
     scenes = sorted(raw, reverse=True)
 
-    n_shots    = args.top if args.top > 0 else max(1, round(args.duration / args.shot))
+    # Account for xfade overlap: N*shot - (N-1)*xfade = duration
+    # → N = (duration - xfade) / (shot - xfade). Add +4 as buffer for skipped scenes.
+    _eff = max(args.shot - xfade_dur, 0.01)
+    n_shots    = args.top if args.top > 0 else max(1, math.ceil((args.duration - xfade_dur) / _eff) + 4)
     candidates = scenes[:n_shots]
     print(f"Scenes: {len(scenes)} available  |  picking top {len(candidates)}")
     print(f"Score range: {candidates[-1][0]:.3f} – {candidates[0][0]:.3f}")
@@ -583,7 +586,7 @@ def main():
             if win_end > win_start:
                 ss = random.uniform(win_start, win_end)
             else:
-                ss = dur * 0.20   # narrow window: start at 20%
+                ss = min(dur * 0.20, dur - args.shot)  # narrow window: clamp to ensure full shot fits
             word      = word_pool[i]
             angle     = random.choice(angles)
             direction = random.choice(directions)
@@ -592,15 +595,18 @@ def main():
                              args.width, args.height, tmp, i, args.text,
                              xfade_dur)
             if clip:
-                clips.append(clip)
+                clips.append((clip, probe_duration(clip)))
                 print(f"  [{i+1:2d}/{len(candidates)}] score={score:.3f}  ss={ss:.1f}s  "
                       f"word={word}  angle={angle:+d}°  from={direction}")
 
         if not clips:
             sys.exit("ERROR: no clips generated")
 
+        # Unpack clips — [(path, actual_duration), ...]
+        clip_paths = [c for c, _ in clips]
+
         # ── Transitions ───────────────────────────────────────────────────────
-        n_tr = len(clips) - 1
+        n_tr = len(clip_paths) - 1
         if args.transition:
             transitions = [args.transition] * n_tr
         else:
@@ -612,58 +618,68 @@ def main():
         if n_tr:
             print(f"\nTransitions: {', '.join(transitions)}")
 
-        # ── Final encode: xfade chain + music ─────────────────────────────────
+        # ── Pass 1: video-only (xfade chain, no audio) ───────────────────────
         base      = _output_name(work_dir)
         version   = _next_version(work_dir, base)
         out_path  = work_dir / f"{base}-short_{version}.mp4"
-        total_dur = len(clips) * args.shot - n_tr * xfade_dur
-        fade_st   = max(0, total_dur - 2.0)
 
-        fc, vout = build_xfade_graph(len(clips), args.shot, transitions, xfade_dur)
+        fc, vout = build_xfade_graph(len(clip_paths), args.shot, transitions, xfade_dur)
 
         inputs = []
-        for c in clips:
+        for c in clip_paths:
             inputs += ["-i", str(c)]
 
-        if music_file:
-            mi = len(clips)
-            # Seek before input (-ss before -i) is fast and sample-accurate for audio.
-            # apad extends audio with silence if the track is shorter than the video
-            # (avoids -shortest cutting the video to the music duration).
-            fc += (
-                f";\n[{mi}:a]atrim=0:{total_dur:.4f},"
-                f"apad=whole_dur={total_dur:.4f},"
-                f"afade=t=out:st={fade_st:.2f}:d=2[aout]"
-            )
-            inputs += ["-ss", f"{music_ss:.3f}", "-i", str(music_file)]
-            cmd = [
-                "ffmpeg", "-y", *inputs,
-                "-filter_complex", fc,
-                "-map", f"{vout}", "-map", "[aout]",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-color_range", "tv", "-preset", "fast", "-crf", "22",
-                "-c:a", "aac", "-b:a", "192k",
-                "-t", f"{total_dur:.4f}", str(out_path),
-            ]
-        else:
-            cmd = [
-                "ffmpeg", "-y", *inputs,
-                "-filter_complex", fc,
-                "-map", f"{vout}",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-color_range", "tv", "-preset", "fast", "-crf", "22",
-                "-an", str(out_path),
-            ]
-
-        r = subprocess.run(cmd, capture_output=True)
+        print("\n  Encoding video...", flush=True)
+        video_only = tmp / "video_only.mp4"
+        cmd_v = [
+            "ffmpeg", "-y", *inputs,
+            "-filter_complex", fc,
+            "-map", f"{vout}",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-color_range", "tv", "-preset", "fast", "-crf", "22",
+            "-an", str(video_only),
+        ]
+        r = subprocess.run(cmd_v, capture_output=True)
         if r.returncode != 0:
-            print("ERROR in final encode:")
+            print("ERROR in video encode:")
             print(r.stderr.decode(errors="replace")[-800:])
             sys.exit(1)
+
+        # Probe the ACTUAL video duration — xfade rounding can differ from the
+        # theoretical sum(clip_durs) - n_tr*xfade_dur, causing audio overshoot.
+        actual_dur = probe_duration(video_only)
+        fade_st    = max(0, actual_dur - 2.0)
+
+        # ── Pass 2: mux audio trimmed to exact video duration ─────────────────
+        print("  Muxing audio...", flush=True)
+        if music_file:
+            cmd_a = [
+                "ffmpeg", "-y",
+                "-i", str(video_only),
+                "-ss", f"{music_ss:.3f}", "-i", str(music_file),
+                "-filter_complex",
+                f"[1:a]atrim=0:{actual_dur:.4f},"
+                f"apad=whole_dur={actual_dur:.4f},"
+                f"afade=t=out:st={fade_st:.2f}:d=2[aout]",
+                "-map", "0:v", "-map", "[aout]",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-t", f"{actual_dur:.4f}",
+                "-movflags", "+faststart",
+                str(out_path),
+            ]
+            r = subprocess.run(cmd_a, capture_output=True)
+            if r.returncode != 0:
+                print("ERROR in audio mux:")
+                print(r.stderr.decode(errors="replace")[-800:])
+                sys.exit(1)
+        else:
+            video_only.rename(out_path)
+            actual_dur = probe_duration(out_path)
 
     music_info = f" + {music_file.name[:40]}" if music_file else ""
     text_info  = " + rotated text fly-in" if args.text else ""
     print(f"\n✓ {out_path.name}")
-    print(f"  {len(clips)} shots × {args.shot}s  xfade {xfade_dur}s{text_info}{music_info}")
-    print(f"  {args.width}×{args.height}  |  {total_dur:.1f}s")
+    print(f"  {len(clip_paths)} shots × {args.shot}s  xfade {xfade_dur}s{text_info}{music_info}")
+    print(f"  {args.width}×{args.height}  |  {actual_dur:.1f}s")
 
 
 if __name__ == "__main__":

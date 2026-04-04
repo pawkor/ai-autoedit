@@ -42,6 +42,7 @@ services:
       - /proc/meminfo:/proc/meminfo:ro
     environment:
       BROWSE_ROOT: /data
+      ENABLE_AUTH: ${ENABLE_AUTH:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       LAST_FM_API_KEY: ${LAST_FM_API_KEY}
       S3_BUCKET: ${S3_BUCKET:-}
