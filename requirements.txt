@@ -26,3 +26,4 @@ google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 boto3==1.35.99
 yt-dlp==2026.3.17
+prometheus_client==0.21.1

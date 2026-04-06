@@ -32,3 +32,4 @@ tauri/src-tauri/target/
 Thumbs.db
 CLAUDE.md
 webapp/users.json
+.aider*

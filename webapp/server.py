@@ -30,6 +30,12 @@ try:
     _boto3_ok = True
 except ImportError:
     _boto3_ok = False
+
+try:
+    from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
+    _prom_ok = True
+except ImportError:
+    _prom_ok = False
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request, Body, UploadFile, Form
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -216,6 +222,20 @@ _proxy_status: dict[str, dict] = {}           # job_id → status dict
 app = FastAPI(title="autoframe")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# ── Prometheus metrics ─────────────────────────────────────────────────────────
+if _prom_ok:
+    _prom_jobs_active       = Gauge("autoframe_jobs_active",               "Currently running jobs")
+    _prom_jobs_queued       = Gauge("autoframe_jobs_queued",               "Currently queued jobs")
+    _prom_jobs_total        = Counter("autoframe_jobs_total",              "Jobs completed", ["phase", "status"])
+    _prom_job_duration      = Histogram("autoframe_job_duration_seconds",  "Job duration in seconds", ["phase"],
+                                        buckets=[30, 60, 120, 300, 600, 900, 1800, 3600])
+    _prom_cpu_pct           = Gauge("autoframe_cpu_percent",               "CPU utilization percent")
+    _prom_ram_used          = Gauge("autoframe_ram_used_bytes",            "RAM used bytes")
+    _prom_ram_total         = Gauge("autoframe_ram_total_bytes",           "RAM total bytes")
+    _prom_gpu_pct           = Gauge("autoframe_gpu_utilization_percent",   "GPU utilization percent")
+    _prom_gpu_vram_used     = Gauge("autoframe_gpu_vram_used_bytes",       "GPU VRAM used bytes")
+    _prom_gpu_vram_total    = Gauge("autoframe_gpu_vram_total_bytes",      "GPU VRAM total bytes")
+
 _NO_CACHE_EXTS = {".html", ".js", ".css", ".json", ".txt", ".svg", ".ico"}
 
 @app.middleware("http")
@@ -227,7 +247,7 @@ async def auth_middleware(request: Request, call_next):
     if (path.startswith("/api/auth/") or
             path.startswith("/static/") or
             path.startswith("/ws/") or
-            path in ("/", "/favicon.ico")):
+            path in ("/", "/favicon.ico", "/metrics")):
         return await call_next(request)
     # Require valid session for everything else
     if _get_session_user(request) is None:
@@ -245,6 +265,24 @@ async def no_cache_middleware(request: Request, call_next):
     return response
 
 _rebuild_tasks: dict[str, dict] = {}  # task_id -> {progress, total, done, ok}
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    if not _prom_ok:
+        raise HTTPException(501, "prometheus_client not installed")
+    stats = _get_stats()
+    _prom_jobs_active.set(stats["running_jobs"])
+    _prom_jobs_queued.set(stats["queued_jobs"])
+    _prom_cpu_pct.set(stats["cpu_pct"])
+    _prom_ram_used.set(stats["ram_used_gb"] * 1e9)
+    _prom_ram_total.set(stats["ram_total_gb"] * 1e9)
+    if stats.get("gpu"):
+        gpu = stats["gpu"]
+        _prom_gpu_pct.set(gpu["pct"])
+        _prom_gpu_vram_used.set(gpu["vram_used_mb"] * 1_000_000)
+        _prom_gpu_vram_total.set(gpu["vram_total_mb"] * 1_000_000)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.on_event("startup")
@@ -440,6 +478,10 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
             job.phase  = "failed"
 
         job.ended_at = time.time()
+        if _prom_ok:
+            phase = "analyze" if analyze_only else "render"
+            _prom_jobs_total.labels(phase=phase, status=job.status).inc()
+            _prom_job_duration.labels(phase=phase).observe(job.ended_at - job.started_at)
         job.save()
         await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
 
@@ -1901,6 +1943,9 @@ async def _run_shorts(job: Job):
             job.status = "failed"
             job.phase  = "failed"
         job.ended_at = time.time()
+        if _prom_ok:
+            _prom_jobs_total.labels(phase="shorts", status=job.status).inc()
+            _prom_job_duration.labels(phase="shorts").observe(job.ended_at - job.started_at)
         job.save()
         await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
 

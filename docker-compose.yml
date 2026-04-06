@@ -50,6 +50,7 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      FORCE_GPU: ${FORCE_GPU}
     deploy:
       resources:
         reservations:
