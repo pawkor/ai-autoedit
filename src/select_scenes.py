@@ -186,7 +186,20 @@ if dual_cam:
     # cameras including Osmo Action which doesn't encode time in filenames.
     # Fallback: HHMMSS parsed from filename (seconds since midnight).
 
+    def _parse_filename_epoch(stem: str) -> float | None:
+        """Parse YYYYMMDD_HHMMSS from filename → UTC epoch seconds."""
+        m = _re.search(r'(\d{8})_(\d{6})', stem)
+        if not m:
+            return None
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.strptime(m.group(1) + m.group(2), '%Y%m%d%H%M%S').replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            return None
+
     ts_map: dict[str, float] = {}
+    _cam_drift_samples: dict[str, list[float]] = {}
     if os.path.isdir(CSV_DIR):
         _work_dir = Path(os.getcwd())
         _ffprobe  = _cfg.get("paths", "ffprobe", fallback="ffprobe")
@@ -225,6 +238,15 @@ if dual_cam:
             if file_start is None:
                 print(f"  Warning: no timestamp for {stem} (no creation_time, no filename timestamp)")
                 continue
+            # Collect per-camera drift sample: filename encodes real recording time,
+            # creation_time may have clock drift (e.g. wrong timezone on camera).
+            # Only meaningful when file_start came from creation_time (large epoch value,
+            # > 1e9). Filename-fallback returns seconds-since-midnight (~0–86400), so
+            # comparing it against fn_epoch (large epoch) would give a nonsensical sample.
+            fn_epoch = _parse_filename_epoch(stem)
+            if fn_epoch is not None and file_start > 1e9:
+                cam = cam_map.get(stem, 'default')
+                _cam_drift_samples.setdefault(cam, []).append(fn_epoch - file_start)
             try:
                 sdf = pd.read_csv(csv_path)
                 if "Scene Number" not in sdf.columns:
@@ -236,6 +258,27 @@ if dual_cam:
                     ts_map[key] = file_start + secs
             except Exception:
                 pass
+
+        # ── Apply per-camera clock corrections (filename time vs creation_time) ──
+        # Median across all files of a camera — robust even for consecutive clips
+        # that share the same filename timestamp (e.g. GoPro/Osmo 30-min segments).
+        cam_corrections: dict[str, float] = {}
+        for cam, samples in _cam_drift_samples.items():
+            if not samples:
+                continue
+            med = sorted(samples)[len(samples) // 2]
+            if abs(med) >= 300:   # ≥ 5 min → real clock drift, not just imprecision
+                cam_corrections[cam] = med
+                h, s = divmod(abs(med), 3600)
+                sign = '+' if med > 0 else '-'
+                print(f"  Clock drift {cam}: {sign}{int(h)}h{int(s//60):02d}m "
+                      f"(median of {len(samples)} files) — correcting timestamps")
+        if cam_corrections:
+            for key in ts_map:
+                src = _re.sub(r'-scene-\d+$', '', key)
+                cam = cam_map.get(src, 'default')
+                if cam in cam_corrections:
+                    ts_map[key] += cam_corrections[cam]
 
     ts_coverage = sum(1 for s in all_selected if ts_map.get(s[0]) is not None)
     if not ts_map:
@@ -269,41 +312,8 @@ if dual_cam:
             for fut in as_completed(futs):
                 duration_map[futs[fut]] = fut.result()
 
-    # ── Detect clock offset between cameras ──────────────────────────────────
-    # If back cam clock was wrong (e.g. DST off by 1h), all back timestamps will
-    # be shifted by a constant. Detect by trying candidate offsets and picking the
-    # one that maximises matching pairs within ±TIMESTAMP_MATCH_SEC.
-    main_ts_vals = [ts_map[s[0]] for s in all_selected
-                    if s[5] == cam_a_name and ts_map.get(s[0]) is not None]
-    back_ts_sources = set()
-    back_ts_raw: list[float] = []
-    for _, row in back_df.iterrows():
-        sc = row['scene']
-        t = ts_map.get(sc)
-        if t is not None:
-            back_ts_raw.append(t)
-            back_ts_sources.add(sc)
-
-    cam_clock_offset = 0.0
-    if main_ts_vals and back_ts_raw:
-        best_count, best_off = 0, 0.0
-        # Try whole-hour candidates ±12h and also 0
-        candidates = [h * 3600 for h in range(-12, 13)]
-        tol = TIMESTAMP_MATCH_SEC
-        for off in candidates:
-            adjusted = [t - off for t in back_ts_raw]
-            count = sum(
-                1 for bt in adjusted
-                if any(abs(bt - mt) <= tol for mt in main_ts_vals)
-            )
-            if count > best_count:
-                best_count, best_off = count, off
-        if best_off != 0.0 and best_count > 0:
-            cam_clock_offset = best_off
-            h = int(best_off / 3600)
-            print(f"  Clock offset detected: back cam is {h:+d}h — correcting timestamps")
-
-    # Build back-cam entry list with timestamps, sorted by timestamp for fast scan
+    # Build back-cam entry list with timestamps, sorted by timestamp for fast scan.
+    # ts_map is already clock-corrected per camera (filename drift applied above).
     back_entries = []
     for _, row in back_df.iterrows():
         sc  = row['scene']
@@ -316,11 +326,9 @@ if dual_cam:
         fp = f"{SCENES_DIR}{sc}.mp4"
         if not os.path.exists(fp):
             continue
-        raw_ts = ts_map.get(sc)
-        adj_ts = (raw_ts - cam_clock_offset) if raw_ts is not None else None
         back_entries.append({
             "tuple": (sc, fp, dur, take, float(row['score']), row['camera']),
-            "ts":    adj_ts,
+            "ts":    ts_map.get(sc),
             "dur":   dur,
         })
     back_entries.sort(key=lambda e: (e["ts"] or 0))
@@ -332,19 +340,22 @@ if dual_cam:
 
     for ms in main_sel:
         main_ts = ts_map.get(ms[0])
+        # Target: moment right after the helmet clip ends — back cam shows what
+        # happens next, not the same instant (ms[3] = take = how much we cut).
+        target_ts = (main_ts + ms[3]) if main_ts is not None else None
         best, best_dist = None, float("inf")
         for be in back_entries:
             if be["tuple"][0] in used_back:
                 continue
-            if main_ts is None or be["ts"] is None:
+            if target_ts is None or be["ts"] is None:
                 continue
-            # Distance is 0 if main_ts falls inside the back scene's time range,
+            # Distance is 0 if target_ts falls inside the back scene's time range,
             # otherwise the gap to the nearer edge (start or end).
             be_end = be["ts"] + be["dur"]
-            if main_ts < be["ts"]:
-                dist = be["ts"] - main_ts
-            elif main_ts > be_end:
-                dist = main_ts - be_end
+            if target_ts < be["ts"]:
+                dist = be["ts"] - target_ts
+            elif target_ts > be_end:
+                dist = target_ts - be_end
             else:
                 dist = 0.0
             if dist <= TIMESTAMP_MATCH_SEC and dist < best_dist:

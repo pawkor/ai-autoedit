@@ -7,6 +7,7 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx_certs:/etc/nginx/certs
+      - ./webapp:/app/webapp:ro
       - "${DATA_DIR}:/data:ro"
     depends_on:
       - autoframe
@@ -50,7 +51,6 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
-      FORCE_GPU: ${FORCE_GPU}
     deploy:
       resources:
         reservations:

@@ -24,12 +24,11 @@ webapp/youtube_token.json
 webapp/youtube_flow.json
 webapp/config.ini
 
-# Tauri build artifacts — never commit (may contain bundled secrets)
-tauri/src-tauri/target/
+# Tauri — entire directory (desktop app, not part of server deployment)
+tauri/
 
 # OS
 .DS_Store
 Thumbs.db
 CLAUDE.md
 webapp/users.json
-.aider*

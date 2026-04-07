@@ -564,13 +564,10 @@ async def run(params: dict, work_dir: Path,
             yield f"  ⚠ Detect params changed — cleared {', '.join(msg_parts)}"
 
     def _count_csv_scenes(p: Path) -> int:
-        """Count scene data rows, tolerating 1 or 2 header lines and leading blank lines."""
+        """Count scene data rows (lines starting with a digit — excludes all headers)."""
         try:
             with open(p) as fh:
-                return sum(
-                    1 for ln in fh
-                    if ln.strip() and not ln.lstrip().startswith("Scene Number")
-                )
+                return sum(1 for ln in fh if ln.lstrip()[:1].isdigit())
         except Exception:
             return 0
 
@@ -715,7 +712,7 @@ async def run(params: dict, work_dir: Path,
             return f"  ⚠ Cannot read timestamps for {mp4.name}: {e}, removed"
         tmp = mp4.with_suffix(".reencode.mp4")
         proc = await asyncio.create_subprocess_exec(
-            ffmpeg, "-y",
+            ffmpeg, "-y", *hwaccel,
             "-ss", f"{start_sec:.3f}", "-to", f"{end_sec:.3f}",
             "-i", str(source_file),
             "-c:v", vid_codec, *vid_quality,
@@ -1000,7 +997,7 @@ async def run(params: dict, work_dir: Path,
     yield f"  Encoding highlight ({concat_dur:.1f}s)..."
 
     enc_cmd = [
-        ffmpeg, "-f", "concat", "-safe", "0",
+        ffmpeg, *hwaccel, "-f", "concat", "-safe", "0",
         "-i", str(selected_txt),
         "-vf", (f"scale={resolution}:flags=lanczos:force_original_aspect_ratio=decrease,"
                 f"pad={resolution}:(ow-iw)/2:(oh-ih)/2:color=black"),
@@ -1106,7 +1103,7 @@ async def run(params: dict, work_dir: Path,
         # Faded highlight
         fade_out_hl = hl_dur - fade_dur
         await _run([
-            ffmpeg, "-i", str(highlight),
+            ffmpeg, *hwaccel, "-i", str(highlight),
             "-vf", f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_hl:.3f}:d={fade_dur}",
             "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-c:a", "copy",
             str(hl_faded), "-y", "-loglevel", "quiet",

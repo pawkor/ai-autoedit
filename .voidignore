@@ -1,0 +1,13 @@
+# Ignore everything except these
+/*
+!src/
+!webapp/
+!config.ini
+!requirements.txt
+!docker-compose.yml
+
+# Standard noise
+node_modules/
+.git/
+__pycache__/
+*.pyc
