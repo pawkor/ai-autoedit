@@ -251,6 +251,7 @@ function switchTab(name) {
   document.getElementById('job-settings-panel').style.display = name==='settings' ? 'flex' : 'none';
   document.getElementById('log-split').style.display          = name==='log'      ? 'flex' : 'none';
   document.getElementById('log-filter-widget').style.display  = name==='log'      ? ''     : 'none';
+  document.getElementById('btn-clear-log').style.display      = name==='log'      ? ''     : 'none';
   document.getElementById('gallery-panel').classList.toggle('active', name==='gallery');
   document.getElementById('music-panel').classList.toggle('active', name==='music');
   document.getElementById('summary-panel').classList.toggle('active', name==='summary');

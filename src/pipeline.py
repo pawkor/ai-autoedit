@@ -182,6 +182,12 @@ async def estimate(params: dict, work_dir: Path) -> dict:
 
     safe_env = {k: v for k, v in os.environ.items()
                 if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
+    _cam_offsets = params.get("cam_offsets") or {}
+    if isinstance(_cam_offsets, str):
+        try:
+            import json as _json_tmp; _cam_offsets = _json_tmp.loads(_cam_offsets)
+        except Exception:
+            _cam_offsets = {}
     dry_env = {
         **safe_env,
         "SCENES_DIR":       str(auto_dir / "autocut") + "/",
@@ -193,6 +199,7 @@ async def estimate(params: dict, work_dir: Path) -> dict:
         "AUDIO_CAM":        cam_a,
         "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
         "DRY_RUN":          "1",
+        **({"CAM_OFFSETS": json.dumps(_cam_offsets)} if _cam_offsets else {}),
     }
     proc = await asyncio.create_subprocess_exec(
         sys.executable, str(SCRIPT_DIR / "select_scenes.py"),
@@ -547,19 +554,21 @@ async def run(params: dict, work_dir: Path,
     _csv_dir.mkdir(parents=True, exist_ok=True)
     _stored_sig = _detect_params_file.read_text().strip() if _detect_params_file.exists() else None
     if _norm_detect_sig(_stored_sig or "") != _norm_detect_sig(_detect_params_sig):
-        stale_csv    = list(_csv_dir.glob("*-Scenes.csv"))
-        stale_clips  = list((auto_dir / "autocut").glob("*.mp4"))
-        stale_frames = list((auto_dir / "frames").glob("*.jpg"))
-        for f in stale_csv + stale_clips + stale_frames:
+        stale_csv     = list(_csv_dir.glob("*-Scenes.csv"))
+        stale_clips   = list((auto_dir / "autocut").glob("*.mp4"))
+        stale_frames  = list((auto_dir / "frames").glob("*.jpg"))
+        stale_trimmed = list((auto_dir / "trimmed").glob("*.mp4"))
+        for f in stale_csv + stale_clips + stale_frames + stale_trimmed:
             f.unlink()
         # Scores reference old clip filenames → must be regenerated too
         for stale_score in [auto_dir / "scene_scores.csv", auto_dir / "scores_prompts.hash",
                              auto_dir / "duration_cache.json", auto_dir / "validation_ok.txt"]:
             stale_score.unlink(missing_ok=True)
         msg_parts = []
-        if stale_csv:    msg_parts.append(f"{len(stale_csv)} CSV(s)")
-        if stale_clips:  msg_parts.append(f"{len(stale_clips)} clip(s)")
-        if stale_frames: msg_parts.append(f"{len(stale_frames)} frame(s)")
+        if stale_csv:     msg_parts.append(f"{len(stale_csv)} CSV(s)")
+        if stale_clips:   msg_parts.append(f"{len(stale_clips)} clip(s)")
+        if stale_frames:   msg_parts.append(f"{len(stale_frames)} frame(s)")
+        if stale_trimmed: msg_parts.append(f"{len(stale_trimmed)} trimmed(s)")
         if msg_parts:
             yield f"  ⚠ Detect params changed — cleared {', '.join(msg_parts)}"
 
@@ -951,6 +960,12 @@ async def run(params: dict, work_dir: Path,
     yield ""
     yield "[6/6] Selecting scenes and building highlight..."
 
+    _cam_offsets_render = params.get("cam_offsets") or {}
+    if isinstance(_cam_offsets_render, str):
+        try:
+            import json as _json_tmp2; _cam_offsets_render = _json_tmp2.loads(_cam_offsets_render)
+        except Exception:
+            _cam_offsets_render = {}
     sel_env = {
         **_safe_env,
         "SCENES_DIR":  str(auto_dir / "autocut") + "/",
@@ -961,6 +976,7 @@ async def run(params: dict, work_dir: Path,
         "CSV_DIR":          str(auto_dir / "csv"),
         "AUDIO_CAM":        cam_a,
         "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
+        **({"CAM_OFFSETS": json.dumps(_cam_offsets_render)} if _cam_offsets_render else {}),
     }
     sel_proc = await asyncio.create_subprocess_exec(
         sys.executable, str(SCRIPT_DIR / "select_scenes.py"),

@@ -29,6 +29,14 @@ CSV_DIR          = os.environ.get("CSV_DIR",          "")
 AUDIO_CAM        = os.environ.get("AUDIO_CAM",        "")
 MANUAL_OVERRIDES = os.environ.get("MANUAL_OVERRIDES", "")
 TIMESTAMP_MATCH_SEC = _cfg.getfloat("scene_selection", "timestamp_match_sec", fallback=30.0)
+_CAM_OFFSETS: dict[str, float] = {}
+try:
+    _raw_offsets = os.environ.get("CAM_OFFSETS", "")
+    if _raw_offsets:
+        import json as _json_tmp
+        _CAM_OFFSETS = {k: float(v) for k, v in _json_tmp.loads(_raw_offsets).items() if float(v) != 0}
+except Exception:
+    pass
 DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
 
 import re as _re
@@ -182,30 +190,17 @@ if dual_cam:
     other_cams  = all_cam_names[1:]
 
     # ── Build absolute timestamp map from PySceneDetect CSVs ─────────────────
-    # Primary: creation_time from MP4 metadata (epoch seconds) — works for all
-    # cameras including Osmo Action which doesn't encode time in filenames.
-    # Fallback: HHMMSS parsed from filename (seconds since midnight).
-
-    def _parse_filename_epoch(stem: str) -> float | None:
-        """Parse YYYYMMDD_HHMMSS from filename → UTC epoch seconds."""
-        m = _re.search(r'(\d{8})_(\d{6})', stem)
-        if not m:
-            return None
-        try:
-            from datetime import datetime, timezone
-            dt = datetime.strptime(m.group(1) + m.group(2), '%Y%m%d%H%M%S').replace(tzinfo=timezone.utc)
-            return dt.timestamp()
-        except ValueError:
-            return None
+    # Timeline position = creation_time of original source file + scene offset from CSV.
+    # Filename timestamps are unreliable (multi-file sessions reuse the session start
+    # timestamp for all chapter files). Only creation_time from MP4 metadata is used.
 
     ts_map: dict[str, float] = {}
-    _cam_drift_samples: dict[str, list[float]] = {}
     if os.path.isdir(CSV_DIR):
         _work_dir = Path(os.getcwd())
         _ffprobe  = _cfg.get("paths", "ffprobe", fallback="ffprobe")
 
         def _get_file_start(stem: str) -> float | None:
-            """Return file start time: creation_time epoch (primary), filename HHMMSS (fallback)."""
+            """Return file start epoch from creation_time MP4 metadata."""
             cam = cam_map.get(stem)
             if cam:
                 for ext in (".mp4", ".MP4", ".mov", ".MOV"):
@@ -225,28 +220,14 @@ if dual_cam:
                                 return dt.timestamp()
                         except Exception:
                             pass
-            # Fallback: HHMMSS from filename
-            m = _re.search(r'_(\d{6})(?:_\d+)*$', stem)
-            if m:
-                hms = m.group(1)
-                return int(hms[0:2]) * 3600 + int(hms[2:4]) * 60 + int(hms[4:6])
             return None
 
         for csv_path in sorted(Path(CSV_DIR).glob("*-Scenes.csv")):
             stem = csv_path.stem[:-len("-Scenes")]
             file_start = _get_file_start(stem)
             if file_start is None:
-                print(f"  Warning: no timestamp for {stem} (no creation_time, no filename timestamp)")
+                print(f"  Warning: no creation_time for {stem} — skipping timestamp mapping")
                 continue
-            # Collect per-camera drift sample: filename encodes real recording time,
-            # creation_time may have clock drift (e.g. wrong timezone on camera).
-            # Only meaningful when file_start came from creation_time (large epoch value,
-            # > 1e9). Filename-fallback returns seconds-since-midnight (~0–86400), so
-            # comparing it against fn_epoch (large epoch) would give a nonsensical sample.
-            fn_epoch = _parse_filename_epoch(stem)
-            if fn_epoch is not None and file_start > 1e9:
-                cam = cam_map.get(stem, 'default')
-                _cam_drift_samples.setdefault(cam, []).append(fn_epoch - file_start)
             try:
                 sdf = pd.read_csv(csv_path)
                 if "Scene Number" not in sdf.columns:
@@ -259,26 +240,13 @@ if dual_cam:
             except Exception:
                 pass
 
-        # ── Apply per-camera clock corrections (filename time vs creation_time) ──
-        # Median across all files of a camera — robust even for consecutive clips
-        # that share the same filename timestamp (e.g. GoPro/Osmo 30-min segments).
-        cam_corrections: dict[str, float] = {}
-        for cam, samples in _cam_drift_samples.items():
-            if not samples:
-                continue
-            med = sorted(samples)[len(samples) // 2]
-            if abs(med) >= 300:   # ≥ 5 min → real clock drift, not just imprecision
-                cam_corrections[cam] = med
-                h, s = divmod(abs(med), 3600)
-                sign = '+' if med > 0 else '-'
-                print(f"  Clock drift {cam}: {sign}{int(h)}h{int(s//60):02d}m "
-                      f"(median of {len(samples)} files) — correcting timestamps")
-        if cam_corrections:
-            for key in ts_map:
-                src = _re.sub(r'-scene-\d+$', '', key)
-                cam = cam_map.get(src, 'default')
-                if cam in cam_corrections:
-                    ts_map[key] += cam_corrections[cam]
+    if _CAM_OFFSETS and ts_map:
+        for key in ts_map:
+            src = _re.sub(r'-scene-\d+$', '', key)
+            cam = cam_map.get(src, 'default')
+            if cam in _CAM_OFFSETS:
+                ts_map[key] += _CAM_OFFSETS[cam]
+        print(f"  Cam offsets applied: " + ", ".join(f"{c}={v:+.0f}s" for c, v in _CAM_OFFSETS.items()))
 
     ts_coverage = sum(1 for s in all_selected if ts_map.get(s[0]) is not None)
     if not ts_map:

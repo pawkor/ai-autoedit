@@ -1,0 +1,146 @@
+@media (max-width: 768px) {
+
+  /* ── Hamburger button ── */
+  #btn-hamburger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+    order: -1;
+  }
+  #btn-hamburger:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Sidebar overlay ── */
+  #sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    z-index: 49;
+  }
+  #sidebar-overlay.open { display: block; }
+
+  /* ── Sidebar slides in from left ── */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: -260px;
+    height: 100%;
+    z-index: 50;
+    transition: left .22s ease;
+    min-width: 260px;
+    width: 260px;
+  }
+  #sidebar.open { left: 0; }
+
+  /* ── Main takes full width ── */
+  #app-body { flex-direction: column; }
+  #main { width: 100%; }
+
+  /* ── Job header: wrap, hide HW monitor ── */
+  #job-header { flex-wrap: wrap; gap: 5px; padding: 6px 10px; }
+  #hw-monitor { display: none !important; }
+  .jh-flex { display: none; }
+  #jh-path { font-size: 12px; max-width: calc(100vw - 120px); }
+  #q-row { order: 10; width: 100%; flex-direction: row; gap: 10px; padding-top: 2px; border-top: 1px solid var(--border); }
+
+  /* ── Steps wrap tighter ── */
+  #steps { gap: 3px; padding: 6px 10px; }
+  .step { font-size: 9px; padding: 2px 6px; }
+
+  /* ── Tabs: horizontal scroll, no wrap ── */
+  #job-tabs { flex-wrap: nowrap; overflow-x: auto; padding: 5px 10px; gap: 4px; }
+  #job-tabs::-webkit-scrollbar { display: none; }
+  .tab { white-space: nowrap; flex-shrink: 0; }
+
+  /* ── Gallery grid: 2 columns ── */
+  #frames-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* ── All fixed-width modals → responsive ── */
+  #dir-box,
+  #confirm-box,
+  #s3-box,
+  #files-box,
+  #settings-box { width: 95vw !important; }
+
+  #yt-box, #yt-shorts-box {
+    width: 95vw !important;
+    height: 90vh !important;
+  }
+
+  /* ── Summary panel ── */
+  #summary-panel { padding: 12px; }
+
+  /* ── Results: full width cards ── */
+  .rf-files { flex-direction: column; }
+  .rf { width: 100%; }
+
+  /* ── Music tab: hide BPM/energy columns ── */
+  .mt-bpm, .mt-energy,
+  #music-list-header .mh-bpm,
+  #music-list-header .mh-energy { display: none; }
+
+}
+
+  /* ── Mobile top bar ── */
+  #mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 1px;
+  }
+
+  #btn-hamburger-open {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    border-radius: 3px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  #btn-hamburger-open:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Close button inside sidebar ── */
+  #btn-hamburger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 14px;
+    width: 26px;
+    height: 26px;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+    order: -1;
+  }
+  #btn-hamburger:hover { border-color: var(--accent); color: var(--accent); }
+
+}
+
+/* Desktop: both hamburger buttons always hidden, mobile-topbar hidden */
+#btn-hamburger { display: none; }
+#btn-hamburger-open { display: none; }
+#mobile-topbar { display: none; }

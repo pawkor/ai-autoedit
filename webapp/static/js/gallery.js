@@ -391,6 +391,8 @@ function saveSettingsField() {
   data.no_intro    = gc('js-no-intro') || false;
   data.no_music    = gc('js-no-music') || false;
   data.shorts_text = gc('js-shorts-text') || false;
+  const offsets = readCamOffsets('js-cam-list');
+  if (offsets) data.cam_offsets = offsets;
   api.put('/api/job-config', data);
 }
 
@@ -931,7 +933,9 @@ async function populateJobSettings(params) {
 
   _setWorkdir(params.work_dir);
   s3SectionInit();
-  await setCamsList('js-cam-list', params.cameras || [params.cam_a, params.cam_b].filter(Boolean));
+  const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(params.work_dir)}`);
+  const _camOffsets = params.cam_offsets || cfg?.cam_offsets;
+  await setCamsList('js-cam-list', params.cameras || [params.cam_a, params.cam_b].filter(Boolean), _camOffsets);
   sv('js-title',    params.title);
   sc('js-no-intro',    params.no_intro);
   sc('js-no-music',    params.no_music);
@@ -943,7 +947,6 @@ async function populateJobSettings(params) {
 
   // Load config.ini defaults and prompts
   let th = params.threshold, ms = params.max_scene, pf = params.per_file;
-  const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(params.work_dir)}`);
   if (cfg) {
     if (th == null) th = cfg.threshold;
     if (ms == null) ms = cfg.max_scene;
@@ -989,6 +992,7 @@ function readJobSettings() {
   const sdt = gv('js-sd-threshold'); p.sd_threshold = sdt ? parseFloat(sdt) : 20;
   const sdm = gv('js-sd-min-scene'); if (sdm) p.sd_min_scene  = sdm;
   const cameras = readCamsList('js-cam-list'); if (cameras.length) p.cameras = cameras;
+  const offsets = readCamOffsets('js-cam-list'); if (offsets) p.cam_offsets = offsets;
   const ti = gv('js-title');     if (ti) p.title = ti;
   p.no_intro    = gc('js-no-intro');
   p.no_music    = gc('js-no-music');
@@ -1051,7 +1055,7 @@ async function loadResults(jobId) {
   const container = document.getElementById('rf-files');
   container.innerHTML = '';
   for (const [name, info] of Object.entries(data)) {
-    const filePath = new URLSearchParams((info.url.split('?')[1]) || '').get('path') || '';
+    const filePath = info.url;  // url is now a direct path e.g. /data/2025/.../video.mp4
     const div = document.createElement('div');
     div.className = 'rf';
     const rfName = document.createElement('div'); rfName.className = 'rf-name'; rfName.textContent = name;
@@ -1067,7 +1071,7 @@ async function loadResults(jobId) {
     dlBtn.className = 'btn-sm';
     dlBtn.textContent = '▼';
     dlBtn.title = 'Download';
-    dlBtn.href = info.url + '&dl=1';
+    dlBtn.href = '/api/file?path=' + encodeURIComponent(filePath) + '&dl=1';
     dlBtn.download = name;
     dlBtn.style.textDecoration = 'none';
     dlBtn.onclick = e => e.stopPropagation();

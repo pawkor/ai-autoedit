@@ -5,14 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI-autoedit</title>
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/mobile.css">
 </head>
 <body>
 <div id="app">
 <div id="app-body">
 
+<div id="sidebar-overlay"></div>
+
 <!-- Sidebar -->
 <div id="sidebar">
   <div id="sidebar-header">
+    <button id="btn-hamburger" title="Close menu">✕</button>
     <h1>AI<br>autoedit</h1>
     <div id="sidebar-btns">
       <div>
@@ -32,6 +36,11 @@
 <!-- Main -->
 <div id="main">
 
+  <div id="mobile-topbar">
+    <button id="btn-hamburger-open" title="Menu">☰</button>
+    <span>AI-autoedit</span>
+  </div>
+
   <div id="welcome" class="view active">
     <div class="wt"><h2>AI-autoedit</h2><p data-i18n="misc.welcome_sub">AI highlight reel pipeline</p>
       <p style="margin-top:14px;font-size:11px;"><span data-i18n="misc.welcome_hint">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</span></p>
@@ -43,6 +52,11 @@
     <div id="job-header">
       <span class="dot s-pending" id="jh-dot"></span>
       <span id="jh-path"></span>
+      <span class="jh-flex"></span>
+      <div id="q-row" style="display:none">
+        <div><span data-i18n="misc.running">Running</span>: <span class="qv running" id="q-running">0</span></div>
+        <div><span data-i18n="misc.queued">Queued</span>: <span class="qv queued" id="q-queued">0</span></div>
+      </div>
       <span class="jh-flex"></span>
       <div id="hw-monitor" style="display:none">
         <div id="hw-cols">
@@ -92,6 +106,7 @@
           <div class="lfm-item" data-lf="all"   onclick="setLogFilter('all')">All</div>
         </div>
       </div>
+      <button id="btn-clear-log" style="display:none" onclick="document.getElementById('log-panel').innerHTML=''" title="Clear log">✕</button>
     </div>
     <div id="tab-content">
 
@@ -389,7 +404,7 @@
       <!-- Results tab -->
       <div id="results-panel">
         <div class="rf-files" id="rf-files"></div>
-        <div id="video-wrap"><video id="video-player" controls></video></div>
+        <div id="video-wrap"><video id="video-player" controls preload="auto"></video></div>
       </div>
 
     </div>
@@ -397,7 +412,7 @@
 
 </div><!-- /main -->
 </div><!-- /app-body -->
-<div id="app-footer"><span id="q-row" style="display:none"><span data-i18n="misc.running">Running</span>: <span class="qv running" id="q-running">0</span> · <span data-i18n="misc.queued">Queued</span>: <span class="qv queued" id="q-queued">0</span></span><span id="q-row-sep" style="display:none"> · </span><a href="/static/license.html" target="_blank">Licencja / License</a><span>,</span><a href="/static/privacy.html" target="_blank">Prywatność / Privacy</a></div>
+<div id="app-footer"><a href="/static/license.html" target="_blank">Licencja / License</a><span>,</span><a href="/static/privacy.html" target="_blank">Prywatność / Privacy</a></div>
 </div><!-- /app -->
 
 <!-- Files browser modal -->
@@ -696,5 +711,6 @@
 <script src="/js/jobs.js" defer></script>
 <script src="/js/services.js" defer></script>
 <script src="/js/ui.js" defer></script>
+<script src="/js/mobile.js" defer></script>
 </body>
 </html>

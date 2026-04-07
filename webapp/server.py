@@ -1257,6 +1257,7 @@ class JobParams(BaseModel):
     per_file:     Optional[float] = None
     title:        Optional[str]   = None
     cameras:      Optional[list[str]] = None  # ordered list: first = audio cam
+    cam_offsets:  Optional[dict] = None       # per-camera time offset in seconds
     cam_a:        Optional[str]   = None      # legacy; kept for backward compat
     cam_b:        Optional[str]   = None      # legacy; kept for backward compat
     no_intro:     bool = False
@@ -1334,6 +1335,13 @@ def read_job_config(work_dir: Path) -> dict:
         legacy = [c for c in [result.get("cam_a"), result.get("cam_b")] if c]
         if legacy:
             result["cameras"] = legacy
+    # Read [cam_offsets] section as dict
+    for cp in (local_cp, global_cp):
+        if cp.has_section("cam_offsets"):
+            offsets = {k: float(v) for k, v in cp.items("cam_offsets") if v.strip()}
+            if offsets:
+                result["cam_offsets"] = offsets
+            break
     return result
 
 
@@ -1418,6 +1426,13 @@ def save_job_config(work_dir: Path, params: dict):
 
     if updates:
         update_config_ini(work_dir / "config.ini", updates)
+
+    # [cam_offsets] section: write each camera as a separate key
+    cam_offsets = params.get("cam_offsets")
+    if cam_offsets and isinstance(cam_offsets, dict):
+        offsets_update = {"cam_offsets": {k: str(int(v)) for k, v in cam_offsets.items() if v is not None}}
+        update_config_ini(work_dir / "config.ini", offsets_update)
+
 
 
 def save_prompts_to_config(cfg_path: Path, positive: str, negative: str):
@@ -2194,7 +2209,7 @@ async def job_result(job_id: str):
     def _add(p: Path):
         if p.exists():
             files[p.name] = {
-                "url":          f"/api/file?path={p}",
+                "url":          str(p),
                 "size_mb":      round(p.stat().st_size / 1_048_576, 1),
                 "duration_sec": _probe_duration(p),
             }

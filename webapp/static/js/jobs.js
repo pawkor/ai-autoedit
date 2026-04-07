@@ -21,13 +21,11 @@ function updateStats(s) {
   }
   document.getElementById('hw-monitor').style.display = '';
 
-  // Queue in footer
   const qRunning = s.running_jobs, qQueued = s.queued_jobs;
   document.getElementById('q-running').textContent = qRunning;
   document.getElementById('q-queued').textContent  = qQueued;
   const show = qRunning > 0 || qQueued > 0;
   document.getElementById('q-row').style.display = show ? '' : 'none';
-  document.getElementById('q-row-sep').style.display = show ? '' : 'none';
 }
 
 // ── Prompts ───────────────────────────────────────────────────────────────────

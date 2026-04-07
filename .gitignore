@@ -24,11 +24,9 @@ webapp/youtube_token.json
 webapp/youtube_flow.json
 webapp/config.ini
 
-# Tauri — entire directory (desktop app, not part of server deployment)
-tauri/
-
 # OS
 .DS_Store
+.plandex-v2/
 Thumbs.db
 CLAUDE.md
 webapp/users.json

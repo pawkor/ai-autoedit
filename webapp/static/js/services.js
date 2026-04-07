@@ -857,7 +857,7 @@ function _openWorkdirFileBrowser() {
   if (wd) openFileBrowser(wd, '');
 }
 
-async function addCamRow(containerId, value, subdirs) {
+async function addCamRow(containerId, value, subdirs, offsetSec) {
   const container = document.getElementById(containerId);
   if (!subdirs) {
     const wd = containerId.startsWith('f-')
@@ -878,22 +878,41 @@ async function addCamRow(containerId, value, subdirs) {
     const sub = sel.value.trim();
     openFileBrowser(wd, sub);
   };
+  const offLabel = document.createElement('span');
+  offLabel.textContent = '±s'; offLabel.style.cssText = 'font-size:10px;color:var(--muted);flex-shrink:0';
+  offLabel.title = 'Time offset in seconds (e.g. 7200 = +2h)';
+  const offInput = document.createElement('input');
+  offInput.type = 'number'; offInput.className = 'cam-offset';
+  offInput.value = offsetSec != null ? String(Math.round(offsetSec)) : '0';
+  offInput.step = '1'; offInput.title = 'Time offset in seconds (e.g. 7200 = +2h, -3600 = -1h)';
+  offInput.addEventListener('change', () => typeof saveSettingsField === 'function' && saveSettingsField());
+  offInput.addEventListener('blur',   () => typeof saveSettingsField === 'function' && saveSettingsField());
   const btn = document.createElement('button'); btn.className = 'btn-sm'; btn.textContent = '−';
   btn.title = 'Remove camera'; btn.style.flexShrink = '0';
   btn.onclick = () => { row.remove(); _relabelCams(container); };
-  row.append(lbl, sel, browse, btn);
+  row.append(lbl, sel, browse, offLabel, offInput, btn);
   container.appendChild(row);
   _relabelCams(container);
 }
 
-async function setCamsList(containerId, cameras) {
+async function setCamsList(containerId, cameras, camOffsets) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
   const wd = document.getElementById('js-workdir').value.trim();
   const subdirs = await _fetchCamSubdirs(wd);
   const list = (cameras || []).filter(Boolean);
-  for (const cam of list) await addCamRow(containerId, cam, subdirs);
+  for (const cam of list) await addCamRow(containerId, cam, subdirs, (camOffsets || {})[cam]);
   _updateWorkdirBrowseBtn();
+}
+
+function readCamOffsets(containerId) {
+  const offsets = {};
+  document.getElementById(containerId).querySelectorAll('.cam-row').forEach(row => {
+    const cam = row.querySelector('.cam-select')?.value?.trim();
+    const sec = parseInt(row.querySelector('.cam-offset')?.value || '0', 10);
+    if (cam && sec !== 0) offsets[cam] = sec;
+  });
+  return Object.keys(offsets).length ? offsets : null;
 }
 
 function readCamsList(containerId) {
