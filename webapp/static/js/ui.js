@@ -414,8 +414,8 @@ async function ytDisconnect() {
   ytCheckStatus();
 }
 
-async function ytLoadPlaylists() {
-  const sel = document.getElementById('yt-playlist');
+async function ytLoadPlaylists(selId = 'yt-playlist') {
+  const sel = document.getElementById(selId);
   sel.innerHTML = '<option value="">— no playlist —</option>';
   const data = await api.get('/api/youtube/playlists');
   if (!data?.length) return;

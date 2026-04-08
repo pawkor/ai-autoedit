@@ -187,11 +187,17 @@ function _sceneMatchesFilters(f) {
     if (!s.startsWith(_filterScore)) return false;
   }
   if (_filterTime) {
-    // Extract HHMMSS from scene name e.g. VID_20250421_092049_001-scene-008 → 092049
-    const m = f.scene.match(/\d{8}_(\d{6})/);
-    if (!m) return false;
-    const needle = _filterTime.replace(/:/g, ''); // strip colons typed by user
-    if (!m[1].startsWith(needle)) return false;
+    const needle = _filterTime.replace(/:/g, '');
+    let timeStr;
+    if (f.file_start) {
+      const d = new Date(f.file_start * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      timeStr = pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+    } else {
+      const m = f.scene.match(/\d{8}_(\d{6})/);
+      timeStr = m ? m[1] : null;
+    }
+    if (!timeStr || !timeStr.startsWith(needle)) return false;
   }
   return true;
 }
@@ -226,10 +232,16 @@ function renderGallery() {
       : limited ? `Score: ${f.score.toFixed(3)} (cut by ${limitReason} — click to force include)`
       : `Score: ${f.score.toFixed(3)} (click to toggle)`;
     card.onclick = ()=>toggleFrame(f.scene);
-    const sceneLabel = (s => {
-      const m = s.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2}).*-scene-(\d+)$/);
-      return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} #${m[7]}` : s.split('/').pop().slice(-22);
-    })(f.scene);
+    const sceneNum = (f.scene.match(/-scene-(\d+)$/) || [])[1] || '';
+    const sceneLabel = (() => {
+      if (f.file_start) {
+        const d = new Date(f.file_start * 1000);
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} #${sceneNum}`;
+      }
+      const m = f.scene.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2}).*-scene-(\d+)$/);
+      return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} #${m[7]}` : f.scene.split('/').pop().slice(-22);
+    })();
     const limitBadge = limited ? `<span class="fc-limit-badge">limit</span>` : '';
     const _maxSec = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
     const effDur = Math.min(f.duration ?? _maxSec, _maxSec);
@@ -701,7 +713,7 @@ async function loadMusicTracks() {
 }
 
 function _trackVisible(t, filter, genre) {
-  if (filter && !t.title.toLowerCase().includes(filter)) return false;
+  if (filter && !`${t.title} ${t.artist || ''}`.toLowerCase().includes(filter)) return false;
   if (genre && (t.genre || '').toLowerCase() !== genre) return false;
   return true;
 }

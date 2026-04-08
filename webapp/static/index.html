@@ -649,6 +649,16 @@
           <label class="cb-label"><input type="radio" name="yts-privacy" value="public" checked> public</label>
         </div>
       </div>
+      <div class="ff">
+        <label>Playlist</label>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <select id="yts-playlist" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none"></select>
+          <button type="button" class="btn-sm" onclick="ytShortsNewPlaylist()">+ New</button>
+        </div>
+        <input type="text" id="yts-new-playlist" placeholder="New playlist name…"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('btn-yts-upload').focus();}"
+               style="display:none;margin-top:6px;width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--accent);color:var(--text);padding:4px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none">
+      </div>
       <div id="yts-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>
     </div>
     <div class="modal-footer">

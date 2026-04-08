@@ -21,6 +21,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from datetime import datetime
 import aiofiles
 import psutil
 import tempfile
@@ -2170,14 +2171,60 @@ async def job_frames(job_id: str):
             if back_takes:
                 avg_back_cam_take_sec = round(sum(back_takes) / len(back_takes), 2)
 
+    # ── Build file_start (epoch) per scene: source creation_time + scene CSV offset ──
+    file_starts: dict[str, float] = {}
+    if csv_dir.exists():
+        _cm = cam_map if cam_sources_csv.exists() else {}
+        _cams_param = job.params.get("cameras") or []
+        if isinstance(_cams_param, str):
+            _cams_param = [c.strip() for c in _cams_param.split(",") if c.strip()]
+        _wd = job.work_dir()
+
+        def _file_start_epoch(stem: str) -> Optional[float]:
+            cam = _cm.get(stem)
+            dirs = [_wd / cam] if cam else ([_wd / c for c in _cams_param] if _cams_param else [_wd])
+            for d in dirs:
+                for ext in (".mp4", ".MP4", ".mov", ".MOV"):
+                    p = d / (stem + ext)
+                    if p.exists():
+                        try:
+                            r = subprocess.run(
+                                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                                 "-show_format", str(p)],
+                                capture_output=True, text=True, timeout=10,
+                            )
+                            ct = json.loads(r.stdout)["format"].get("tags", {}).get("creation_time", "")
+                            if ct:
+                                dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                                return dt.timestamp()
+                        except Exception:
+                            pass
+            return None
+
+        for _csv in csv_dir.glob("*-Scenes.csv"):
+            _stem = _csv.stem[:-len("-Scenes")]
+            _fstart = _file_start_epoch(_stem)
+            if _fstart is None:
+                continue
+            try:
+                _sdf = _read_scenes_csv(_csv)
+                for _, _srow in _sdf.iterrows():
+                    _snum = int(_srow["Scene Number"])
+                    _key = f"{_stem}-scene-{_snum:03d}"
+                    _secs = float(_srow.get("Start Time (seconds)", 0) or 0)
+                    file_starts[_key] = round(_fstart + _secs, 1)
+            except Exception:
+                pass
+
     frames = [
         {
-            "scene":     row["scene"],
-            "score":     round(float(row["score"]), 4),
-            "duration":  durations.get(row["scene"]),
-            "camera":    row.get("camera") if "camera" in df.columns else None,
-            "frame_url": str(frames_dir / (row['scene'] + '.jpg'))
-                         if (frames_dir / (row["scene"] + ".jpg")).exists() else None,
+            "scene":      row["scene"],
+            "score":      round(float(row["score"]), 4),
+            "duration":   durations.get(row["scene"]),
+            "camera":     row.get("camera") if "camera" in df.columns else None,
+            "frame_url":  str(frames_dir / (row['scene'] + '.jpg'))
+                          if (frames_dir / (row["scene"] + ".jpg")).exists() else None,
+            "file_start": file_starts.get(row["scene"]),
         }
         for _, row in df.iterrows()
     ]

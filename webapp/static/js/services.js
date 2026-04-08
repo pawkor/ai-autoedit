@@ -1027,7 +1027,7 @@ async function ytModalOpen(filePath, fileName, existingUrl) {
     } catch (_) {}
   }
   document.getElementById('yt-title').value = savedTitle || projectName;
-  document.getElementById('yt-desc').value  = savedDesc  || (projectName + '\n' + _YT_DEFAULT_FOOTER);
+  document.getElementById('yt-desc').value  = savedDesc  || _YT_DEFAULT_FOOTER;
   document.getElementById('yt-gen-status').textContent = '';
   document.querySelector('input[name="yt-privacy"][value="unlisted"]').checked = true;
   document.getElementById('yt-new-playlist').style.display = 'none';
@@ -1139,22 +1139,26 @@ async function ytShortsModalOpen(filePath, fileName) {
   document.getElementById('yts-title').value = titleVal;
 
   const linkLine = mainVideoUrl ? `Full video: ${mainVideoUrl}` : '';
-  const descParts = [titleVal, linkLine, _YT_SHORTS_FOOTER].filter(Boolean);
-  document.getElementById('yts-desc').value = descParts.join('\n');
+  document.getElementById('yts-desc').value = linkLine ? `${linkLine}\n\n${_YT_SHORTS_FOOTER}` : _YT_SHORTS_FOOTER;
 
   document.querySelector('input[name="yts-privacy"][value="public"]').checked = true;
 
   const statusEl = document.getElementById('yts-status');
   const btn = document.getElementById('btn-yts-upload');
+  btn.onclick = ytShortsUpload;  // reset — may have been replaced by onClose after previous upload
+  btn.textContent = '▲ Upload';
   if (!mainVideoUrl) {
     statusEl.textContent = '⚠ Main video not yet published on YouTube — upload it first to include a link.';
     statusEl.style.color = 'var(--yellow, #e5b400)';
-    btn.disabled = true; btn.textContent = '▲ Upload';
+    btn.disabled = true;
   } else {
     statusEl.textContent = '';
-    btn.disabled = false; btn.textContent = '▲ Upload';
+    btn.disabled = false;
   }
+  document.getElementById('yts-new-playlist').style.display = 'none';
+  document.getElementById('yts-new-playlist').value = '';
   document.getElementById('yt-shorts-modal').classList.add('open');
+  await ytLoadPlaylists('yts-playlist');
 }
 
 function ytShortsModalClose() {
@@ -1208,13 +1212,18 @@ async function ytShortsUpload() {
   if (!_ytsFilePath) return;
   const title   = document.getElementById('yts-title').value.trim();
   if (!title) { alert('Enter a title'); return; }
-  const privacy = document.querySelector('input[name="yts-privacy"]:checked')?.value || 'public';
-  const desc    = document.getElementById('yts-desc').value.trim();
+  const privacy     = document.querySelector('input[name="yts-privacy"]:checked')?.value || 'public';
+  const desc        = document.getElementById('yts-desc').value.trim();
+  const playlistId  = document.getElementById('yts-new-playlist').style.display !== 'none'
+                        ? null
+                        : (document.getElementById('yts-playlist').value || null);
+  const newPlaylist = document.getElementById('yts-new-playlist').value.trim() || null;
   const status  = document.getElementById('yts-status');
   const btn     = document.getElementById('btn-yts-upload');
   btn.disabled = true; btn.textContent = 'Uploading…'; status.textContent = '';
   const res = await api.post('/api/youtube/upload', {
     file_path: _ytsFilePath, title, description: desc, privacy,
+    playlist_id: playlistId, new_playlist: newPlaylist,
   });
   if (!res?.upload_id) {
     btn.disabled = false; btn.textContent = '▲ Upload';
@@ -1244,6 +1253,13 @@ function ytNewPlaylist() {
   const visible = inp.style.display !== 'none';
   inp.style.display = visible ? 'none' : '';
   if (!visible) { inp.focus(); document.getElementById('yt-playlist').value = ''; }
+}
+
+function ytShortsNewPlaylist() {
+  const inp = document.getElementById('yts-new-playlist');
+  const visible = inp.style.display !== 'none';
+  inp.style.display = visible ? 'none' : '';
+  if (!visible) { inp.focus(); document.getElementById('yts-playlist').value = ''; }
 }
 
 async function ytUpload() {
