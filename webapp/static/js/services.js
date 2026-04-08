@@ -721,7 +721,7 @@ function _showFilePreview(path, e, delay = 400) {
       v.currentTime = Math.min(3, v.duration * 0.05);
       v.play().catch(() => {});
     }, {once: true});
-    document.getElementById('file-tip').style.display = '';
+    document.getElementById('file-tip').style.display = 'block';
     _moveFileTip(e);
   }, delay);
 }
