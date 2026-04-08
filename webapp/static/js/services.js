@@ -1243,7 +1243,8 @@ async function ytSaveExistingUrl() {
     const linked = document.createElement('span');
     linked.textContent = '✓ Linked: ';
     const a = document.createElement('a');
-    a.href = url; a.target = '_blank'; a.style.color = 'var(--accent)'; a.textContent = url;
+    if (/^https?:\/\//i.test(url)) a.href = url;
+    a.target = '_blank'; a.style.color = 'var(--accent)'; a.textContent = url;
     linked.appendChild(a);
     status.appendChild(linked);
     status.style.color = 'var(--green)';
