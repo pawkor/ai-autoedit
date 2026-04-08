@@ -56,10 +56,12 @@
   #steps { gap: 3px; padding: 6px 10px; }
   .step { font-size: 9px; padding: 2px 6px; }
 
-  /* ── Tabs: horizontal scroll, no wrap ── */
-  #job-tabs { flex-wrap: nowrap; overflow-x: auto; padding: 5px 10px; gap: 4px; }
-  #job-tabs::-webkit-scrollbar { display: none; }
-  .tab { white-space: nowrap; flex-shrink: 0; }
+  /* ── App height: use dvh so browser chrome (address bar) is excluded ── */
+  #app { height: 100dvh; }
+
+  /* ── Tabs: 2 rows of 3 ── */
+  #job-tabs { flex-wrap: wrap; padding: 5px 10px; gap: 4px; }
+  .tab { flex: 1 1 calc(33.33% - 4px); white-space: nowrap; text-align: center; }
 
   /* ── Gallery grid: 2 columns ── */
   #frames-grid { grid-template-columns: repeat(2, 1fr); }

@@ -111,7 +111,7 @@ async function openJob(jobId) {
   document.getElementById('frames-grid').innerHTML = '';
   document.getElementById('rf-files').innerHTML = '';
   document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-header').style.display = 'none';
+  document.getElementById('btn-kill-log').style.display = 'none';
   document.getElementById('jh-path').textContent = '…';
   document.getElementById('jh-status').textContent = '';
   document.getElementById('jh-elapsed').textContent = '';
@@ -145,7 +145,7 @@ async function openJob(jobId) {
 
   if (job.status === 'running') {
     document.getElementById('btn-kill').style.display = '';
-  document.getElementById('log-kill-header').style.display = '';
+  document.getElementById('btn-kill-log').style.display = '';
     startElapsedTimer(job.started_at);
   } else if (job.status === 'queued') {
     document.getElementById('jh-status').textContent = 'queued';
@@ -231,12 +231,12 @@ function connectJobWs(jobId, startedAt) {
       setStatusDot(msg.status);
       if (msg.status==='running') {
         document.getElementById('btn-kill').style.display = '';
-  document.getElementById('log-kill-header').style.display = '';
+  document.getElementById('btn-kill-log').style.display = '';
         document.getElementById('jh-status').textContent = '';
         startElapsedTimer(startedAt);
       } else {
         document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-header').style.display = 'none';
+  document.getElementById('btn-kill-log').style.display = 'none';
         if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
         if (msg.phase === 'analyzed') {
           loadFrames(jobId);
@@ -535,7 +535,7 @@ async function killJob() {
   if (!await showConfirm('Stop job', 'Stop the running job?\nProgress so far will be lost.', null, 'Stop')) return;
   await api.del(`/api/jobs/${currentJobId}`);
   document.getElementById('btn-kill').style.display = 'none';
-  document.getElementById('log-kill-header').style.display = 'none';
+  document.getElementById('btn-kill-log').style.display = 'none';
 }
 
 async function removeJob(jobId) {

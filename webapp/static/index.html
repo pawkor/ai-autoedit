@@ -90,6 +90,7 @@
       <span class="step" data-step="4" data-i18n="step.4">4 Frames</span>
       <span class="step" data-step="5" data-i18n="step.5">5 CLIP</span>
       <span class="step" data-step="6" data-i18n="step.6">6 Select+Encode</span>
+      <button id="btn-kill-log" onclick="killJob()" style="display:none;margin-left:auto;background:transparent;border:1px solid var(--red);color:var(--red);padding:2px 10px;cursor:pointer;font-family:var(--font);font-size:11px;border-radius:3px">■ Stop job</button>
     </div>
     <div id="job-tabs">
       <div class="tab" data-i18n="tab.settings" onclick="switchTab('settings')">Settings</div>
@@ -238,11 +239,6 @@
 
       <!-- Log tab: split log + stats -->
       <div id="log-split">
-        <div id="log-kill-header" style="display:none;padding:4px 14px;background:var(--bg2);border-bottom:1px solid var(--border);min-height:28px">
-          <div id="log-kill-inline">
-            <button id="btn-kill-log" onclick="killJob()" style="background:transparent;border:1px solid var(--red);color:var(--red);padding:2px 10px;cursor:pointer;font-family:var(--font);font-size:11px;border-radius:3px">■ Stop job</button>
-          </div>
-        </div>
         <div id="log-panel" class="lf-info"></div>
       </div>
 
