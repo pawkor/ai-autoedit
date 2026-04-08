@@ -209,6 +209,7 @@ class Job:
 
 jobs: dict[str, Job] = {}
 job_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
+shorts_semaphore: asyncio.Semaphore = asyncio.Semaphore(4)  # shorts run independently of main pipeline
 
 # ── Threshold-search state (polling) ──────────────────────────────────────────
 _threshold_searches: dict[str, dict] = {}   # search_id → status dict
@@ -512,6 +513,10 @@ async def auth_login(request: Request, data: dict = Body(...)):
     match = next((u for u in users if u["username"] == username and _verify_pw(password, u["password_hash"])), None)
     if not match:
         raise HTTPException(401, "Invalid credentials")
+    # Migrate legacy SHA-256 hash to PBKDF2 on successful login
+    if not match["password_hash"].startswith("pbkdf2:"):
+        match["password_hash"] = _hash_pw(password)
+        _save_users(users)
     token = secrets.token_hex(32)
     _sessions[token] = username
     response = JSONResponse({"ok": True, "username": username})
@@ -1914,7 +1919,7 @@ async def render_job(job_id: str, params: RenderParams):
 
 async def _run_shorts(job: Job):
     """Run make_shorts.py for the given job, streaming output to job log."""
-    async with job_semaphore:
+    async with shorts_semaphore:
         job.status = "running"
         job.phase  = "shorts"
         await job.broadcast({"type": "status", "status": "running", "phase": "shorts"})

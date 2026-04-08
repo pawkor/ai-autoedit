@@ -1239,7 +1239,13 @@ async function ytSaveExistingUrl() {
   const status = document.getElementById('yt-status');
   const resp = await api.post(`/api/jobs/${currentJobId}/youtube-url`, { filename: _ytFileName, url });
   if (resp?.ok) {
-    status.innerHTML = `✓ Linked: <a href="${url}" target="_blank" style="color:var(--accent)">${url}</a>`;
+    status.textContent = '';
+    const linked = document.createElement('span');
+    linked.textContent = '✓ Linked: ';
+    const a = document.createElement('a');
+    a.href = url; a.target = '_blank'; a.style.color = 'var(--accent)'; a.textContent = url;
+    linked.appendChild(a);
+    status.appendChild(linked);
     status.style.color = 'var(--green)';
     loadResults(currentJobId); // refresh Results tab
   } else {
