@@ -125,6 +125,7 @@ function isIncluded(f) {
   const ov = manualOverrides[f.scene];
   if (ov === 'include') return true;
   if (ov === 'exclude') return false;
+  if (f.duplicate) return false;
   // In dual-cam mode use the pre-computed balanced set (includes boosted below-threshold scenes)
   if (_balancedScenes !== null) return _balancedScenes.has(f.scene);
   if (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value)) return false;
@@ -242,12 +243,18 @@ function renderGallery() {
       const m = f.scene.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2}).*-scene-(\d+)$/);
       return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} #${m[7]}` : f.scene.split('/').pop().slice(-22);
     })();
+    const isDup = f.duplicate && !ov;
+    if (isDup) {
+      card.className = 'fc excluded';
+      card.title = `Score: ${f.score.toFixed(3)} (near-duplicate removed — click to force include)`;
+    }
     const limitBadge = limited ? `<span class="fc-limit-badge">limit</span>` : '';
+    const dupBadge   = isDup   ? `<span class="fc-limit-badge" style="background:var(--muted)">dup</span>` : '';
     const _maxSec = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
     const effDur = Math.min(f.duration ?? _maxSec, _maxSec);
     const durBadge = `<span class="fc-dur">${effDur.toFixed(1)}s</span>`;
     card.innerHTML = `<img src="${_cachedSrc(f.frame_url)}" loading="lazy" onerror="this.style.display='none'">
-      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span>${durBadge}<span class="fc-name"></span>${limitBadge}</div>`;
+      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span>${durBadge}<span class="fc-name"></span>${limitBadge}${dupBadge}</div>`;
     card.querySelector('.fc-name').textContent = sceneLabel;
     // Hover → video clip preview
     if (f.frame_url) {

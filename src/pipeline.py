@@ -190,15 +190,17 @@ async def estimate(params: dict, work_dir: Path) -> dict:
             _cam_offsets = {}
     dry_env = {
         **safe_env,
-        "SCENES_DIR":       str(auto_dir / "autocut") + "/",
-        "TRIMMED_DIR":      str(auto_dir / "trimmed") + "/",
-        "OUTPUT_CSV":       str(scores_csv),
-        "OUTPUT_LIST":      str(auto_dir / "selected_scenes.txt"),
-        "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
-        "CSV_DIR":          str(auto_dir / "csv"),
-        "AUDIO_CAM":        cam_a,
-        "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
-        "DRY_RUN":          "1",
+        "SCENES_DIR":        str(auto_dir / "autocut") + "/",
+        "TRIMMED_DIR":       str(auto_dir / "trimmed") + "/",
+        "OUTPUT_CSV":        str(scores_csv),
+        "OUTPUT_LIST":       str(auto_dir / "selected_scenes.txt"),
+        "CAM_SOURCES":       str(auto_dir / "camera_sources.csv"),
+        "CSV_DIR":           str(auto_dir / "csv"),
+        "AUDIO_CAM":         cam_a,
+        "MANUAL_OVERRIDES":  str(auto_dir / "manual_overrides.json"),
+        "EMBEDDINGS_FILE":   str(auto_dir / "scene_embeddings.npz"),
+        "DUPLICATES_FILE":   str(auto_dir / "scene_duplicates.json"),
+        "DRY_RUN":           "1",
         **({"CAM_OFFSETS": json.dumps(_cam_offsets)} if _cam_offsets else {}),
     }
     proc = await asyncio.create_subprocess_exec(
@@ -562,7 +564,8 @@ async def run(params: dict, work_dir: Path,
             f.unlink()
         # Scores reference old clip filenames → must be regenerated too
         for stale_score in [auto_dir / "scene_scores.csv", auto_dir / "scores_prompts.hash",
-                             auto_dir / "duration_cache.json", auto_dir / "validation_ok.txt"]:
+                             auto_dir / "duration_cache.json", auto_dir / "validation_ok.txt",
+                             auto_dir / "scene_embeddings.npz", auto_dir / "scene_duplicates.json"]:
             stale_score.unlink(missing_ok=True)
         msg_parts = []
         if stale_csv:     msg_parts.append(f"{len(stale_csv)} CSV(s)")
@@ -854,10 +857,11 @@ async def run(params: dict, work_dir: Path,
     if not scores_csv.exists():
         clip_env = {
             **_safe_env,
-            "FRAMES_DIR":  str(auto_dir / "frames") + "/",
-            "OUTPUT_CSV":  str(scores_csv),
-            "CAM_SOURCES": str(auto_dir / "camera_sources.csv"),
-            "AUDIO_CAM":   cam_a,
+            "FRAMES_DIR":       str(auto_dir / "frames") + "/",
+            "OUTPUT_CSV":       str(scores_csv),
+            "EMBEDDINGS_FILE":  str(auto_dir / "scene_embeddings.npz"),
+            "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
+            "AUDIO_CAM":        cam_a,
             **({"CLIP_BATCH_SIZE":   str(params["batch_size"])}   if params.get("batch_size")   else {}),
             **({"CLIP_NUM_WORKERS":  str(params["clip_workers"])}  if params.get("clip_workers")  else {}),
         }
@@ -907,13 +911,15 @@ async def run(params: dict, work_dir: Path,
             **_safe_env,
             "SCENES_DIR":       str(auto_dir / "autocut") + "/",
             "TRIMMED_DIR":      str(auto_dir / "trimmed") + "/",
-            "OUTPUT_CSV":       str(scores_csv),
-            "OUTPUT_LIST":      str(auto_dir / "selected_scenes.txt"),
-            "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
-            "CSV_DIR":          str(auto_dir / "csv"),
-            "AUDIO_CAM":        cam_a,
-            "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
-            "DRY_RUN":          "1",
+            "OUTPUT_CSV":        str(scores_csv),
+            "OUTPUT_LIST":       str(auto_dir / "selected_scenes.txt"),
+            "CAM_SOURCES":       str(auto_dir / "camera_sources.csv"),
+            "CSV_DIR":           str(auto_dir / "csv"),
+            "AUDIO_CAM":         cam_a,
+            "MANUAL_OVERRIDES":  str(auto_dir / "manual_overrides.json"),
+            "EMBEDDINGS_FILE":   str(auto_dir / "scene_embeddings.npz"),
+            "DUPLICATES_FILE":   str(auto_dir / "scene_duplicates.json"),
+            "DRY_RUN":           "1",
         }
         _dry_args = [str(threshold), str(max_scene), str(per_file)]
         _dry_proc = await asyncio.create_subprocess_exec(
@@ -970,12 +976,14 @@ async def run(params: dict, work_dir: Path,
         **_safe_env,
         "SCENES_DIR":  str(auto_dir / "autocut") + "/",
         "TRIMMED_DIR": str(auto_dir / "trimmed") + "/",
-        "OUTPUT_CSV":  str(scores_csv),
-        "OUTPUT_LIST": str(auto_dir / "selected_scenes.txt"),
-        "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
-        "CSV_DIR":          str(auto_dir / "csv"),
-        "AUDIO_CAM":        cam_a,
-        "MANUAL_OVERRIDES": str(auto_dir / "manual_overrides.json"),
+        "OUTPUT_CSV":        str(scores_csv),
+        "OUTPUT_LIST":       str(auto_dir / "selected_scenes.txt"),
+        "CAM_SOURCES":       str(auto_dir / "camera_sources.csv"),
+        "CSV_DIR":           str(auto_dir / "csv"),
+        "AUDIO_CAM":         cam_a,
+        "MANUAL_OVERRIDES":  str(auto_dir / "manual_overrides.json"),
+        "EMBEDDINGS_FILE":   str(auto_dir / "scene_embeddings.npz"),
+        "DUPLICATES_FILE":   str(auto_dir / "scene_duplicates.json"),
         **({"CAM_OFFSETS": json.dumps(_cam_offsets_render)} if _cam_offsets_render else {}),
     }
     sel_proc = await asyncio.create_subprocess_exec(

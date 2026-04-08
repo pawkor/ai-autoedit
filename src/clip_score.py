@@ -8,6 +8,7 @@ import configparser
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
+import numpy as np
 import torch
 import open_clip
 
@@ -22,8 +23,10 @@ _cfg = configparser.ConfigParser()
 _script_dir = Path(__file__).resolve().parent
 _cfg.read([_script_dir / "config.ini", Path.cwd() / "config.ini"])
 
-FRAMES_DIR  = os.environ.get("FRAMES_DIR", "frames/")
-OUTPUT_CSV  = os.environ.get("OUTPUT_CSV", "scene_scores.csv")
+FRAMES_DIR       = os.environ.get("FRAMES_DIR", "frames/")
+OUTPUT_CSV       = os.environ.get("OUTPUT_CSV", "scene_scores.csv")
+EMBEDDINGS_FILE  = os.environ.get("EMBEDDINGS_FILE",
+                       str(Path(OUTPUT_CSV).parent / "scene_embeddings.npz"))
 CAM_SOURCES = os.environ.get("CAM_SOURCES", "")
 AUDIO_CAM   = os.environ.get("AUDIO_CAM",   "")
 TOP_PERCENT = _cfg.getint("clip_scoring",   "top_percent",   fallback=25)
@@ -118,6 +121,7 @@ dataset = FrameDataset(frames, preprocess)
 loader  = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
                      pin_memory=(DEVICE == "cuda"), prefetch_factor=2 if NUM_WORKERS > 0 else None)
 results = []
+scene_embs: dict[str, np.ndarray] = {}
 
 for batch_imgs, batch_paths, batch_ok in tqdm(loader, total=len(loader)):
     valid_mask = batch_ok.bool()
@@ -136,18 +140,22 @@ for batch_imgs, batch_paths, batch_ok in tqdm(loader, total=len(loader)):
         neg_scores   = (img_features @ nf.T).mean(dim=1)
         final_scores = pos_scores - neg_scores * NEG_WEIGHT
 
-    for path, pos, neg, final in zip(
+    embs_cpu = img_features.float().cpu().numpy()
+    for path, pos, neg, final, emb in zip(
         valid_paths,
         pos_scores.float().cpu().tolist(),
         neg_scores.float().cpu().tolist(),
         final_scores.float().cpu().tolist(),
+        embs_cpu,
     ):
+        stem = Path(path).stem
         results.append({
-            "scene":     Path(path).stem,
+            "scene":     stem,
             "score":     final,
             "pos_score": pos,
             "neg_score": neg,
         })
+        scene_embs[stem] = emb
 
 if not results:
     print("No frames scored — check that autocut/ has .mp4 files > 5MB.")
@@ -155,6 +163,12 @@ if not results:
 
 df = pd.DataFrame(results).sort_values("score", ascending=False)
 df.to_csv(OUTPUT_CSV, index=False)
+
+if scene_embs:
+    names = list(scene_embs.keys())
+    embs  = np.array([scene_embs[n] for n in names], dtype=np.float32)
+    np.savez_compressed(EMBEDDINGS_FILE, names=np.array(names), embeddings=embs)
+    print(f"Embeddings: {len(names)} scenes → {Path(EMBEDDINGS_FILE).name}")
 
 print(f"\nScored: {len(df)} scenes")
 print(f"Score range: {df['score'].min():.3f} – {df['score'].max():.3f}")

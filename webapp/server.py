@@ -2176,6 +2176,15 @@ async def job_frames(job_id: str):
             if back_takes:
                 avg_back_cam_take_sec = round(sum(back_takes) / len(back_takes), 2)
 
+    # ── Load duplicate scenes (written by select_scenes.py) ────────────────────
+    dup_scenes: set[str] = set()
+    dup_path = job.auto_dir() / "scene_duplicates.json"
+    if dup_path.exists():
+        try:
+            dup_scenes = set(json.loads(dup_path.read_text()))
+        except Exception:
+            pass
+
     # ── Build file_start (epoch) per scene: source creation_time + scene CSV offset ──
     file_starts: dict[str, float] = {}
     if csv_dir.exists():
@@ -2230,6 +2239,7 @@ async def job_frames(job_id: str):
             "frame_url":  str(frames_dir / (row['scene'] + '.jpg'))
                           if (frames_dir / (row["scene"] + ".jpg")).exists() else None,
             "file_start": file_starts.get(row["scene"]),
+            "duplicate":  row["scene"] in dup_scenes,
         }
         for _, row in df.iterrows()
     ]

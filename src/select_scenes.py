@@ -28,6 +28,12 @@ CAM_SOURCES      = os.environ.get("CAM_SOURCES",      "")
 CSV_DIR          = os.environ.get("CSV_DIR",          "")
 AUDIO_CAM        = os.environ.get("AUDIO_CAM",        "")
 MANUAL_OVERRIDES = os.environ.get("MANUAL_OVERRIDES", "")
+EMBEDDINGS_FILE  = os.environ.get("EMBEDDINGS_FILE",
+                       str(Path(SCORES_CSV).parent / "scene_embeddings.npz"))
+DUPLICATES_FILE  = os.environ.get("DUPLICATES_FILE",
+                       str(Path(SCORES_CSV).parent / "scene_duplicates.json"))
+DEDUP_SIM    = _cfg.getfloat("scene_selection", "dedup_sim",    fallback=0.97)
+DEDUP_WINDOW = _cfg.getint("scene_selection",   "dedup_window", fallback=5)
 TIMESTAMP_MATCH_SEC = _cfg.getfloat("scene_selection", "timestamp_match_sec", fallback=30.0)
 _CAM_OFFSETS: dict[str, float] = {}
 try:
@@ -41,6 +47,7 @@ DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
 
 import re as _re
 import json as _json
+import numpy as np
 
 # ── Persistent ffprobe duration cache ────────────────────────────────────────
 # DRY_RUN: built here and saved to disk so binary-search iterations are fast.
@@ -81,9 +88,51 @@ dual_cam = len(set(cam_map.values())) > 1
 
 df_all = df.copy()  # keep full df (with camera) for force-include lookups
 
-# Apply force-exclude before selection
-if force_exclude:
-    df = df[~df['scene'].isin(force_exclude)]
+# ── Near-duplicate detection via CLIP embeddings ─────────────────────────────
+dup_scenes: set[str] = set()
+emb_dict: dict[str, np.ndarray] = {}
+if os.path.exists(EMBEDDINGS_FILE):
+    try:
+        _data = np.load(EMBEDDINGS_FILE, allow_pickle=False)
+        for _name, _emb in zip(_data['names'].tolist(), _data['embeddings']):
+            emb_dict[_name] = _emb
+        print(f"Dedup: loaded {len(emb_dict)} embeddings (sim≥{DEDUP_SIM}, window={DEDUP_WINDOW})")
+    except Exception as _e:
+        print(f"  Warning: could not load embeddings for dedup: {_e}")
+
+if emb_dict:
+    _score_map = dict(zip(df['scene'], df['score']))
+    for _source, _group in df.groupby('source'):
+        _scenes = sorted(
+            [s for s in _group['scene'].tolist() if s in emb_dict],
+            key=lambda s: int(_re.search(r'-scene-(\d+)$', s).group(1))
+                          if _re.search(r'-scene-(\d+)$', s) else 0,
+        )
+        for _i in range(len(_scenes)):
+            for _j in range(_i + 1, min(_i + DEDUP_WINDOW + 1, len(_scenes))):
+                _sim = float(np.dot(emb_dict[_scenes[_i]], emb_dict[_scenes[_j]]))
+                if _sim >= DEDUP_SIM:
+                    # Keep higher-scored; if tied, keep earlier
+                    _si = _score_map.get(_scenes[_i], 0.0)
+                    _sj = _score_map.get(_scenes[_j], 0.0)
+                    _dup = _scenes[_j] if _si >= _sj else _scenes[_i]
+                    if _dup not in force_include:
+                        dup_scenes.add(_dup)
+    if dup_scenes:
+        print(f"  Dedup: {len(dup_scenes)} near-duplicate scene(s) removed")
+
+if not DRY_RUN:
+    try:
+        if dup_scenes:
+            Path(DUPLICATES_FILE).write_text(_json.dumps(sorted(dup_scenes)))
+        elif os.path.exists(DUPLICATES_FILE):
+            os.remove(DUPLICATES_FILE)
+    except Exception:
+        pass
+
+# Apply force-exclude and dedup before selection
+if force_exclude or dup_scenes:
+    df = df[~df['scene'].isin(force_exclude | dup_scenes)]
 
 
 _dur_cache_dirty = False
