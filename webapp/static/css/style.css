@@ -160,7 +160,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .fitem .fdel { background:none; border:none; color:var(--muted); cursor:pointer; padding:0 3px; font-size:13px; flex-shrink:0; line-height:1; }
 .fitem .fdel:hover { color:var(--red); }
 #file-tip { position:fixed; z-index:300; display:none; pointer-events:none; border:1px solid var(--border); border-radius:4px; overflow:hidden; background:#000; box-shadow:0 4px 16px rgba(0,0,0,.6); }
-#file-tip video { display:block; width:240px; height:135px; object-fit:contain; }
+#file-tip video { display:block; width:480px; height:270px; object-fit:contain; }
 
 /* ── Settings modal ── */
 #settings-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }

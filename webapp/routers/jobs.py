@@ -12,7 +12,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Body
@@ -286,6 +286,7 @@ class JobParams(BaseModel):
 
 class RenderParams(BaseModel):
     selected_track: Optional[str] = None
+    music_files: Optional[List[str]] = None
     threshold: Optional[float] = None
     max_scene: Optional[float] = None
     per_file: Optional[float] = None
@@ -860,7 +861,9 @@ async def render_job(job_id: str, params: RenderParams):
         job.params["max_scene"] = params.max_scene
     if params.per_file is not None:
         job.params["per_file"] = params.per_file
-    if params.threshold is not None or params.max_scene is not None or params.per_file is not None:
+    if params.music_files is not None:
+        job.params["music_files"] = params.music_files
+    if params.threshold is not None or params.max_scene is not None or params.per_file is not None or params.music_files is not None:
         job.save()
 
     track = params.selected_track
@@ -1141,6 +1144,7 @@ async def job_result(job_id: str):
             if meta.get("ncs") and meta.get("music"):
                 ncs_attr = Path(meta["music"]).stem
             preview = p.with_name(p.stem + "_preview.mp4")
+            music_path = meta.get("music")
             files[p.name] = {
                 "url":          str(p),
                 "preview_url":  str(preview) if preview.exists() else None,
@@ -1148,6 +1152,7 @@ async def job_result(job_id: str):
                 "duration_sec": _probe_duration(p),
                 "is_ncs":       bool(meta.get("ncs")),
                 "ncs_attr":     ncs_attr,
+                "music":        Path(music_path).name if music_path else None,
             }
 
     def _ver(p: Path) -> int:

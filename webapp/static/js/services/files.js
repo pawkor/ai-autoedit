@@ -220,7 +220,7 @@ function _showFilePreview(path, e, delay = 400) {
 function _moveFileTip(e) {
   const tip = document.getElementById('file-tip');
   if (tip.style.display === 'none') return;
-  const m = 14, w = 242, h = 137;
+  const m = 14, w = 482, h = 272;
   let x = e.clientX + m, y = e.clientY + m;
   if (x + w > window.innerWidth)  x = e.clientX - w - m;
   if (y + h > window.innerHeight) y = e.clientY - h - m;

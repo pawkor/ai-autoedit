@@ -128,13 +128,7 @@ async function openJob(jobId) {
   currentJobMaxScene = job.params.max_scene != null ? parseFloat(job.params.max_scene) : null;
   currentJobPerFile  = job.params.per_file  != null ? parseFloat(job.params.per_file)  : null;
   _overridesChangedSinceRender = false;
-  // Restore pinned track from persisted job state
-  if (job.selected_track) {
-    pinnedTrack = job.selected_track;
-    const name = pinnedTrack.split('/').pop().replace(/\.[^.]+$/, '');
-    const sumTrack = document.getElementById('sum-track');
-    if (sumTrack) sumTrack.textContent = '🎵 ' + name;
-  }
+  pinnedTrack = null;
   await populateJobSettings(job.params);
   updatePhaseUI();
 
@@ -397,6 +391,7 @@ async function startRender() {
   _btnRender.textContent = 'Rendering...';
   const resp = await api.post(`/api/jobs/${currentJobId}/render`, {
     selected_track: pinnedTrack || null,
+    music_files: [...musicSelected],
     threshold: _galleryThreshold,
     max_scene: currentJobMaxScene || null,
     per_file:  currentJobPerFile  || null,

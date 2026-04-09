@@ -447,6 +447,28 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
             else:
                 job.status = "done"
                 job.phase  = "done"
+                if selected_track:
+                    try:
+                        import re as _re
+                        from datetime import timezone as _tz
+                        work_dir = job.work_dir()
+                        out_name = pipeline._output_name(work_dir)
+                        def _ver(p):
+                            m2 = _re.search(r'_v(\d+)$', p.stem)
+                            return int(m2.group(1)) if m2 else 0
+                        candidates = [p for p in work_dir.glob(f"{out_name}_v*.mp4")
+                                      if "_preview" not in p.stem]
+                        if candidates:
+                            latest = max(candidates, key=_ver)
+                            meta = {
+                                "music":        selected_track,
+                                "generated_at": datetime.now(_tz.utc).isoformat(),
+                            }
+                            latest.with_suffix(".meta.json").write_text(
+                                json.dumps(meta, ensure_ascii=False)
+                            )
+                    except Exception:
+                        pass
         except asyncio.CancelledError:
             job.log.append("[job cancelled]")
             job.status = "killed"

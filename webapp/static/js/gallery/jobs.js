@@ -21,8 +21,7 @@ async function populateJobSettings(params) {
   const cropEl = document.getElementById('js-shorts-crop-offsets');
   if (cropEl) cropEl.value = params.shorts_crop_offsets || '';
   if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
-  if (params.music_files?.length) musicSelected = new Set(params.music_files);
-  else musicSelected = new Set();
+  musicSelected = new Set();
 
   let th = params.threshold, ms = params.max_scene, pf = params.per_file;
   if (cfg) {

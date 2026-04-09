@@ -34,6 +34,13 @@ async function loadResults(jobId) {
     rfDur.textContent = info.duration_sec ? fmtDur(info.duration_sec) : '';
     rfMeta.appendChild(rfSize); rfMeta.appendChild(rfDur);
     div.appendChild(rfName); div.appendChild(rfMeta);
+    if (info.music) {
+      const rfMusic = document.createElement('div');
+      rfMusic.style.cssText = 'font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px';
+      rfMusic.title = info.music;
+      rfMusic.textContent = '♪ ' + info.music.replace(/\.[^.]+$/, '');
+      div.appendChild(rfMusic);
+    }
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap';
     const dlBtn = document.createElement('a');
@@ -133,7 +140,13 @@ async function playVideoOrPreview(card) {
   if (card.dataset.previewUrl) { playVideo(card.dataset.previewUrl, card); return; }
 
   // Generate preview on demand
-  if (_previewGenerating) { playVideo(url, card); return; }
+  if (_previewGenerating) {
+    const w = document.getElementById('video-wrap');
+    const m = w && w.querySelector('.preview-gen-msg');
+    if (m) m.style.display = 'none';
+    playVideo(url, card);
+    return;
+  }
   _previewGenerating = true;
 
   document.querySelectorAll('.rf').forEach(c=>c.classList.remove('playing'));
