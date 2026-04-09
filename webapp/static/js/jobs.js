@@ -22,10 +22,13 @@ function updateStats(s) {
   document.getElementById('hw-monitor').style.display = '';
 
   const qRunning = s.running_jobs, qQueued = s.queued_jobs;
-  document.getElementById('q-running').textContent = qRunning;
-  document.getElementById('q-queued').textContent  = qQueued;
-  const show = qRunning > 0 || qQueued > 0;
-  document.getElementById('q-row').style.display = show ? '' : 'none';
+  const sqEl = document.getElementById('sidebar-queue');
+  if (sqEl) {
+    document.getElementById('sq-running').textContent = qRunning;
+    document.getElementById('sq-queued').textContent  = qQueued;
+    sqEl.style.display = (qRunning > 0 || qQueued > 0) ? '' : 'none';
+    sqEl.classList.toggle('sq-active', qRunning > 0);
+  }
 }
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
@@ -164,6 +167,15 @@ async function openJob(jobId) {
     panel.appendChild(frag);
     panel.scrollTop = panel.scrollHeight;
   });
+  // Restore shorts button state if shorts are already running (e.g. after page reload)
+  if (job.shorts_running) {
+    const btnS = document.getElementById('btn-render-short');
+    if (btnS) { btnS.disabled = true; btnS.textContent = 'Generating…'; }
+    const wrap = document.getElementById('shorts-progress-wrap');
+    if (wrap) wrap.style.display = '';
+    const slbl = document.getElementById('shorts-status-label');
+    if (slbl) slbl.textContent = 'Generating Short…';
+  }
   connectJobWs(jobId, job.started_at);
 
   if (job.status === 'done' || job.status === 'failed' || jobPhase === 'analyzed') {
@@ -224,6 +236,29 @@ function connectJobWs(jobId, startedAt) {
           if (lbl) lbl.textContent = pct + '%';
         }
       }
+    } else if (msg.type === 'shorts_status') {
+      const btnS = document.getElementById('btn-render-short');
+      if (msg.running) {
+        if (btnS) { btnS.disabled = true; btnS.textContent = 'Generating…'; }
+        const wrap = document.getElementById('shorts-progress-wrap');
+        if (wrap) wrap.style.display = '';
+      } else {
+        if (btnS) {
+          btnS.disabled = false;
+          _updateShortsBtn();
+        }
+        const slbl = document.getElementById('shorts-status-label');
+        const sbar = document.getElementById('shorts-progress-bar');
+        const spct = document.getElementById('shorts-pct');
+        if (msg.status === 'done') {
+          if (sbar) sbar.style.width = '100%';
+          if (spct) spct.textContent = '100%';
+          if (slbl) slbl.textContent = '✓ Short ready';
+          loadResults(currentJobId);
+        } else {
+          if (slbl) slbl.textContent = '✗ Failed';
+        }
+      }
     } else if (msg.type === 'shorts_batch_progress') {
       const bar = document.getElementById('shorts-progress-bar');
       const lbl = document.getElementById('shorts-pct');
@@ -267,6 +302,8 @@ function connectJobWs(jobId, startedAt) {
             if (lbl) lbl.textContent = msg.status === 'done' ? '✓ Done' : '✗ Failed';
             const etaEl = document.getElementById('render-eta');
             if (etaEl) etaEl.textContent = '';
+            const stepLbl = document.getElementById('render-step-label');
+            if (stepLbl) stepLbl.textContent = '';
             if (msg.status === 'done') {
               document.getElementById('render-progress-bar').style.width = '100%';
               document.getElementById('render-pct').textContent = '100%';
@@ -291,6 +328,9 @@ function updatePhaseUI() {
 
   const btnRender = document.getElementById('btn-render');
   if (btnRender) btnRender.disabled = !analyzed || rendering;
+
+  // btn-render-short: only blocked while shorts are running (not by main render)
+  // shorts_running state is managed via shorts_status WS messages
 
   if (rendering) {
     document.getElementById('render-progress-wrap').style.display = '';
@@ -369,7 +409,8 @@ async function startRenderShort() {
   if (slbl) slbl.textContent = count > 1 ? `0 / ${count} done` : 'Generating Short…';
   if (spct) spct.textContent = '';
   if (sbar) sbar.style.width = '0%';
-  const resp = await api.post(`/api/jobs/${currentJobId}/render-short`, {count});
+  const best = document.getElementById('js-shorts-best')?.checked || false;
+  const resp = await api.post(`/api/jobs/${currentJobId}/render-short`, {count, best});
   if (!resp?.id) {
     alert('Render Short failed to start: ' + JSON.stringify(resp));
     btn.disabled = false;
@@ -377,9 +418,13 @@ async function startRenderShort() {
     wrap.style.display = 'none';
     return;
   }
-  if (jobWs) { jobWs.close(); jobWs = null; }
-  document.getElementById('log-panel').innerHTML = '';
-  connectJobWs(currentJobId, Date.now() / 1000);
+  // Only reconnect WS if main render is NOT currently active
+  const job = await api.get(`/api/jobs/${currentJobId}`);
+  if (job?.status !== 'running' && job?.status !== 'queued') {
+    if (jobWs) { jobWs.close(); jobWs = null; }
+    document.getElementById('log-panel').innerHTML = '';
+    connectJobWs(currentJobId, Date.now() / 1000);
+  }
 }
 
 async function startRender() {
@@ -406,8 +451,11 @@ async function startRender() {
   if (jobWs) { jobWs.close(); jobWs = null; }
   document.getElementById('log-panel').innerHTML = '';
   _renderTotalSec = null;
+  _renderStepNum = 0;
+  _renderStepName = '';
   document.getElementById('render-pct').textContent = '';
   document.getElementById('render-eta').textContent = '';
+  document.getElementById('render-step-label').textContent = '';
   document.getElementById('render-status-label').textContent = 'Rendering…';
   connectJobWs(currentJobId, Date.now() / 1000);
 }
@@ -415,6 +463,23 @@ async function startRender() {
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 const PROGRESS_RE = /^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|/;
+
+// Render step helpers
+const _RENDER_STEP_ORDER = ['Clips', 'Encoding', 'Intro/outro', 'Music', 'Preview'];
+function _enterRenderStep(name) {
+  _renderStepName = name;
+  _renderStepNum = _RENDER_STEP_ORDER.indexOf(name) + 1;
+  const total = _RENDER_STEP_ORDER.length;
+  document.getElementById('render-step-label').textContent = `${name} (${_renderStepNum}/${total})`;
+  document.getElementById('render-progress-bar').style.width = '0%';
+  document.getElementById('render-pct').textContent = '0%';
+  document.getElementById('render-eta').textContent = '';
+}
+function _setRenderStepPct(pct, etaLabel) {
+  document.getElementById('render-progress-bar').style.width = pct + '%';
+  document.getElementById('render-pct').textContent = pct + '%';
+  if (etaLabel !== undefined) document.getElementById('render-eta').textContent = etaLabel;
+}
 
 
 function _classifyLogLine(div, line) {
@@ -467,17 +532,16 @@ function appendLog(line) {
       panel.appendChild(div);
     }
     if (atBottom) panel.scrollTop = panel.scrollHeight;
-    if (jobPhase === 'rendering') {
+    if (jobPhase === 'rendering' && _renderStepName === 'Encoding') {
       const pm = line.match(/\]\s*(\d+)%\s+([\d.]+)\//);
       if (pm) {
-        const pct = 50 + Math.round(parseInt(pm[1]) / 2);
+        const pct = parseInt(pm[1]);
         const cur = parseFloat(pm[2]);
-        document.getElementById('render-progress-bar').style.width = pct + '%';
-        document.getElementById('render-pct').textContent = pct + '%';
+        _setRenderStepPct(pct);
         const total = _renderTotalSec || 1;
-        const remSec = Math.max(0, Math.round(total - cur));
-        const etaStr = remSec > 0 ? `ETA ${remSec < 60 ? remSec + 's' : Math.floor(remSec/60) + 'm' + String(remSec%60).padStart(2,'0') + 's'}` : '';
-        document.getElementById('render-eta').textContent = etaStr;
+        const remSec = Math.max(0, Math.round((total - cur) / 2));
+        document.getElementById('render-eta').textContent =
+          remSec > 0 ? `ETA ${remSec < 60 ? remSec + 's' : Math.floor(remSec/60) + 'm' + String(remSec%60).padStart(2,'0') + 's'}` : '';
       }
     }
     return;
@@ -491,37 +555,48 @@ function appendLog(line) {
   if (atBottom) panel.scrollTop = panel.scrollHeight;
 
   if (jobPhase === 'rendering') {
-    // Intro/outro sub-steps (90/93/96%)
-    const ioM = line.match(/intro\/outro \[(\d)\/3\]/);
-    if (ioM) {
-      const pct = 87 + parseInt(ioM[1]) * 3;
-      document.getElementById('render-progress-bar').style.width = pct + '%';
-      document.getElementById('render-pct').textContent = pct + '%';
-      document.getElementById('render-eta').textContent = '';
-    }
-    // Phase 1 (0→50%): clip prep — [N/M] scene (trim/enc)
+    // ── Step: Clips ──
     const clipM = line.match(/\[(\d+)\/(\d+)\]\s+\S.*\((trim|enc)\)/);
     if (clipM) {
       const n = parseInt(clipM[1]), tot = parseInt(clipM[2]);
-      const pct = Math.round(n / tot * 50);
-      document.getElementById('render-progress-bar').style.width = pct + '%';
-      document.getElementById('render-pct').textContent = pct + '%';
-      document.getElementById('render-eta').textContent = `clips ${n}/${tot}`;
+      if (n === 1) _enterRenderStep('Clips');
+      _setRenderStepPct(Math.round(n / tot * 100), `${n}/${tot}`);
+      return;
     }
-    // Capture total duration from "Encoding highlight (Xs)..."
+    // ── Step: Encoding ──
     const totM = line.match(/Encoding highlight \(([\d.]+)s\)/);
-    if (totM) _renderTotalSec = parseFloat(totM[1]);
-    // Phase 2 (50→100%): ffmpeg encode progress
-    const pm = line.match(/\]\s*(\d+)%\s+([\d.]+)\//);
-    if (pm) {
-      const pct = 50 + Math.round(parseInt(pm[1]) / 2);
-      const cur = parseFloat(pm[2]);
-      document.getElementById('render-progress-bar').style.width = pct + '%';
-      document.getElementById('render-pct').textContent = pct + '%';
-      const total = _renderTotalSec || 1;
-      const remSec = Math.max(0, Math.round((total - cur) / 2)); // encoding ~2× real-time
-      const etaStr = remSec > 0 ? `ETA ${remSec < 60 ? remSec + 's' : Math.floor(remSec/60) + 'm' + String(remSec%60).padStart(2,'0') + 's'}` : '';
-      document.getElementById('render-eta').textContent = etaStr;
+    if (totM) {
+      _renderTotalSec = parseFloat(totM[1]);
+      _enterRenderStep('Encoding');
+      return;
+    }
+    // ── Step: Intro/outro ──
+    if (line.includes('Adding intro/outro')) {
+      _enterRenderStep('Intro/outro');
+      return;
+    }
+    const ioM = line.match(/intro\/outro \[(\d)\/3\]/);
+    if (ioM) {
+      _setRenderStepPct(Math.round(parseInt(ioM[1]) / 3 * 100));
+      return;
+    }
+    // ── Step: Music ──
+    if (line.includes('Adding music')) {
+      _enterRenderStep('Music');
+      return;
+    }
+    if (line.match(/→.*\.mp4\s+\d+:\d+/)) {
+      _setRenderStepPct(100);
+      return;
+    }
+    // ── Step: Preview ──
+    if (line.includes('Generating preview')) {
+      _enterRenderStep('Preview');
+      return;
+    }
+    if (line.match(/✓.*_preview\.mp4/)) {
+      _setRenderStepPct(100);
+      return;
     }
   }
 }

@@ -28,6 +28,9 @@
     <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
   </div>
   <div id="sidebar-new-row">
+    <div id="sidebar-queue" style="display:none" onclick="openQueueModal()" title="Running / Queued jobs">
+      <span id="sq-running">0</span> / <span id="sq-queued">0</span>
+    </div>
     <button id="btn-new" data-i18n="btn.new" onclick="openDirBrowser(null, p => loadDirConfig(p))">+ New project</button>
   </div>
   <div id="job-list"></div>
@@ -52,11 +55,6 @@
     <div id="job-header">
       <span class="dot s-pending" id="jh-dot"></span>
       <span id="jh-path"></span>
-      <span class="jh-flex"></span>
-      <div id="q-row" style="display:none">
-        <div><span data-i18n="misc.running">Running</span>: <span class="qv running" id="q-running">0</span></div>
-        <div><span data-i18n="misc.queued">Queued</span>: <span class="qv queued" id="q-queued">0</span></div>
-      </div>
       <span class="jh-flex"></span>
       <div id="hw-monitor" style="display:none">
         <div id="hw-cols">
@@ -335,11 +333,12 @@
           <div id="music-list-header">
             <span class="mh-cb"></span>
             <span class="mh-play"></span>
-            <span class="mh-title" onclick="sortMusic('title')">Title / Artist</span>
-            <span class="mh-genre" onclick="sortMusic('genre')">Genre</span>
-            <span class="mh-dur"   onclick="sortMusic('dur')">Dur</span>
-            <span class="mh-bpm"  onclick="sortMusic('bpm')">BPM</span>
-            <span class="mh-energy" onclick="sortMusic('energy')">Nrg</span>
+            <span class="mh-title" onclick="sortMusic('title')" data-sort="title" data-label="Title / Artist">Title / Artist</span>
+            <span class="mh-genre" onclick="sortMusic('genre')" data-sort="genre" data-label="Genre">Genre</span>
+            <span class="mh-dur"   onclick="sortMusic('dur')"   data-sort="dur"   data-label="Dur">Dur</span>
+            <span class="mh-bpm"   onclick="sortMusic('bpm')"   data-sort="bpm"   data-label="BPM">BPM</span>
+            <span class="mh-energy" onclick="sortMusic('energy')" data-sort="energy" data-label="Nrg">Nrg</span>
+            <span id="btn-music-sort-reset" onclick="resetMusicSort()" title="Reset — sort by estimated duration" style="display:none;color:var(--accent);cursor:pointer;font-size:10px;flex-shrink:0">↺ est.</span>
           </div>
           <div id="music-list"></div>
         </div>
@@ -379,8 +378,9 @@
                        onkeydown="if(event.key==='Enter'){this.blur();}">
                 <style>#js-shorts-count::-webkit-inner-spin-button,#js-shorts-count::-webkit-outer-spin-button{-webkit-appearance:none}</style>
               </div>
-              <div id="shorts-multicam-wrap" style="display:none;margin-top:8px;font-size:12px">
+              <div id="shorts-multicam-wrap" style="display:none;margin-top:8px;font-size:12px;gap:16px">
                 <label class="chk"><input type="checkbox" id="js-shorts-multicam" onchange="saveSettingsField()"><span> Multicam shorts</span></label>
+                <label class="chk"><input type="checkbox" id="js-shorts-best"><span> Best of the best</span></label>
               </div>
               <div style="margin-top:6px;font-size:12px">
                 <label class="chk"><input type="checkbox" id="js-shorts-ncs" onchange="saveSettingsField()"><span> NCS music</span></label>
@@ -399,6 +399,8 @@
               <div id="render-progress-wrap" style="display:none">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
                   <span id="render-status-label" style="color:var(--muted)" data-i18n="misc.rendering">Rendering…</span>
+                  <span id="render-step-label" style="color:var(--muted);font-size:11px"></span>
+                  <span style="flex:1"></span>
                   <span id="render-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
                   <span id="render-eta" style="color:var(--muted)"></span>
                 </div>
@@ -474,6 +476,19 @@
       <button class="btn-sm" onclick="document.getElementById('files-upload-input').click()" data-i18n="btn.upload">⬆ Upload</button>
       <input type="file" id="files-upload-input" multiple style="display:none" onchange="startUploadModal(this)">
       <button class="btn-sm" onclick="closeFileBrowser()" data-i18n="btn.close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Queue modal -->
+<div id="queue-modal">
+  <div id="queue-box">
+    <div class="modal-header">
+      <span>Queue</span>
+      <button class="icon-btn" onclick="closeQueueModal()">✕</button>
+    </div>
+    <div class="modal-body" id="queue-modal-body" style="display:flex;flex-direction:column;gap:12px;min-height:60px">
+      <div style="color:var(--muted);font-size:12px">Loading…</div>
     </div>
   </div>
 </div>

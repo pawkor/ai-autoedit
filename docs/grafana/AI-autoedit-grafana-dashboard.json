@@ -10,426 +10,240 @@
     }
   ],
   "__requires": [
-    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
-    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
-    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
-    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" }
+    { "type": "grafana",    "id": "grafana",    "name": "Grafana",     "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus",  "version": "1.0.0" },
+    { "type": "panel", "id": "stat",       "name": "Stat",        "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "barchart",   "name": "Bar chart",   "version": "" }
   ],
   "title": "AI-autoedit",
-  "uid": "autoframe-v1",
+  "uid": "autoframe-v2",
   "schemaVersion": 38,
-  "version": 1,
-  "refresh": "15s",
+  "version": 2,
+  "refresh": "1m",
   "time": { "from": "now-3h", "to": "now" },
   "timezone": "browser",
-  "tags": ["autoframe", "video", "ai"],
+  "tags": ["autoframe", "video", "ai", "youtube"],
   "panels": [
-    {
-      "id": 1,
-      "title": "Jobs — aktywne",
-      "type": "stat",
-      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+
+    { "id": 1, "title": "Jobs aktywne",   "type": "stat",
+      "gridPos": { "x": 0,  "y": 0, "w": 3, "h": 3 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "auto"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 3 }
-            ]
-          },
-          "mappings": []
-        }
-      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 3 }
+      ]}, "mappings": [] }},
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "autoframe_jobs_active", "legendFormat": "aktywne" }]
+    },
+
+    { "id": 2, "title": "Jobs kolejka", "type": "stat",
+      "gridPos": { "x": 3,  "y": 0, "w": 3, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "yellow", "value": 1 }
+      ]}, "mappings": [] }},
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "autoframe_jobs_queued", "legendFormat": "kolejka" }]
+    },
+
+    { "id": 3, "title": "Jobs done (1h)", "type": "stat",
+      "gridPos": { "x": 6,  "y": 0, "w": 3, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }]}, "mappings": [] }},
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "increase(autoframe_jobs_total{status=\"done\"}[1h])", "legendFormat": "done" }]
+    },
+
+    { "id": 4, "title": "Jobs failed (1h)", "type": "stat",
+      "gridPos": { "x": 9,  "y": 0, "w": 3, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "red", "value": 1 }
+      ]}, "mappings": [] }},
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "increase(autoframe_jobs_total{status=~\"failed|killed\"}[1h])", "legendFormat": "failed" }]
+    },
+
+    { "id": 5, "title": "CPU %", "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 3, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 90 }
+      ]}, "mappings": [] }},
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "autoframe_cpu_percent", "legendFormat": "CPU" }]
+    },
+
+    { "id": 6, "title": "GPU %", "type": "stat",
+      "gridPos": { "x": 15, "y": 0, "w": 3, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 95 }
+      ]}, "mappings": [] }},
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "autoframe_gpu_utilization_percent", "legendFormat": "GPU" }]
+    },
+
+    { "id": 7, "title": "YT Views (last day)", "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 3, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }]}, "mappings": [] }},
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_jobs_active",
-          "legendFormat": "aktywne"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "yt_channel_latest_daily_views{type=\"video\"}", "legendFormat": "views" }
       ]
     },
-    {
-      "id": 2,
-      "title": "Jobs — kolejka",
-      "type": "stat",
-      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+
+    { "id": 8, "title": "YT Shorts (last day)", "type": "stat",
+      "gridPos": { "x": 21, "y": 0, "w": 3, "h": 3 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "auto"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 }
-            ]
-          },
-          "mappings": []
-        }
-      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }]}, "mappings": [] }},
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_jobs_queued",
-          "legendFormat": "w kolejce"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "yt_channel_latest_daily_views{type=\"short\"}", "legendFormat": "shorts" }
       ]
     },
-    {
-      "id": 3,
-      "title": "Jobs zakończone (1h)",
-      "type": "stat",
-      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+
+    { "id": 10, "title": "CPU & GPU %", "type": "timeseries",
+      "gridPos": { "x": 0,  "y": 3, "w": 8, "h": 7 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area",
-        "textMode": "auto"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "blue", "value": null }]
-          },
-          "mappings": []
-        }
-      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "lineWidth": 2, "fillOpacity": 10 } }},
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "increase(autoframe_jobs_total{status=\"done\"}[1h])",
-          "legendFormat": "done"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "autoframe_cpu_percent", "legendFormat": "CPU %" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "autoframe_gpu_utilization_percent", "legendFormat": "GPU %",
+          "fieldConfig": { "defaults": { "color": { "fixedColor": "#FF6B35", "mode": "fixed" } } } }
       ]
     },
-    {
-      "id": 4,
-      "title": "Jobs failed (1h)",
-      "type": "stat",
-      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+
+    { "id": 11, "title": "RAM", "type": "timeseries",
+      "gridPos": { "x": 8,  "y": 3, "w": 8, "h": 7 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area",
-        "textMode": "auto"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
-            ]
-          },
-          "mappings": []
-        }
-      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "lineWidth": 2, "fillOpacity": 10 } }},
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "increase(autoframe_jobs_total{status=~\"failed|killed\"}[1h])",
-          "legendFormat": "failed/killed"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "autoframe_ram_used_bytes", "legendFormat": "użyte" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "autoframe_ram_total_bytes", "legendFormat": "łącznie" }
       ]
     },
-    {
-      "id": 5,
-      "title": "CPU %",
-      "type": "stat",
-      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+
+    { "id": 12, "title": "GPU VRAM", "type": "timeseries",
+      "gridPos": { "x": 16, "y": 3, "w": 8, "h": 7 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area",
-        "textMode": "auto"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 60 },
-              { "color": "red", "value": 90 }
-            ]
-          },
-          "mappings": []
-        }
-      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "lineWidth": 2, "fillOpacity": 10 } }},
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_cpu_percent",
-          "legendFormat": "CPU"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "autoframe_gpu_vram_used_bytes", "legendFormat": "użyte" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "autoframe_gpu_vram_total_bytes", "legendFormat": "łącznie" }
       ]
     },
-    {
-      "id": 6,
-      "title": "GPU %",
-      "type": "stat",
-      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+
+    { "id": 20, "title": "YouTube — Views (video)", "type": "bargauge",
+      "gridPos": { "x": 0,  "y": 10, "w": 12, "h": 9 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area",
-        "textMode": "auto"
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "vertical",
+        "displayMode": "basic",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "minVizWidth": 10,
+        "minVizHeight": 16,
+        "namePlacement": "auto",
+        "text": {}
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 95 }
-            ]
-          },
-          "mappings": []
+          "color": { "fixedColor": "#5794F2", "mode": "fixed" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "#5794F2", "value": null }] }
         }
       },
+      "transformations": [],
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_gpu_utilization_percent",
-          "legendFormat": "GPU"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "yt_channel_daily_views{type=\"video\"}", "legendFormat": "{{date}}",
+          "instant": true }
       ]
     },
-    {
-      "id": 10,
-      "title": "CPU utilizacja",
-      "type": "timeseries",
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+
+    { "id": 21, "title": "YouTube — Views (shorts)", "type": "bargauge",
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 9 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "vertical",
+        "displayMode": "basic",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "minVizWidth": 10,
+        "minVizHeight": 16,
+        "namePlacement": "auto",
+        "text": {}
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100,
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+          "color": { "fixedColor": "#B877D9", "mode": "fixed" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "#B877D9", "value": null }] }
         }
       },
+      "transformations": [],
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_cpu_percent",
-          "legendFormat": "CPU %"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "yt_channel_daily_views{type=\"short\"}", "legendFormat": "{{date}}",
+          "instant": true }
       ]
     },
-    {
-      "id": 11,
-      "title": "RAM",
-      "type": "timeseries",
-      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+
+    { "id": 30, "title": "Job duration (p50 / p95)", "type": "timeseries",
+      "gridPos": { "x": 0,  "y": 19, "w": 12, "h": 7 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
-      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 5 } }},
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_ram_used_bytes",
-          "legendFormat": "użyte"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_ram_total_bytes",
-          "legendFormat": "łącznie"
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "title": "GPU utilizacja",
-      "type": "timeseries",
-      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100,
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 15,
-            "lineColor": "#FF6B35"
-          },
-          "color": { "fixedColor": "#FF6B35", "mode": "fixed" }
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_gpu_utilization_percent",
-          "legendFormat": "GPU %"
-        }
-      ]
-    },
-    {
-      "id": 13,
-      "title": "GPU VRAM",
-      "type": "timeseries",
-      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_gpu_vram_used_bytes",
-          "legendFormat": "VRAM użyte"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "autoframe_gpu_vram_total_bytes",
-          "legendFormat": "VRAM łącznie"
-        }
-      ]
-    },
-    {
-      "id": 20,
-      "title": "Job duration — mediana (p50)",
-      "type": "timeseries",
-      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": { "lineWidth": 2, "fillOpacity": 5 }
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.50, rate(autoframe_job_duration_seconds_bucket{phase=\"analyze\"}[1h]))",
-          "legendFormat": "analyze p50"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.50, rate(autoframe_job_duration_seconds_bucket{phase=\"render\"}[1h]))",
-          "legendFormat": "render p50"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.50, rate(autoframe_job_duration_seconds_bucket{phase=\"shorts\"}[1h]))",
-          "legendFormat": "shorts p50"
-        }
-      ]
-    },
-    {
-      "id": 21,
-      "title": "Job duration — p95",
-      "type": "timeseries",
-      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": { "lineWidth": 2, "fillOpacity": 5 }
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.95, rate(autoframe_job_duration_seconds_bucket{phase=\"analyze\"}[1h]))",
-          "legendFormat": "analyze p95"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "render p50" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.95, rate(autoframe_job_duration_seconds_bucket{phase=\"render\"}[1h]))",
-          "legendFormat": "render p95"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "render p95" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, rate(autoframe_job_duration_seconds_bucket{phase=\"shorts\"}[1h]))",
+          "legendFormat": "shorts p50" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.95, rate(autoframe_job_duration_seconds_bucket{phase=\"shorts\"}[1h]))",
-          "legendFormat": "shorts p95"
-        }
+          "legendFormat": "shorts p95" }
       ]
     },
-    {
-      "id": 30,
-      "title": "Jobs — historia (rate/5m)",
-      "type": "timeseries",
-      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 8 },
+
+    { "id": 31, "title": "Jobs — historia", "type": "timeseries",
+      "gridPos": { "x": 12, "y": 19, "w": 12, "h": 7 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": { "lineWidth": 2, "fillOpacity": 10, "drawStyle": "bars" }
-        }
-      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10, "drawStyle": "bars" } }},
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "increase(autoframe_jobs_total{status=\"done\"}[5m])",
-          "legendFormat": "done — {{phase}}"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "done — {{phase}}" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "increase(autoframe_jobs_total{status=~\"failed|killed\"}[5m])",
-          "legendFormat": "failed — {{phase}}"
-        }
+          "legendFormat": "failed — {{phase}}" }
       ]
     }
+
   ],
   "templating": {
     "list": [

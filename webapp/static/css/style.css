@@ -38,9 +38,13 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #sidebar-header h1 { font-size:14px; color:var(--accent); letter-spacing:1px; line-height:1.2; }
 .icon-btn { background:none; border:1px solid var(--border); color:var(--muted); padding:3px 7px; border-radius:3px; cursor:pointer; font-size:16px; }
 .icon-btn:hover { border-color:var(--accent); color:var(--accent); }
-#sidebar-new-row { padding:8px 10px; border-bottom:1px solid var(--border); }
+#sidebar-new-row { padding:8px 10px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; gap:6px; }
 #btn-new { width:100%; background:var(--accent); color:var(--accent-text); border:none; padding:5px 10px; border-radius:3px; cursor:pointer; font-family:var(--font); font-size:12px; font-weight:bold; }
 #btn-new:hover { opacity:.85; }
+#sidebar-queue { display:flex; align-items:center; justify-content:center; gap:4px; font-size:11px; color:var(--muted); border:1px solid var(--border); border-radius:3px; padding:3px 8px; cursor:pointer; }
+#sidebar-queue:hover { border-color:var(--accent); color:var(--accent); }
+#sidebar-queue.sq-active { border-color:var(--yellow); color:var(--yellow); animation:sq-pulse 2s ease-in-out infinite; }
+@keyframes sq-pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
 #job-list { flex:1; overflow-y:auto; }
 .job-item { padding:9px 10px; border-bottom:1px solid var(--border); cursor:pointer; position:relative; }
 .job-item:hover { background:var(--bg3); }
@@ -230,10 +234,21 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #summary-panel { flex:1; overflow-y:auto; padding:20px; flex-direction:column; gap:14px; display:none; }
 #summary-panel.active { display:flex; }
 
-/* ── Queue (job-header) ── */
-#q-row { display:flex; flex-direction:column; gap:1px; font-size:10px; color:var(--muted); line-height:1.4; }
-.qv.running { color:var(--yellow); }
-.qv.queued  { color:var(--blue); }
+/* ── Queue modal ── */
+#queue-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:110; align-items:center; justify-content:center; }
+#queue-modal.open { display:flex; }
+#queue-box { background:var(--bg2); border:1px solid var(--border); border-radius:4px; width:400px; max-height:70vh; display:flex; flex-direction:column; }
+#queue-modal-body { overflow-y:auto; }
+.qm-section-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+.qm-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); cursor:pointer; }
+.qm-row:last-child { border-bottom:none; }
+.qm-row:hover { background:var(--bg3); }
+.qm-name { flex:1; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.qm-phase { font-size:10px; color:var(--muted); }
+.qm-bar-track { flex:0 0 80px; height:4px; background:var(--border); border-radius:2px; overflow:hidden; }
+.qm-bar { height:100%; background:var(--yellow); border-radius:2px; animation:sq-pulse 1.5s ease-in-out infinite; }
+.qm-dequeue-btn { background:none; border:1px solid var(--red); color:var(--red); border-radius:3px; padding:1px 6px; font-size:11px; cursor:pointer; flex-shrink:0; }
+.qm-dequeue-btn:hover { background:var(--red); color:#fff; }
 
 /* ── Gallery tab ── */
 #gallery-panel { flex:1; overflow:hidden; padding:0; display:none; flex-direction:column; }

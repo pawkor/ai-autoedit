@@ -37,13 +37,54 @@ function _trackVisible(t, filter, genre) {
 function sortMusic(key) {
   if (_musicSort.key === key) _musicSort.asc = !_musicSort.asc;
   else { _musicSort.key = key; _musicSort.asc = true; }
-  document.querySelectorAll('#music-list-header span[onclick]').forEach(s => {
-    s.classList.toggle('sort-active', s.getAttribute('onclick') === `sortMusic('${key}')`);
-    const isActive = s.classList.contains('sort-active');
-    s.textContent = s.textContent.replace(/ [▲▼]$/, '');
-    if (isActive) s.textContent += _musicSort.asc ? ' ▲' : ' ▼';
-  });
   renderMusicList();
+}
+
+function resetMusicSort() {
+  _musicSort = { key: null, asc: true };
+  renderMusicList();
+}
+
+async function _updateSummaryTrack() {
+  const sumTrack = document.getElementById('sum-track');
+  if (!sumTrack || pinnedTrack) return;
+
+  // Ensure music is loaded (user may have skipped Music tab)
+  if (!musicTracks.length) {
+    const dir = document.getElementById('music-dir-input')?.value?.trim();
+    if (!dir) return;
+    await loadMusicTracks();
+  }
+  if (!musicTracks.length) return;
+
+  const auto = _sortedTracks(musicTracks)[0];
+  if (!auto) return;
+
+  const artist = auto.artist ? `${auto.artist} — ` : '';
+  const name   = auto.title || auto.file.split('/').pop().replace(/\.[^.]+$/, '');
+  const dur    = auto.duration ? ` (${fmtDur(auto.duration)})` : '';
+  const label  = `${artist}${name}${dur}`;
+
+  // Show cached ACR result immediately if available
+  if (auto.acr_matched !== undefined) {
+    const st = auto.acr_matched ? (auto.acr_blocked ? ' ⚠ Claimed' : ' ✓ Free') : ' ✓ No match';
+    sumTrack.textContent = label + st;
+    return;
+  }
+
+  sumTrack.textContent = label + ' — checking…';
+  try {
+    const acrSt = await api.get('/api/acr-status');
+    if (!acrSt?.configured) { sumTrack.textContent = label; return; }
+    const r = await api.post('/api/music/acr-check', { path: auto.file });
+    auto.acr_matched = r.matched;
+    auto.acr_blocked = r.blocked || false;
+    auto.acr_info    = r.matched ? `${r.artists} — ${r.title} (${r.label}) score:${r.score}` : '';
+    const st = r.matched ? (r.blocked ? ' ⚠ Claimed' : ' ✓ Free') : ' ✓ No match';
+    sumTrack.textContent = label + st;
+  } catch(e) {
+    sumTrack.textContent = label;
+  }
 }
 
 function _sortedTracks(tracks) {
@@ -55,12 +96,17 @@ function _sortedTracks(tracks) {
     ?? 0;
   if (!_musicSort.key) {
     if (!targetDur) return tracks;
+    // Penalise tracks shorter than target (music would end mid-video).
+    // Cost: delta if track >= target, 2× delta if track < target.
+    const cost = dur => {
+      const d = (dur || 0) - targetDur;
+      return d >= 0 ? d : -d * 2;
+    };
     return [...tracks].sort((a, b) => {
-      const da = (a.duration || 0) - targetDur;
-      const db = (b.duration || 0) - targetDur;
-      const absDa = Math.abs(da), absDb = Math.abs(db);
-      if (absDa !== absDb) return absDa - absDb;
-      return db - da;
+      const ca = cost(a.duration), cb = cost(b.duration);
+      if (ca !== cb) return ca - cb;
+      // tie-break: prefer longer
+      return (b.duration || 0) - (a.duration || 0);
     });
   }
   return [...tracks].sort((a, b) => {
@@ -77,6 +123,16 @@ function _sortedTracks(tracks) {
 }
 
 function renderMusicList() {
+  // Sync sort-header indicators and reset button
+  document.querySelectorAll('#music-list-header span[data-sort]').forEach(s => {
+    const key = s.dataset.sort;
+    const isActive = key === _musicSort.key;
+    s.classList.toggle('sort-active', isActive);
+    s.textContent = s.dataset.label + (isActive ? (_musicSort.asc ? ' ▲' : ' ▼') : '');
+  });
+  const resetBtn = document.getElementById('btn-music-sort-reset');
+  if (resetBtn) resetBtn.style.display = _musicSort.key ? '' : 'none';
+
   const list = document.getElementById('music-list');
   const filter = document.getElementById('music-filter').value.toLowerCase();
   const genre  = document.getElementById('music-genre').value.toLowerCase();

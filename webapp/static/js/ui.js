@@ -83,6 +83,8 @@ function _setGallerySearchStatus(iter, total) {
     `</span>`;
 }
 let _renderTotalSec = null;
+let _renderStepNum = 0;
+let _renderStepName = '';
 let _audioPlayer = null, _playingFile = null, _seekTimer = null;
 
 function _stopAudio() {
@@ -274,13 +276,19 @@ function switchTab(name) {
     }
   }
   if (name==='music' && currentJobId) {
+    _musicSort = { key: null, asc: true };  // always re-sort by estimated duration on tab switch
     const _doMusic = () => { if (!musicTracks.length) loadMusicTracks(); else renderMusicList(); };
     if (!analyzeResult?.estimated_duration_sec)
       loadAnalyzeResult(currentJobId).then(_doMusic);
     else
       _doMusic();
   }
-  if (name==='summary' && currentJobId && !analyzeResult?.estimated_duration_sec) loadAnalyzeResult(currentJobId);
+  if (name==='summary' && currentJobId) {
+    if (!analyzeResult?.estimated_duration_sec)
+      loadAnalyzeResult(currentJobId).then(() => _updateSummaryTrack());
+    else
+      _updateSummaryTrack();
+  }
   if (name==='results' && currentJobId) loadResults(currentJobId);
 }
 
@@ -313,6 +321,7 @@ async function loadFrames(jobId) {
     if (threshold) {
       _galleryThreshold = parseFloat(threshold);
       document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
+      _syncThresholdDisplay(); // computes _computeGapExclusions() before first renderGallery()
     }
     autoTargetThreshold(targetMin);
   } else if (threshold) {
@@ -328,6 +337,86 @@ async function loadFrames(jobId) {
   } else {
     _syncThresholdDisplay();
   }
+}
+
+// ── Queue modal ───────────────────────────────────────────────────────────────
+
+async function openQueueModal() {
+  document.getElementById('queue-modal').classList.add('open');
+  await _refreshQueueModal();
+}
+
+function closeQueueModal() {
+  document.getElementById('queue-modal').classList.remove('open');
+}
+
+async function _refreshQueueModal() {
+  const body = document.getElementById('queue-modal-body');
+  const data = await api.get('/api/queue');
+  if (!data) { body.innerHTML = '<div style="color:var(--muted);font-size:12px">Failed to load queue.</div>'; return; }
+
+  const { running, queued } = data;
+  body.innerHTML = '';
+
+  if (!running.length && !queued.length) {
+    body.innerHTML = '<div style="color:var(--muted);font-size:12px">No running or queued jobs.</div>';
+    return;
+  }
+
+  if (running.length) {
+    const sec = document.createElement('div');
+    sec.innerHTML = '<div class="qm-section-label">Running</div>';
+    running.forEach(j => sec.appendChild(_queueRow(j, false)));
+    body.appendChild(sec);
+  }
+
+  if (queued.length) {
+    const sec = document.createElement('div');
+    sec.innerHTML = '<div class="qm-section-label">Queued</div>';
+    queued.forEach(j => sec.appendChild(_queueRow(j, true)));
+    body.appendChild(sec);
+  }
+}
+
+function _queueRow(j, canDequeue) {
+  const row = document.createElement('div');
+  row.className = 'qm-row';
+  row.dataset.jobId = j.id;
+
+  const name = document.createElement('div');
+  name.className = 'qm-name';
+  name.textContent = trimPath(j.work_dir);
+  row.appendChild(name);
+
+  const phase = document.createElement('span');
+  phase.className = 'qm-phase';
+  phase.textContent = j.phase || '';
+  row.appendChild(phase);
+
+  if (!canDequeue && j.started_at) {
+    const bar = document.createElement('div');
+    bar.className = 'qm-bar-track';
+    bar.innerHTML = '<div class="qm-bar"></div>';
+    row.appendChild(bar);
+    // Pulse animation — can't know real progress without WS, show indeterminate bar
+    bar.querySelector('.qm-bar').style.width = '60%';
+  }
+
+  if (canDequeue) {
+    const btn = document.createElement('button');
+    btn.className = 'qm-dequeue-btn';
+    btn.textContent = '✕';
+    btn.title = 'Remove from queue';
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      await api.del(`/api/jobs/${j.id}/dequeue`);
+      await _refreshQueueModal();
+    };
+    row.appendChild(btn);
+  }
+
+  row.onclick = () => { openJob(j.id); closeQueueModal(); };
+  return row;
 }
 
 let _confirmResolve = null;

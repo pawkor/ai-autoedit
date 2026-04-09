@@ -11,11 +11,14 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
+import re
+
 from webapp.state import (
     WEBAPP_DIR,
     BROWSE_ROOT,
     in_browse_root,
     jobs,
+    _prom_ok,
 )
 
 router = APIRouter()
@@ -24,12 +27,18 @@ router = APIRouter()
 
 YT_SECRETS = WEBAPP_DIR / "youtube_client_secrets.json"
 YT_TOKEN   = WEBAPP_DIR / "youtube_token.json"
-YT_SCOPES  = ["https://www.googleapis.com/auth/youtube"]
+YT_SCOPES  = ["https://www.googleapis.com/auth/youtube",
+              "https://www.googleapis.com/auth/yt-analytics.readonly"]
 
 if os.getenv("OAUTHLIB_INSECURE_TRANSPORT") is None and not os.getenv("HTTPS_ONLY"):
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 _yt_uploads: dict = {}   # upload_id → {status, pct, url, error}
+
+# ── YouTube Analytics cache ────────────────────────────────────────────────────
+# {date: {video: N, short: N}}  — last 30 days, refreshed every hour
+_yt_analytics_cache: dict[str, dict[str, int]] = {}
+_yt_analytics_updated: float = 0.0
 
 
 def _yt_urls_path(auto_dir: Path) -> Path:
@@ -64,6 +73,155 @@ def _yt_creds():
         return creds if creds.valid else None
     except Exception:
         return None
+
+
+def _iso_duration_seconds(iso: str) -> int:
+    """Parse ISO 8601 duration string → total seconds. Returns 0 on error."""
+    m = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', iso or '')
+    if not m:
+        return 0
+    h, mi, s = m.groups()
+    return int(float(h or 0) * 3600 + float(mi or 0) * 60 + float(s or 0))
+
+
+def _fetch_yt_analytics_sync() -> dict[str, dict[str, int]]:
+    """
+    Fetch last 30 days of YouTube Analytics and classify views by video vs short.
+    Returns {date_str: {"video": N, "short": N}}.
+    Runs in a thread executor (blocking googleapis calls).
+    """
+    from googleapiclient.discovery import build
+    from datetime import date, timedelta
+
+    creds = _yt_creds()
+    if not creds:
+        return {}
+
+    yt = build("youtube", "v3", credentials=creds)
+    ya = build("youtubeAnalytics", "v2", credentials=creds)
+
+    # ── Collect all channel video IDs (up to 500) ─────────────────────────────
+    video_ids: list[str] = []
+    page_token = None
+    while len(video_ids) < 500:
+        kwargs: dict = dict(part="id", forMine=True, type="video",
+                            order="date", maxResults=50)
+        if page_token:
+            kwargs["pageToken"] = page_token
+        resp = yt.search().list(**kwargs).execute()
+        for item in resp.get("items", []):
+            vid = item.get("id", {}).get("videoId")
+            if vid:
+                video_ids.append(vid)
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    # ── Classify each video: short (≤60 s) vs video ───────────────────────────
+    short_ids: set[str] = set()
+    for i in range(0, len(video_ids), 50):
+        chunk = video_ids[i:i + 50]
+        det = yt.videos().list(part="contentDetails", id=",".join(chunk)).execute()
+        for item in det.get("items", []):
+            dur_secs = _iso_duration_seconds(
+                item.get("contentDetails", {}).get("duration", "PT0S")
+            )
+            if dur_secs <= 60:
+                short_ids.add(item["id"])
+
+    end_date   = date.today()
+    start_date = end_date - timedelta(days=30)
+
+    # ── Total daily views ─────────────────────────────────────────────────────
+    total_resp = ya.reports().query(
+        ids="channel==MINE",
+        startDate=start_date.isoformat(),
+        endDate=end_date.isoformat(),
+        metrics="views",
+        dimensions="day",
+    ).execute()
+    total_by_date: dict[str, int] = {
+        row[0]: int(row[1]) for row in total_resp.get("rows", [])
+    }
+
+    # ── Shorts daily views (filter to short_ids, if any) ─────────────────────
+    short_by_date: dict[str, int] = {}
+    if short_ids:
+        filter_str = "video==" + ",".join(short_ids)
+        short_resp = ya.reports().query(
+            ids="channel==MINE",
+            startDate=start_date.isoformat(),
+            endDate=end_date.isoformat(),
+            metrics="views",
+            dimensions="day",
+            filters=filter_str,
+        ).execute()
+        short_by_date = {
+            row[0]: int(row[1]) for row in short_resp.get("rows", [])
+        }
+
+    # ── Combine ────────────────────────────────────────────────────────────────
+    result: dict[str, dict[str, int]] = {}
+    all_dates = sorted(set(total_by_date) | set(short_by_date))
+    for d in all_dates:
+        total  = total_by_date.get(d, 0)
+        shorts = short_by_date.get(d, 0)
+        result[d] = {"video": max(0, total - shorts), "short": shorts}
+
+    return result
+
+
+def _update_yt_prometheus(data: dict[str, dict[str, int]]) -> None:
+    """Push analytics data to Prometheus gauges."""
+    if not _prom_ok:
+        return
+    from webapp.state import _prom_yt_daily_views, _prom_yt_latest_views
+    if _prom_yt_daily_views is None:
+        return
+    for d, vals in data.items():
+        _prom_yt_daily_views.labels(date=d, type="video").set(vals.get("video", 0))
+        _prom_yt_daily_views.labels(date=d, type="short").set(vals.get("short", 0))
+    # latest available day stat (YouTube Analytics has ~2-3 day delay)
+    if data and _prom_yt_latest_views is not None:
+        latest = max(data.keys())
+        _prom_yt_latest_views.labels(type="video").set(data[latest].get("video", 0))
+        _prom_yt_latest_views.labels(type="short").set(data[latest].get("short", 0))
+
+
+async def _yt_analytics_refresh_once():
+    global _yt_analytics_cache, _yt_analytics_updated
+    try:
+        data = await asyncio.to_thread(_fetch_yt_analytics_sync)
+        if data:
+            _yt_analytics_cache = data
+            _yt_analytics_updated = time.time()
+            _update_yt_prometheus(data)
+            print(f"[YT Analytics] refreshed — {len(data)} days", flush=True)
+    except Exception as exc:
+        print(f"[YT Analytics] refresh error: {exc}", flush=True)
+
+
+async def yt_analytics_periodic():
+    """Refresh YouTube Analytics at startup and every hour."""
+    while True:
+        await _yt_analytics_refresh_once()
+        await asyncio.sleep(3600)
+
+
+@router.get("/api/youtube/analytics")
+async def yt_analytics():
+    """Return cached daily views split by video/short (last 30 days)."""
+    return {
+        "data": _yt_analytics_cache,
+        "updated_at": _yt_analytics_updated,
+    }
+
+
+@router.post("/api/youtube/analytics/refresh")
+async def yt_analytics_refresh_now():
+    """Trigger an immediate analytics refresh."""
+    asyncio.create_task(_yt_analytics_refresh_once())
+    return {"ok": True}
 
 
 @router.get("/api/youtube/status")

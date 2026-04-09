@@ -382,8 +382,9 @@ async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> b
         cmd = [sys.executable, str(SCRIPT_DIR / "make_shorts.py"), job.params["work_dir"]]
         if job.params.get("shorts_text"):    cmd.append("--text")
         if job.params.get("shorts_multicam"): cmd.append("--multicam")
-        if job.params.get("shorts_ncs"):  cmd.append("--ncs")
-        if version:                       cmd += ["--version", version]
+        if job.params.get("shorts_ncs"):     cmd.append("--ncs")
+        if job.params.get("shorts_best"):    cmd.append("--best")
+        if version:                          cmd += ["--version", version]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -412,73 +413,93 @@ async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> b
         return False
 
 
-async def _run_shorts(job: Job, count: int = 1):
+async def _run_shorts(job: Job, count: int = 1, parallel: bool = False):
+    """Run short video generation.
+    parallel=True: main render is active — don't touch job.status/phase, use shorts_running flag.
+    parallel=False: standalone — own job.status/phase lifecycle.
+    Per-job _shorts_lock serialises back-to-back calls (queue instead of reject).
+    """
     import pipeline as _pipeline
-    job.status = "running"
-    job.phase  = "shorts"
-    await job.broadcast({"type": "status", "status": "running", "phase": "shorts"})
-    job.save()
-    try:
-        work_dir = Path(job.params["work_dir"])
-        base     = _pipeline._output_name(work_dir)
-        existing_nums = [
-            int(m.group(1))
-            for p in work_dir.glob(f"{base}-short_v*.mp4")
-            if (m := re.search(r"-short_v(\d+)\.mp4$", p.name))
-        ]
-        next_num  = max(existing_nums, default=0) + 1
-        versions  = [f"v{next_num + i:02d}" for i in range(count)]
+    async with job._shorts_lock:
+        job.shorts_running = True
+        if not parallel:
+            job.status = "running"
+            job.phase  = "shorts"
+            await job.broadcast({"type": "status", "status": "running", "phase": "shorts"})
+        await job.broadcast({"type": "shorts_status", "running": True})
+        job.save()
+        ok = False
+        try:
+            work_dir = Path(job.params["work_dir"])
+            base     = _pipeline._output_name(work_dir)
+            existing_nums = [
+                int(m.group(1))
+                for p in work_dir.glob(f"{base}-short_v*.mp4")
+                if (m := re.search(r"-short_v(\d+)\.mp4$", p.name))
+            ]
+            next_num  = max(existing_nums, default=0) + 1
+            versions  = [f"v{next_num + i:02d}" for i in range(count)]
 
-        if count == 1:
-            async with shorts_semaphore:
-                ok = await _run_one_short(job, 1, 1, versions[0])
-        else:
-            max_c   = max(1, int(wcfg("max_concurrent_jobs", "1")))
-            batch_sem = asyncio.Semaphore(max_c)
-            done_count = 0
-            lock       = asyncio.Lock()
+            if count == 1:
+                async with shorts_semaphore:
+                    ok = await _run_one_short(job, 1, 1, versions[0])
+            else:
+                max_c   = max(1, int(wcfg("max_concurrent_jobs", "1")))
+                batch_sem = asyncio.Semaphore(max_c)
+                done_count = 0
+                batch_lock = asyncio.Lock()
 
-            async def _one(i: int) -> bool:
-                nonlocal done_count
-                async with batch_sem:
-                    async with shorts_semaphore:
-                        result = await _run_one_short(job, i, count, versions[i - 1])
-                async with lock:
-                    done_count += 1
-                    pct = round(done_count / count * 100)
-                    await job.broadcast({
-                        "type":  "shorts_batch_progress",
-                        "done":  done_count,
-                        "total": count,
-                        "pct":   pct,
-                    })
-                return result
+                async def _one(i: int) -> bool:
+                    nonlocal done_count
+                    async with batch_sem:
+                        async with shorts_semaphore:
+                            result = await _run_one_short(job, i, count, versions[i - 1])
+                    async with batch_lock:
+                        done_count += 1
+                        pct = round(done_count / count * 100)
+                        await job.broadcast({
+                            "type":  "shorts_batch_progress",
+                            "done":  done_count,
+                            "total": count,
+                            "pct":   pct,
+                        })
+                    return result
 
-            results = await asyncio.gather(*[_one(i + 1) for i in range(count)], return_exceptions=True)
-            ok = all(r is True for r in results)
+                results = await asyncio.gather(*[_one(i + 1) for i in range(count)], return_exceptions=True)
+                ok = all(r is True for r in results)
 
-        if ok:
-            job.status = "done"
-            job.phase  = "done"
-        else:
-            job.log.append("ERROR: one or more shorts failed")
-            job.status = "failed"
-            job.phase  = "failed"
-    except asyncio.CancelledError:
-        job.log.append("[shorts cancelled]")
-        job.status = "killed"
-        job.phase  = "failed"
-    except Exception as exc:
-        job.log.append(f"ERROR: {exc}")
-        job.status = "failed"
-        job.phase  = "failed"
-    job.ended_at = time.time()
-    if _prom_ok:
-        from webapp.state import _prom_jobs_total, _prom_job_duration
-        _prom_jobs_total.labels(phase="shorts", status=job.status).inc()
-        _prom_job_duration.labels(phase="shorts").observe(job.ended_at - job.started_at)
-    job.save()
-    await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
+            if not parallel:
+                if ok:
+                    job.status = "done"
+                    job.phase  = "done"
+                else:
+                    job.log.append("ERROR: one or more shorts failed")
+                    job.status = "failed"
+                    job.phase  = "failed"
+        except asyncio.CancelledError:
+            job.log.append("[shorts cancelled]")
+            if not parallel:
+                job.status = "killed"
+                job.phase  = "failed"
+        except Exception as exc:
+            job.log.append(f"ERROR: {exc}")
+            if not parallel:
+                job.status = "failed"
+                job.phase  = "failed"
+        finally:
+            job.shorts_running = False
+        if not parallel:
+            job.ended_at = time.time()
+        if _prom_ok:
+            from webapp.state import _prom_jobs_total, _prom_job_duration
+            _prom_jobs_total.labels(phase="shorts", status="done" if ok else "failed").inc()
+            if not parallel:
+                _prom_job_duration.labels(phase="shorts").observe(time.time() - job.started_at)
+        job.save()
+        shorts_status = "done" if ok else "failed"
+        await job.broadcast({"type": "shorts_status", "running": False, "status": shorts_status})
+        if not parallel:
+            await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
 
 
 # ── Result helpers ─────────────────────────────────────────────────────────────
@@ -810,6 +831,12 @@ async def get_analyze_result(job_id: str):
     if _actual_thr is not None:
         result["actual_threshold"] = _actual_thr
     if result:
+        try:
+            _cp_cfg = configparser.ConfigParser()
+            _cp_cfg.read([str(APP_DIR / "config.ini"), str(job.work_dir() / "config.ini")])
+            result["intro_dur_sec"] = _cp_cfg.getfloat("intro_outro", "duration", fallback=3.0)
+        except Exception:
+            result["intro_dur_sec"] = 3.0
         return result
     result = {}
     for line in job.log:
@@ -850,6 +877,12 @@ async def get_analyze_result(job_id: str):
     except Exception:
         pass
     if result:
+        try:
+            _cp_cfg2 = configparser.ConfigParser()
+            _cp_cfg2.read([str(APP_DIR / "config.ini"), str(job.work_dir() / "config.ini")])
+            result["intro_dur_sec"] = _cp_cfg2.getfloat("intro_outro", "duration", fallback=3.0)
+        except Exception:
+            result["intro_dur_sec"] = 3.0
         return result
     raise HTTPException(404, "No analysis data available")
 
@@ -903,16 +936,64 @@ async def render_short(job_id: str, data: dict = Body(default={})):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.status in ("running", "queued"):
-        raise HTTPException(409, "Job is already running or queued")
+    if data.get("best"):
+        job.params["shorts_best"] = True
+    else:
+        job.params.pop("shorts_best", None)
     job.log.append("")
     job.log.append(f"── Render Short{'s ×' + str(count) if count > 1 else ''} ──────────────────────────")
-    job.status = "queued"
-    job.phase  = "shorts"
-    job.ended_at = None
+    main_active = job.status in ("running", "queued")
+    if main_active:
+        # Run in parallel with main render — don't touch job.status/phase
+        job._shorts_task = asyncio.create_task(_run_shorts(job, count=count, parallel=True))
+    else:
+        job.status = "queued"
+        job.phase  = "shorts"
+        job.ended_at = None
+        job.save()
+        job._task = asyncio.create_task(_run_shorts(job, count=count, parallel=False))
+    return {"id": job_id, "phase": "shorts" if not main_active else job.phase, "count": count}
+
+
+@router.get("/api/queue")
+async def get_queue():
+    running, queued = [], []
+    for job in jobs.values():
+        if job.status == "running":
+            running.append({
+                "id": job.id,
+                "work_dir": job.params.get("work_dir", ""),
+                "phase": job.phase,
+                "started_at": job.started_at,
+                "shorts_running": job.shorts_running,
+            })
+        elif job.status == "queued":
+            queued.append({
+                "id": job.id,
+                "work_dir": job.params.get("work_dir", ""),
+                "phase": job.phase,
+                "created_at": job.created_at,
+            })
+    running.sort(key=lambda j: j["started_at"])
+    queued.sort(key=lambda j: j["created_at"])
+    return {"running": running, "queued": queued}
+
+
+@router.delete("/api/jobs/{job_id}/dequeue")
+async def dequeue_job(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status != "queued":
+        raise HTTPException(409, "Job is not queued")
+    if job._task and not job._task.done():
+        job._task.cancel()
+    job.status = "failed"
+    job.ended_at = time.time()
+    job.log.append("[dequeued by user]")
     job.save()
-    job._task = asyncio.create_task(_run_shorts(job, count=count))
-    return {"id": job_id, "phase": "shorts", "count": count}
+    await job.broadcast({"type": "status", "status": "failed", "phase": job.phase})
+    return {"ok": True}
 
 
 @router.delete("/api/jobs/{job_id}")
@@ -920,7 +1001,7 @@ async def kill_job(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.status == "running":
+    if job.status in ("running", "queued"):
         if job._task and not job._task.done():
             job._task.cancel()
         elif job.process:
@@ -928,6 +1009,8 @@ async def kill_job(job_id: str):
                 os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
             except Exception:
                 job.process.terminate()
+        if job._shorts_task and not job._shorts_task.done():
+            job._shorts_task.cancel()
         job.status = "killed"
         job.ended_at = time.time()
         job.save()

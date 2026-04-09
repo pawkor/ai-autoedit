@@ -232,12 +232,16 @@ async def _do_ig_upload(upload_id: str, file_path: Path, caption: str):
         resp = await loop.run_in_executor(None, _ig_graph_post,
             f"{_IG_GRAPH}/{_IG_USER_ID}/media",
             {"media_type": "REELS", "upload_type": "resumable",
-             "caption": caption, "access_token": _ig_current_token()},
+             "caption": caption, "share_to_feed": "true",
+             "access_token": _ig_current_token()},
         )
+        print(f"[IG] media container response: {resp}", flush=True)
         if "error" in resp:
             raise RuntimeError(resp["error"].get("message", str(resp["error"])))
         container_id = resp["id"]
-        upload_uri   = resp["uri"]
+        upload_uri   = resp.get("uri", "")
+        if not upload_uri:
+            raise RuntimeError(f"No upload URI in response: {resp}")
 
         # Step 2 — upload video bytes directly to Instagram
         size_mb = round(file_path.stat().st_size / 1_048_576, 1)
@@ -269,6 +273,7 @@ async def _do_ig_upload(upload_id: str, file_path: Path, caption: str):
             f"{_IG_GRAPH}/{_IG_USER_ID}/media_publish",
             {"creation_id": container_id, "access_token": _ig_current_token()},
         )
+        print(f"[IG] publish response: {result}", flush=True)
         if "error" in result:
             raise RuntimeError(result["error"].get("message", str(result["error"])))
 

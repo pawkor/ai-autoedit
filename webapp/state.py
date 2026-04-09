@@ -204,6 +204,9 @@ class Job:
         self.log         = _LogList(JOBS_DIR / f"{job_id}.log")
         self.process: Optional[asyncio.subprocess.Process] = None
         self._task: Optional[asyncio.Task] = None
+        self._shorts_task: Optional[asyncio.Task] = None
+        self.shorts_running: bool = False
+        self._shorts_lock: asyncio.Lock = asyncio.Lock()
         self.created_at  = time.time()
         self.started_at  = time.time()
         self.ended_at: Optional[float] = None
@@ -222,6 +225,7 @@ class Job:
             "ended_at":       self.ended_at,
             "analyze_result": self.analyze_result,
             "selected_track": self.selected_track,
+            "shorts_running": self.shorts_running,
         }
 
     def save(self):
@@ -290,10 +294,16 @@ if _prom_ok:
     _prom_gpu_pct           = Gauge("autoframe_gpu_utilization_percent",   "GPU utilization percent")
     _prom_gpu_vram_used     = Gauge("autoframe_gpu_vram_used_bytes",       "GPU VRAM used bytes")
     _prom_gpu_vram_total    = Gauge("autoframe_gpu_vram_total_bytes",      "GPU VRAM total bytes")
+    # YouTube Analytics — daily views (last 30 days), labels: date (YYYY-MM-DD), type (video|short)
+    _prom_yt_daily_views    = Gauge("yt_channel_daily_views",              "YouTube daily views by type", ["date", "type"])
+    # YouTube Analytics — latest available day (no date label, for stat panels)
+    _prom_yt_latest_views   = Gauge("yt_channel_latest_daily_views",       "YouTube latest available day views", ["type"])
 else:
     _prom_jobs_active = _prom_jobs_queued = _prom_jobs_total = _prom_job_duration = None
     _prom_cpu_pct = _prom_ram_used = _prom_ram_total = None
     _prom_gpu_pct = _prom_gpu_vram_used = _prom_gpu_vram_total = None
+    _prom_yt_daily_views = None
+    _prom_yt_latest_views = None
 
 _NO_CACHE_EXTS = {".html", ".js", ".css", ".json", ".txt", ".svg", ".ico"}
 

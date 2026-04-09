@@ -3,28 +3,29 @@ function _computePerFileCuts() {
   if (_galleryThreshold === null) return;
   const perFile = currentJobPerFile ||
     parseFloat(document.getElementById('js-per-file')?.value || '0') || 0;
-  if (!perFile) return;
-  const maxSec = currentJobMaxScene ||
-    parseFloat(document.getElementById('js-max-scene')?.value || '0') || Infinity;
-  const groups = new Map();
-  for (const f of framesData) {
-    const ov = manualOverrides[f.scene];
-    if (ov === 'include' || ov === 'exclude') continue;
-    if (f.score == null || f.score < _galleryThreshold) continue;
-    const src = f.scene.replace(/-scene-\d+$/, '');
-    if (!groups.has(src)) groups.set(src, []);
-    groups.get(src).push(f);
-  }
-  for (const scenes of groups.values()) {
-    scenes.sort((a, b) => b.score - a.score);
-    let total = 0;
-    for (const f of scenes) {
-      const take = Math.min(f.duration ?? maxSec, maxSec);
-      if (take < currentJobMinTake) continue;
-      if (total >= perFile || total + take - perFile > 0.5) {
-        _perFileCuts.add(f.scene);
-      } else {
-        total += take;
+  if (perFile) {
+    const maxSec = currentJobMaxScene ||
+      parseFloat(document.getElementById('js-max-scene')?.value || '0') || Infinity;
+    const groups = new Map();
+    for (const f of framesData) {
+      const ov = manualOverrides[f.scene];
+      if (ov === 'include' || ov === 'exclude') continue;
+      if (f.score == null || f.score < _galleryThreshold) continue;
+      const src = f.scene.replace(/-scene-\d+$/, '');
+      if (!groups.has(src)) groups.set(src, []);
+      groups.get(src).push(f);
+    }
+    for (const scenes of groups.values()) {
+      scenes.sort((a, b) => b.score - a.score);
+      let total = 0;
+      for (const f of scenes) {
+        const take = Math.min(f.duration ?? maxSec, maxSec);
+        if (take < currentJobMinTake) continue;
+        if (total >= perFile || total + take - perFile > 0.5) {
+          _perFileCuts.add(f.scene);
+        } else {
+          total += take;
+        }
       }
     }
   }
@@ -279,8 +280,8 @@ function renderGallery() {
     const limitBadge = limited ? `<span class="fc-limit-badge">limit</span>` : '';
     const dupBadge   = isDup   ? `<span class="fc-limit-badge" style="background:var(--muted)">dup</span>` : '';
     const _maxSec = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
-    const effDur = Math.min(f.duration ?? _maxSec, _maxSec);
-    const durBadge = `<span class="fc-dur">${effDur.toFixed(1)}s</span>`;
+    const effDur = f.duration != null ? Math.min(f.duration, _maxSec) : null;
+    const durBadge = `<span class="fc-dur">${effDur != null ? effDur.toFixed(1) + 's' : '?'}</span>`;
     card.innerHTML = `<img src="${_cachedSrc(f.frame_url)}" loading="lazy" onerror="this.style.display='none'">
       <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span>${durBadge}<span class="fc-name"></span>${limitBadge}${dupBadge}</div>`;
     card.querySelector('.fc-name').textContent = sceneLabel;
@@ -330,9 +331,15 @@ function _estimateDuration(scenes) {
     parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
   const perFile = currentJobPerFile ||
     parseFloat(document.getElementById('js-per-file')?.value || '0') || null;
-  const bySource = new Map();
+  // Compute average duration for scenes with known duration (fallback for unknown)
+  let _knownTot = 0, _knownCnt = 0;
   for (const f of scenes) {
     if (f.duration == null) continue;
+    _knownTot += Math.min(f.duration, maxSec); _knownCnt++;
+  }
+  const avgDur = _knownCnt > 0 ? _knownTot / _knownCnt : maxSec * 0.5;
+  const bySource = new Map();
+  for (const f of scenes) {
     const src = f.scene.replace(/-scene-\d+$/, '');
     if (!bySource.has(src)) bySource.set(src, []);
     bySource.get(src).push(f);
@@ -341,7 +348,7 @@ function _estimateDuration(scenes) {
   for (const group of bySource.values()) {
     let fileTot = 0;
     for (const f of group.sort((a,b) => (b.score??0)-(a.score??0))) {
-      let take = Math.min(f.duration, maxSec);
+      let take = Math.min(f.duration ?? avgDur, maxSec);
       if (perFile != null) take = Math.min(take, perFile - fileTot);
       if (take < currentJobMinTake) continue;
       total   += take;
@@ -367,16 +374,12 @@ function _balancedEstimate() {
   const scaledCount = balanced.length;
   const camRatio = analyzeResult?.cam_ratio ?? 1.0;
 
-  // Scale from the server's last dry-run estimate using ONLY the manual-override delta.
+  // Scale from the server's last dry-run estimate proportionally by current scene count.
+  // scaledCount already reflects both threshold changes and manual overrides.
   const serverDur  = analyzeResult?.estimated_duration_sec;
   const serverMain = analyzeResult?.estimated_main_scenes ?? analyzeResult?.estimated_scenes;
   if (serverDur > 0 && serverMain > 0) {
-    let delta = 0;
-    for (const ov of Object.values(manualOverrides)) {
-      if (ov === 'include') delta++;
-      if (ov === 'exclude') delta--;
-    }
-    const duration = Math.max(0, Math.round(serverDur * (serverMain + delta) / serverMain));
+    const duration = Math.max(0, Math.round(serverDur * scaledCount / serverMain));
     return { scenes: balanced, duration, scaledCount, camRatio };
   }
 
@@ -384,6 +387,13 @@ function _balancedEstimate() {
   const mainDur = _estimateDuration(balanced);
   const duration = _estimateTotalDuration(mainDur, balanced.length);
   return { scenes: balanced, duration, scaledCount, camRatio };
+}
+
+// Returns intro+outro duration in seconds (0 when no_intro is checked).
+// analyzeResult.intro_dur_sec is set from /api/analyze-result (default 3s → 2*3=6s).
+function _introDurSec() {
+  if (document.getElementById('js-no-intro')?.checked) return 0;
+  return 2 * (analyzeResult?.intro_dur_sec ?? 3.0);
 }
 
 function calculateGalleryStats() {
@@ -403,19 +413,25 @@ function calculateGalleryStats() {
   if (useActual) {
     document.getElementById('gallery-stats-text').textContent =
       `${analyzeResult.actual_selected_scenes} / ${framesData.length} scenes · ${fmtDur(analyzeResult.actual_duration_sec)}`;
+    analyzeResult._live_est_dur = analyzeResult.actual_duration_sec;
     return;
   }
   if (useEstimated) {
+    const _ids = _introDurSec();
     document.getElementById('gallery-stats-text').textContent =
-      `${analyzeResult.estimated_scenes} / ${framesData.length} scenes · ${fmtDur(analyzeResult.estimated_duration_sec, '~')} est.`;
+      `${analyzeResult.estimated_scenes} / ${framesData.length} scenes · ${fmtDur(analyzeResult.estimated_duration_sec + _ids, '~')} est.`;
+    if (analyzeResult) analyzeResult._live_est_dur = analyzeResult.estimated_duration_sec + _ids;
     return;
   }
   const est = _balancedEstimate();
-  const hasDur = est.scenes.some(f => f.duration != null);
+  const hasDur = framesData.some(f => f.duration != null);
   const countTxt = `${est.scaledCount} / ${framesData.length} scenes`;
   let durTxt = '';
   if (hasDur) {
-    durTxt = ` · ${fmtDur(est.duration, '~')} est.`;
+    const _ids = _introDurSec();
+    const estTotal = est.duration + _ids;
+    durTxt = ` · ${fmtDur(estTotal, '~')} est.`;
+    if (analyzeResult) analyzeResult._live_est_dur = estTotal;
   }
   document.getElementById('gallery-stats-text').textContent = countTxt + durTxt;
 }
@@ -508,13 +524,16 @@ function _syncThresholdDisplay() {
     analyzeResult._live_est_dur = analyzeResult.actual_duration_sec;
   } else if (useEstimated) {
     scenes  = analyzeResult.estimated_scenes;
-    durStr  = fmtDur(analyzeResult.estimated_duration_sec, '~');
-    analyzeResult._live_est_dur = analyzeResult.estimated_duration_sec;
+    const _ids = _introDurSec();
+    const _estTotal = analyzeResult.estimated_duration_sec + _ids;
+    durStr  = fmtDur(_estTotal, '~');
+    analyzeResult._live_est_dur = _estTotal;
   } else {
     const est = _balancedEstimate();
     scenes  = est.scaledCount;
-    const hasDur = est.scenes.some(f => f.duration != null);
-    const estDur = Math.round(est.duration);
+    const hasDur = framesData.some(f => f.duration != null);
+    const _ids = _introDurSec();
+    const estDur = Math.round(est.duration + _ids);
     durStr  = (hasDur && scenes) ? fmtDur(estDur, '~') : '—';
     if (analyzeResult) { analyzeResult._live_est_scenes = scenes; analyzeResult._live_est_dur = estDur; }
   }
@@ -598,10 +617,14 @@ async function autoTargetThreshold(targetMin) {
   const pf = currentJobPerFile  || parseFloat(document.getElementById('js-per-file')?.value)  || 45;
   const mg = parseFloat(document.getElementById('min-gap-input')?.value) || 0;
 
+  // Subtract intro+outro duration so the search targets clips-only, giving final video ≈ targetSec.
+  const introDur = _introDurSec();
+  const adjustedTargetSec = Math.max(targetSec - introDur, 1);
+
   let res = null;
   let _searchId = null;
   try {
-    const searchBody = { target_sec: targetSec, max_scene: ms, per_file: pf };
+    const searchBody = { target_sec: adjustedTargetSec, max_scene: ms, per_file: pf };
     if (mg > 0) searchBody.min_gap_sec = mg;
     const r = await fetch(`/api/jobs/${currentJobId}/find-threshold`, {
       method: 'POST',
@@ -658,8 +681,9 @@ async function autoTargetThreshold(targetMin) {
       if (wd2) api.put('/api/job-config', { work_dir: wd2, threshold: thr });
     }
 
-    if (res.duration_sec < targetSec - 10) {
-      const gotMin = Math.floor(res.duration_sec / 60), gotS = Math.round(res.duration_sec % 60);
+    if (res.duration_sec + introDur < targetSec - 10) {
+      const gotTotal = res.duration_sec + introDur;
+      const gotMin = Math.floor(gotTotal / 60), gotS = Math.round(gotTotal % 60);
       warnMsg = `⚠ max ~${gotMin}:${String(gotS).padStart(2,'0')}`;
     }
   } else if (res !== null) {

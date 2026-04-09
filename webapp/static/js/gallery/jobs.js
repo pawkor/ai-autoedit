@@ -11,7 +11,7 @@ async function populateJobSettings(params) {
   const _cams = params.cameras || [params.cam_a, params.cam_b].filter(Boolean);
   await setCamsList('js-cam-list', _cams, _camOffsets);
   const _multicamWrap = document.getElementById('shorts-multicam-wrap');
-  if (_multicamWrap) _multicamWrap.style.display = _cams.length >= 2 ? '' : 'none';
+  if (_multicamWrap) _multicamWrap.style.display = _cams.length >= 2 ? 'flex' : 'none';
   sv('js-title',    params.title);
   sc('js-no-intro',        params.no_intro);
   sc('js-no-music',        params.no_music);

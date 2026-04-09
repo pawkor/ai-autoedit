@@ -50,7 +50,7 @@
   #hw-monitor { display: none !important; }
   .jh-flex { display: none; }
   #jh-path { font-size: 12px; max-width: calc(100vw - 120px); }
-  #q-row { order: 10; width: 100%; flex-direction: row; gap: 10px; padding-top: 2px; border-top: 1px solid var(--border); }
+  #queue-box { width: 95vw !important; }
 
   /* ── Steps wrap tighter ── */
   #steps { gap: 3px; padding: 6px 10px; }

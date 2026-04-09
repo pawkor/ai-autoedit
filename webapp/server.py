@@ -95,22 +95,39 @@ async def startup():
     max_c = int(wcfg("max_concurrent_jobs", "1"))
     _st.job_semaphore = asyncio.Semaphore(max_c)
 
+    requeue: list = []
     for f in sorted(_st.JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime):
         try:
             data = json.loads(f.read_text())
             job = _st.Job.from_dict(data)
             if job.status in ("running", "queued"):
-                job.status = "failed"
-                job.log.append("[server restarted — job interrupted]")
-                job.ended_at = job.ended_at or time.time()
-                job.save()
+                if job.phase in ("analyzing", "rendering"):
+                    job.status = "queued"
+                    job.ended_at = None
+                    job.log.append("[server restarted — re-queuing]")
+                    job.save()
+                    requeue.append(job)
+                else:
+                    job.status = "failed"
+                    job.log.append("[server restarted — job interrupted]")
+                    job.ended_at = job.ended_at or time.time()
+                    job.save()
             _st.jobs[job.id] = job
         except Exception:
             pass
 
+    for job in requeue:
+        job._task = asyncio.create_task(
+            _st._run_job(job,
+                         analyze_only=(job.phase == "analyzing"),
+                         selected_track=job.selected_track)
+        )
+
     asyncio.create_task(_stats_broadcaster())
     from webapp.routers.instagram import _ig_periodic_refresh
     asyncio.create_task(_ig_periodic_refresh())
+    from webapp.routers.youtube import yt_analytics_periodic
+    asyncio.create_task(yt_analytics_periodic())
 
 
 # ── WebSockets ─────────────────────────────────────────────────────────────────
@@ -138,8 +155,10 @@ async def job_ws(websocket: WebSocket, job_id: str):
     for line in job.log:
         await websocket.send_text(json.dumps({"type": "log", "line": line}))
     await websocket.send_text(json.dumps({"type": "status", "status": job.status, "phase": job.phase}))
+    if job.shorts_running:
+        await websocket.send_text(json.dumps({"type": "shorts_status", "running": True}))
 
-    if job.status not in ("running", "queued"):
+    if job.status not in ("running", "queued") and not job.shorts_running:
         await websocket.close()
         return
 

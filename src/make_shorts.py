@@ -462,9 +462,13 @@ def main():
     ap.add_argument("--text",       action="store_true", help="Overlay animated text words per shot")
     ap.add_argument("--multicam",   action="store_true", help="Use all-cam scores (main + back cam)")
     ap.add_argument("--ncs",        action="store_true", help="Pick music from /data/music/NCS instead of /data/music/shorts")
+    ap.add_argument("--best",       action="store_true", help="Best-of-best: 30s, top CLIP scenes in score order (no randomisation)")
     ap.add_argument("--seed",       type=int,   default=None)
     ap.add_argument("--version",    default="",               help="Force output version string (e.g. v03) — avoids race in batch mode")
     args = ap.parse_args()
+
+    if args.best:
+        args.duration = 30.0   # best-of-best is always 30 s
 
     xfade_dur = args.xfade_dur
 
@@ -553,59 +557,81 @@ def main():
     _eff = max(args.shot - xfade_dur, 0.01)
     n_shots = args.top if args.top > 0 else max(1, math.ceil((args.duration - xfade_dur) / _eff) + 4)
 
-    # ── Per-camera random pools ───────────────────────────────────────────────
-    # For shorts scoring is irrelevant — we want variety, not the same top scenes
-    # every time. Build a random pool for every camera:
-    #   • scored cameras  → scenes from scores CSV, shuffled
-    #   • unscored cameras → all autocut clips, shuffled
-    cam_pools: dict[str, list[str]] = {}
-    if cam_csv.exists():
-        # Scored cameras: take scene names, shuffle
-        for cam, idxs in by_cam.items():
-            scene_names = [raw[i][1] for i in idxs]
-            cam_pools[cam] = random.sample(scene_names, len(scene_names))
-
-        # Unscored cameras: scan autocut dir
-        all_cam_names = set(cam_map.values())
-        for uc in sorted(all_cam_names - set(by_cam.keys())):
-            uc_sources = {src for src, c in cam_map.items() if c == uc}
-            pool = [
-                clip.stem
-                for src in sorted(uc_sources)
-                for clip in sorted(autocut_dir.glob(f"{src}-scene-*.mp4"))
-            ]
-            if pool:
-                cam_pools[uc] = random.sample(pool, len(pool))
-
-        for cam, pool in cam_pools.items():
-            print(f"Camera '{cam}': {len(pool)} clips (random)")
-
-    # ── Alternating-camera selection ──────────────────────────────────────────
-    if len(cam_pools) > 1:
-        cam_order = sorted(cam_pools.keys())
-        pool_ptrs = {cam: 0 for cam in cam_order}
-        candidates = []
-        slot = 0
-        while len(candidates) < n_shots:
-            cam  = cam_order[slot % len(cam_order)]
-            ptr  = pool_ptrs[cam]
-            pool = cam_pools[cam]
-            if ptr < len(pool):
-                candidates.append((0.0, pool[ptr]))
-                pool_ptrs[cam] = ptr + 1
-            slot += 1
-            if all(pool_ptrs[c] >= len(cam_pools[c]) for c in cam_order):
-                break
-        picks = ", ".join(f"{c}:{pool_ptrs[c]}" for c in cam_order)
-        print(f"Alternating selection: {picks} (total {len(candidates)})")
+    if args.best:
+        # ── Best-of-best: single 30-second clip from the #1 CLIP-scored scene ─
+        best_pool = [(sc, sn) for sc, sn in scenes
+                     if (autocut_dir / f"{sn}.mp4").exists()
+                     and probe_duration(autocut_dir / f"{sn}.mp4") >= args.duration]
+        candidates = best_pool[:1]   # only the single top scene
+        hook_scene = candidates[0][1] if candidates else None
+        hook_score = candidates[0][0] if candidates else 0.0
+        if hook_scene:
+            print(f"Best-of-best: '{hook_scene}'  score={hook_score:.3f}  (#1 CLIP — 30s single scene)")
     else:
-        # Single camera or no camera map — pick randomly from all scored scenes
-        scene_names = [s for _, s in raw]
-        candidates = [(0.0, s) for s in random.sample(scene_names, min(n_shots, len(scene_names)))]
+        # ── Best-hook scene: random pick from top CLIP scenes → first shot ──────────
+        top_n = max(1, min(8, len(scenes) // 5))
+        top_candidates = [(sc, sn) for sc, sn in scenes[:top_n * 3]
+                          if (autocut_dir / f"{sn}.mp4").exists()
+                          and probe_duration(autocut_dir / f"{sn}.mp4") >= args.shot]
+        random.shuffle(top_candidates)
+        hook_scene: str | None = None
+        hook_score: float = 0.0
+        if top_candidates:
+            hook_score, hook_scene = top_candidates[0]
+            print(f"Hook: '{hook_scene}'  score={hook_score:.3f}  (top-{top_n} CLIP pool → first shot)")
+
+        # ── Per-camera random pools ───────────────────────────────────────────────
+        cam_pools: dict[str, list[str]] = {}
+        if cam_csv.exists():
+            for cam, idxs in by_cam.items():
+                scene_names = [raw[i][1] for i in idxs if raw[i][1] != hook_scene]
+                cam_pools[cam] = random.sample(scene_names, len(scene_names))
+
+            all_cam_names = set(cam_map.values())
+            for uc in sorted(all_cam_names - set(by_cam.keys())):
+                uc_sources = {src for src, c in cam_map.items() if c == uc}
+                pool = [
+                    clip.stem
+                    for src in sorted(uc_sources)
+                    for clip in sorted(autocut_dir.glob(f"{src}-scene-*.mp4"))
+                    if clip.stem != hook_scene
+                ]
+                if pool:
+                    cam_pools[uc] = random.sample(pool, len(pool))
+
+            for cam, pool in cam_pools.items():
+                print(f"Camera '{cam}': {len(pool)} clips (random)")
+
+        # ── Alternating-camera selection ──────────────────────────────────────
+        remaining = n_shots - (1 if hook_scene else 0)
+        if len(cam_pools) > 1:
+            cam_order = sorted(cam_pools.keys())
+            pool_ptrs = {cam: 0 for cam in cam_order}
+            rest = []
+            slot = 0
+            while len(rest) < remaining:
+                cam  = cam_order[slot % len(cam_order)]
+                ptr  = pool_ptrs[cam]
+                pool = cam_pools[cam]
+                if ptr < len(pool):
+                    rest.append((0.0, pool[ptr]))
+                    pool_ptrs[cam] = ptr + 1
+                slot += 1
+                if all(pool_ptrs[c] >= len(cam_pools[c]) for c in cam_order):
+                    break
+            picks = ", ".join(f"{c}:{pool_ptrs[c]}" for c in cam_order)
+            print(f"Alternating selection: {picks} (total {len(rest)})")
+        else:
+            scene_names = [s for _, s in raw if s != hook_scene]
+            rest = [(0.0, s) for s in random.sample(scene_names, min(remaining, len(scene_names)))]
+
+        candidates = ([(hook_score, hook_scene)] if hook_scene else []) + rest
+
+    # In --best mode, the single clip is the full 30s duration; otherwise 1.5s per shot.
+    shot_dur = args.duration if args.best else args.shot
 
     print(f"Scenes: {len(scenes)} available  |  picking top {len(candidates)}")
-    print(f"Score range: {candidates[-1][0]:.3f} – {candidates[0][0]:.3f}")
-    print(f"Shot: {args.shot}s  |  xfade: {xfade_dur}s  |  target: ~{len(candidates)*args.shot:.0f}s\n")
+    print(f"Shot: {shot_dur}s  |  xfade: {xfade_dur}s  |  target: ~{len(candidates)*shot_dur:.0f}s\n")
 
     # ── Music ─────────────────────────────────────────────────────────────────
     music_file: Path | None = Path(args.music) if args.music else None
@@ -672,18 +698,18 @@ def main():
                 print(f"  [{i+1:2d}] SKIP {scene}")
                 continue
             dur       = probe_duration(src)
-            if dur < args.shot:
-                print(f"  [{i+1:2d}] SKIP {scene} (scene {dur:.2f}s < shot {args.shot}s)")
+            if dur < shot_dur:
+                print(f"  [{i+1:2d}] SKIP {scene} (scene {dur:.2f}s < shot {shot_dur}s)")
                 continue
             # Skip first 20% of scene (camera still settling after cut),
             # skip last 10% (approaching next cut). Random offset within window.
             # With --seed this is reproducible; vary seed to get different frames.
             win_start = dur * 0.20
-            win_end   = dur * 0.90 - args.shot
+            win_end   = dur * 0.90 - shot_dur
             if win_end > win_start:
                 ss = random.uniform(win_start, win_end)
             else:
-                ss = min(dur * 0.20, dur - args.shot)  # narrow window: clamp to ensure full shot fits
+                ss = min(dur * 0.20, dur - shot_dur)  # narrow window: clamp to ensure full shot fits
             word      = word_pool[i]
             angle     = random.choice(angles)
             direction = random.choice(directions)
@@ -691,7 +717,7 @@ def main():
             cam_name  = cam_map.get(src_base, "") if cam_csv.exists() else ""
             x_shift   = _crop_x_offsets.get(cam_name, 0)
 
-            clip = make_clip(src, ss, args.shot, word, angle, direction,
+            clip = make_clip(src, ss, shot_dur, word, angle, direction,
                              args.width, args.height, tmp, i, args.text,
                              xfade_dur, x_shift)
             if clip:
@@ -723,7 +749,7 @@ def main():
         version   = args.version if args.version else _next_version(work_dir, base)
         out_path  = work_dir / f"{base}-short_{version}.mp4"
 
-        fc, vout = build_xfade_graph(len(clip_paths), args.shot, transitions, xfade_dur)
+        fc, vout = build_xfade_graph(len(clip_paths), shot_dur, transitions, xfade_dur)
 
         inputs = []
         for c in clip_paths:
@@ -778,7 +804,7 @@ def main():
     music_info = f" + {music_file.name[:40]}" if music_file else ""
     text_info  = " + rotated text fly-in" if args.text else ""
     print(f"\n✓ {out_path.name}")
-    print(f"  {len(clip_paths)} shots × {args.shot}s  xfade {xfade_dur}s{text_info}{music_info}")
+    print(f"  {len(clip_paths)} shots × {shot_dur}s  xfade {xfade_dur}s{text_info}{music_info}")
     print(f"  {args.width}×{args.height}  |  {actual_dur:.1f}s")
 
     # Write sidecar metadata so the web UI can show IG Reel option for NCS tracks

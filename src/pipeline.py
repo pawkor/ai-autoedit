@@ -1311,6 +1311,47 @@ async def run(params: dict, work_dir: Path,
     # Clean up highlight.mp4 if still present (no_intro path — music used it directly)
     highlight.unlink(missing_ok=True)
 
+    # ── Preview ───────────────────────────────────────────────────────────────
+    yield ""
+    yield "Generating preview..."
+    out_name = _output_name(work_dir)
+    _prev_candidates = sorted(
+        [p for p in work_dir.glob(f"{out_name}_v*.mp4") if "_preview" not in p.stem],
+        key=lambda p: int(m.group(1)) if (m := re.search(r'_v(\d+)', p.stem)) else 0,
+    )
+    if _prev_candidates:
+        _prev_src = _prev_candidates[-1]
+        _prev_out = _prev_src.with_name(_prev_src.stem + "_preview.mp4")
+        if _prev_out.exists():
+            yield f"  ✓ {_prev_out.name} (cached)"
+        else:
+            if vid_codec == "h264_nvenc":
+                _prev_cmd = [
+                    ffmpeg, *hwaccel, "-i", str(_prev_src),
+                    "-vf", "scale=-2:1080",
+                    "-c:v", "h264_nvenc", "-b:v", "15M", "-maxrate", "20M", "-bufsize", "30M",
+                    "-preset", "p4",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    str(_prev_out), "-y",
+                ]
+            else:
+                _prev_cmd = [
+                    ffmpeg, "-i", str(_prev_src),
+                    "-vf", "scale=-2:1080",
+                    "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    str(_prev_out), "-y",
+                ]
+            _prev_ret, _ = await _run(_prev_cmd)
+            if _prev_out.exists():
+                yield f"  ✓ {_prev_out.name}"
+            else:
+                yield f"  ⚠ Preview failed (code {_prev_ret})"
+    else:
+        yield "  ⚠ No output file found"
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed    = time.time() - t_start
     scene_count = sum(1 for _ in open(selected_txt))
