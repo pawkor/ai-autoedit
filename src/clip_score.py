@@ -23,10 +23,12 @@ _cfg = configparser.ConfigParser()
 _script_dir = Path(__file__).resolve().parent
 _cfg.read([_script_dir / "config.ini", Path.cwd() / "config.ini"])
 
-FRAMES_DIR       = os.environ.get("FRAMES_DIR", "frames/")
-OUTPUT_CSV       = os.environ.get("OUTPUT_CSV", "scene_scores.csv")
-EMBEDDINGS_FILE  = os.environ.get("EMBEDDINGS_FILE",
-                       str(Path(OUTPUT_CSV).parent / "scene_embeddings.npz"))
+FRAMES_DIR        = os.environ.get("FRAMES_DIR", "frames/")
+OUTPUT_CSV        = os.environ.get("OUTPUT_CSV", "scene_scores.csv")
+OUTPUT_CSV_ALLCAM = os.environ.get("OUTPUT_CSV_ALLCAM", "")   # all-cam scores for shorts
+SCORE_ALL_CAMS    = os.environ.get("SCORE_ALL_CAMS", "") == "1"
+EMBEDDINGS_FILE   = os.environ.get("EMBEDDINGS_FILE",
+                        str(Path(OUTPUT_CSV).parent / "scene_embeddings.npz"))
 CAM_SOURCES = os.environ.get("CAM_SOURCES", "")
 AUDIO_CAM   = os.environ.get("AUDIO_CAM",   "")
 TOP_PERCENT = _cfg.getint("clip_scoring",   "top_percent",   fallback=25)
@@ -111,11 +113,14 @@ def _is_main_cam(path: Path) -> bool:
     src = _re.sub(r'-scene-\d+$', '', path.stem)
     return src not in _back_sources
 
-all_frames = sorted(Path(FRAMES_DIR).glob("*.jpg"))
-frames = [f for f in all_frames if _is_main_cam(f)]
-skipped = len(all_frames) - len(frames)
-if skipped:
+all_frames_list = sorted(Path(FRAMES_DIR).glob("*.jpg"))
+main_cam_stems  = set(f.stem for f in all_frames_list if _is_main_cam(f))
+frames = all_frames_list if SCORE_ALL_CAMS else [f for f in all_frames_list if _is_main_cam(f)]
+skipped = len(all_frames_list) - len(main_cam_stems)
+if skipped and not SCORE_ALL_CAMS:
     print(f"Skipping {skipped} back-cam frames (scoring main cam only)")
+elif skipped and SCORE_ALL_CAMS:
+    print(f"Scoring all cams: {len(main_cam_stems)} main + {skipped} back-cam (for shorts)")
 print(f"Scoring {len(frames)} frames (batch={BATCH_SIZE}, workers={NUM_WORKERS})...")
 dataset = FrameDataset(frames, preprocess)
 loader  = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
@@ -161,19 +166,29 @@ if not results:
     print("No frames scored — check that autocut/ has .mp4 files > 5MB.")
     sys.exit(1)
 
-df = pd.DataFrame(results).sort_values("score", ascending=False)
-df.to_csv(OUTPUT_CSV, index=False)
+df_all = pd.DataFrame(results).sort_values("score", ascending=False)
 
-if scene_embs:
-    names = list(scene_embs.keys())
-    embs  = np.array([scene_embs[n] for n in names], dtype=np.float32)
+# Main-cam only → OUTPUT_CSV (used by main pipeline — unchanged behaviour)
+df_main = df_all[df_all["scene"].isin(main_cam_stems)] if SCORE_ALL_CAMS else df_all
+df_main.to_csv(OUTPUT_CSV, index=False)
+
+# All-cam → OUTPUT_CSV_ALLCAM (used by make_shorts.py for multicam shorts)
+if SCORE_ALL_CAMS and OUTPUT_CSV_ALLCAM:
+    df_all.to_csv(OUTPUT_CSV_ALLCAM, index=False)
+    print(f"All-cam scores: {len(df_all)} scenes → {Path(OUTPUT_CSV_ALLCAM).name}")
+
+# Main-cam embeddings → EMBEDDINGS_FILE (used by select_scenes dedup)
+embs_main = {k: v for k, v in scene_embs.items() if k in main_cam_stems}
+if embs_main:
+    names = list(embs_main.keys())
+    embs  = np.array([embs_main[n] for n in names], dtype=np.float32)
     np.savez_compressed(EMBEDDINGS_FILE, names=np.array(names), embeddings=embs)
     print(f"Embeddings: {len(names)} scenes → {Path(EMBEDDINGS_FILE).name}")
 
-print(f"\nScored: {len(df)} scenes")
-print(f"Score range: {df['score'].min():.3f} – {df['score'].max():.3f}")
-cutoff = df["score"].quantile(1 - TOP_PERCENT / 100)
-top = df[df["score"] >= cutoff]
+print(f"\nScored: {len(df_main)} scenes")
+print(f"Score range: {df_main['score'].min():.3f} – {df_main['score'].max():.3f}")
+cutoff = df_main["score"].quantile(1 - TOP_PERCENT / 100)
+top = df_main[df_main["score"] >= cutoff]
 print(f"Top {TOP_PERCENT}%: {len(top)} scenes (cutoff: {cutoff:.3f})")
 print("\nTop 10:")
 print(top.head(10)[["scene", "score"]].to_string(index=False))

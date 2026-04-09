@@ -22,9 +22,10 @@ If the target is unreachable (not enough footage), a `⚠ max ~m:ss` warning is 
 
 ## Threshold
 
-Pole **Threshold** (z przyciskami ▼/▲ co 0.001) ustawia próg CLIP ręcznie. Sceny powyżej progu mają pomarańczową ramkę (included), poniżej — szarą (excluded). Zmiana progu ręcznie nadpisuje wynik automatycznego wyszukiwania.
+Pole **Threshold** (z przyciskami ▼/▲ co 0.001) ustawia próg CLIP ręcznie. Sceny powyżej progu mają **zieloną ramkę z poświatą** (included), poniżej — cienką szarą ramkę (excluded). Ramka i poświata są wyraźne we wszystkich motywach (dark, light, gruvbox, nord, solarized). Zmiana progu ręcznie nadpisuje wynik automatycznego wyszukiwania.
 
-The **Threshold** field (with ▼/▲ buttons stepping 0.001) sets the CLIP threshold manually. Scenes above the threshold have an orange border (included), below — grey (excluded). Manual threshold change overrides the auto-search result.
+The **Threshold** field (with ▼/▲ buttons stepping 0.001) sets the CLIP threshold manually. Scenes above the threshold have a **green border with a glow** (included), below — thin grey border (excluded). The border and glow are clearly visible in all themes. Manual threshold change overrides the auto-search result.
+
 
 ### Szacowany czas / Duration estimate
 
@@ -45,6 +46,14 @@ The counter above the gallery (`N / total scenes · m:ss`) shows:
 Pod wynikiem CLIP każdej sceny wyświetlany jest efektywny czas jej udziału w filmie (po zastosowaniu Max scene sec).
 
 Below each scene's CLIP score, the effective clip duration (after applying Max scene sec cap) is shown.
+
+### Data i godzina sceny / Scene timestamp
+
+Pod każdą klatką wyświetlany jest rzeczywisty czas nagrania sceny: `creation_time` z metadanych MP4 pliku źródłowego + offset sceny z pliku CSV PySceneDetect. Czas podawany jest w strefie czasowej przeglądarki.
+
+Filename-based timestamp matching is unreliable for multi-chapter sessions (GoPro/Insta360 reuse the session start time for all chapter files). The gallery reads `creation_time` from MP4 metadata via ffprobe and adds the scene's start offset from the PySceneDetect CSV.
+
+Below each frame the actual recording time is shown: `YYYY-MM-DD HH:MM:SS #N` (browser local time).
 
 ---
 
@@ -74,25 +83,17 @@ Overrides are saved server-side in `_autoframe/manual_overrides.json` and applie
 
 ---
 
-## Filter
+## Filter / Min gap
 
-Dwa pola tekstowe filtrują widoczne sceny:
+### Min gap
 
-| Pole | Placeholder | Działanie |
-|------|-------------|-----------|
-| Score | `score` | Prefiks score — np. `0.8` pokazuje sceny 0.800–0.899 |
-| Time | `HH:MM` | Prefiks czasu — np. `09` pokazuje sceny z godziny 09:xx |
+Pole **Min gap** (sekundy, brak strzałek) ustawia minimalny odstęp między automatycznie wybranymi scenami na osi czasu. Sceny zbyt blisko poprzedniej zaznaczonej są wykluczone (bursztynowa ramka z plakietką **limit**). Manualne overrides (force-include) ignorują gap filter.
 
-Wciśnięcie Enter lub opuszczenie pola stosuje filtr. Oba filtry można łączyć.
+The **Min gap** field (seconds, no spinners) sets the minimum gap between auto-selected scenes on the timeline. Scenes too close to the previous selected scene are excluded (amber border with **limit** badge). Manual force-includes bypass the gap filter.
 
-Two text inputs filter the visible scenes:
+Zmiana wartości natychmiast przelicza galerię bez reload.
 
-| Field | Placeholder | Behaviour |
-|-------|-------------|-----------|
-| Score | `score` | Score prefix — e.g. `0.8` shows scenes 0.800–0.899 |
-| Time | `HH:MM` | Timestamp prefix — e.g. `09` shows scenes with 09:xx timecodes |
-
-Press Enter or blur to apply. Both filters can be combined.
+Changing the value immediately recalculates the gallery without reload.
 
 ---
 

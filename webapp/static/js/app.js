@@ -99,8 +99,8 @@ const TRANS = {
       'lbl.scenes_count_prefix': 'Scenes',
       'lbl.est_duration':      'Est. duration:',
       // misc
-      'misc.newest':           'newest',
-      'misc.oldest':         'oldest',
+      'misc.newest':           'a..z',
+      'misc.oldest':         'z..a',
       'misc.no_gpu':         'GPU not detected',
       'misc.running':        'Running',
       'misc.queued':         'Queued',
@@ -209,8 +209,8 @@ const TRANS = {
       'step.5': '5 CLIP',
       'step.6': '6 Selekcja+Enkod',
       // misc
-      'misc.newest':         'najnowsze',
-      'misc.oldest':         'najstarsze',
+      'misc.newest':         'a..z',
+      'misc.oldest':         'z..a',
       'misc.no_gpu':         'Brak GPU',
       'misc.running':        'W trakcie',
       'misc.queued':         'W kolejce',

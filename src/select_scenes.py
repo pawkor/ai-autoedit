@@ -35,6 +35,7 @@ DUPLICATES_FILE  = os.environ.get("DUPLICATES_FILE",
 DEDUP_SIM    = _cfg.getfloat("scene_selection", "dedup_sim",    fallback=0.97)
 DEDUP_WINDOW = _cfg.getint("scene_selection",   "dedup_window", fallback=5)
 TIMESTAMP_MATCH_SEC = _cfg.getfloat("scene_selection", "timestamp_match_sec", fallback=30.0)
+MIN_GAP_SEC  = float(os.environ.get("MIN_GAP_SEC", "") or _cfg.getfloat("scene_selection", "min_gap_sec", fallback=0))
 _CAM_OFFSETS: dict[str, float] = {}
 try:
     _raw_offsets = os.environ.get("CAM_OFFSETS", "")
@@ -227,6 +228,93 @@ def _scene_timestamp(scene_tuple):
     return (name, 0)
 
 
+# ── Build absolute timestamp map (used by gap filter and dual-cam pairing) ───
+# Timeline position = creation_time of MP4 + scene start offset from CSV.
+# Built here (not inside dual_cam block) so gap filtering works for single-cam too.
+ts_map: dict[str, float] = {}
+if CSV_DIR and os.path.isdir(CSV_DIR):
+    _work_dir = Path(os.getcwd())
+    _ffprobe  = _cfg.get("paths", "ffprobe", fallback="ffprobe")
+
+    def _get_file_start(stem: str) -> float | None:
+        cam = cam_map.get(stem)
+        dirs_to_try = [_work_dir / cam] if cam else []
+        dirs_to_try.append(_work_dir)
+        for d in dirs_to_try:
+            for ext in (".mp4", ".MP4", ".mov", ".MOV"):
+                p = d / (stem + ext)
+                if p.exists():
+                    try:
+                        out = subprocess.check_output(
+                            [_ffprobe, "-v", "quiet", "-print_format", "json",
+                             "-show_format", str(p)],
+                            stderr=subprocess.DEVNULL, timeout=10,
+                        )
+                        tags = _json.loads(out)["format"].get("tags", {})
+                        ct = tags.get("creation_time", "")
+                        if ct:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                            return dt.timestamp()
+                    except Exception:
+                        pass
+        return None
+
+    for _csv_path in sorted(Path(CSV_DIR).glob("*-Scenes.csv")):
+        _stem = _csv_path.stem[:-len("-Scenes")]
+        _file_start = _get_file_start(_stem)
+        if _file_start is None:
+            continue
+        try:
+            _sdf = pd.read_csv(_csv_path)
+            if "Scene Number" not in _sdf.columns:
+                _sdf = pd.read_csv(_csv_path, skiprows=1)
+            for _, _row in _sdf.iterrows():
+                _snum = int(_row["Scene Number"])
+                _key  = f"{_stem}-scene-{_snum:03d}"
+                _secs = float(_row.get("Start Time (seconds)", 0) or 0)
+                ts_map[_key] = _file_start + _secs
+        except Exception:
+            pass
+
+    if _CAM_OFFSETS and ts_map:
+        for _key in ts_map:
+            _src = _re.sub(r'-scene-\d+$', '', _key)
+            _cam = cam_map.get(_src, 'default')
+            if _cam in _CAM_OFFSETS:
+                ts_map[_key] += _CAM_OFFSETS[_cam]
+
+
+# ── Minimum-gap filter (auto-selected scenes only) ───────────────────────────
+# Applied after threshold + per-file cap + force-includes.
+# force_include scenes are always kept regardless of gap.
+if MIN_GAP_SEC > 0 and ts_map:
+    _sorted = sorted(all_selected, key=lambda s: ts_map.get(s[0], float('inf')))
+    _kept: list = []
+    _last_ts: float | None = None
+    _skipped = 0
+    for _s in _sorted:
+        _ts = ts_map.get(_s[0])
+        if _s[0] in force_include:
+            _kept.append(_s)
+            if _ts is not None:
+                _last_ts = _ts + _s[3]   # ts + take
+            continue
+        if _ts is None:
+            _kept.append(_s)             # no timestamp → keep, can't judge gap
+            continue
+        if _last_ts is None or (_ts - _last_ts) >= MIN_GAP_SEC:
+            _kept.append(_s)
+            _last_ts = _ts + _s[3]
+        else:
+            _skipped += 1
+    if _skipped:
+        print(f"Min-gap filter ({MIN_GAP_SEC:.0f}s): removed {_skipped} scene(s) too close to predecessor")
+    all_selected = _kept
+elif MIN_GAP_SEC > 0 and not ts_map:
+    print(f"  Warning: min_gap_sec={MIN_GAP_SEC:.0f} set but no timestamps available — gap filter skipped")
+
+
 # ── Dual-cam: timestamp-based pairing ────────────────────────────────────────
 cam_a_name = None
 
@@ -238,63 +326,8 @@ if dual_cam:
     cam_a_name  = all_cam_names[0]
     other_cams  = all_cam_names[1:]
 
-    # ── Build absolute timestamp map from PySceneDetect CSVs ─────────────────
-    # Timeline position = creation_time of original source file + scene offset from CSV.
-    # Filename timestamps are unreliable (multi-file sessions reuse the session start
-    # timestamp for all chapter files). Only creation_time from MP4 metadata is used.
-
-    ts_map: dict[str, float] = {}
-    if os.path.isdir(CSV_DIR):
-        _work_dir = Path(os.getcwd())
-        _ffprobe  = _cfg.get("paths", "ffprobe", fallback="ffprobe")
-
-        def _get_file_start(stem: str) -> float | None:
-            """Return file start epoch from creation_time MP4 metadata."""
-            cam = cam_map.get(stem)
-            if cam:
-                for ext in (".mp4", ".MP4", ".mov", ".MOV"):
-                    p = _work_dir / cam / (stem + ext)
-                    if p.exists():
-                        try:
-                            out = subprocess.check_output(
-                                [_ffprobe, "-v", "quiet", "-print_format", "json",
-                                 "-show_format", str(p)],
-                                stderr=subprocess.DEVNULL, timeout=10,
-                            )
-                            tags = _json.loads(out)["format"].get("tags", {})
-                            ct = tags.get("creation_time", "")
-                            if ct:
-                                from datetime import datetime
-                                dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
-                                return dt.timestamp()
-                        except Exception:
-                            pass
-            return None
-
-        for csv_path in sorted(Path(CSV_DIR).glob("*-Scenes.csv")):
-            stem = csv_path.stem[:-len("-Scenes")]
-            file_start = _get_file_start(stem)
-            if file_start is None:
-                print(f"  Warning: no creation_time for {stem} — skipping timestamp mapping")
-                continue
-            try:
-                sdf = pd.read_csv(csv_path)
-                if "Scene Number" not in sdf.columns:
-                    sdf = pd.read_csv(csv_path, skiprows=1)
-                for _, row in sdf.iterrows():
-                    snum = int(row["Scene Number"])
-                    key  = f"{stem}-scene-{snum:03d}"
-                    secs = float(row.get("Start Time (seconds)", 0) or 0)
-                    ts_map[key] = file_start + secs
-            except Exception:
-                pass
-
+    # ts_map already built above (outside dual_cam block) — reused here.
     if _CAM_OFFSETS and ts_map:
-        for key in ts_map:
-            src = _re.sub(r'-scene-\d+$', '', key)
-            cam = cam_map.get(src, 'default')
-            if cam in _CAM_OFFSETS:
-                ts_map[key] += _CAM_OFFSETS[cam]
         print(f"  Cam offsets applied: " + ", ".join(f"{c}={v:+.0f}s" for c, v in _CAM_OFFSETS.items()))
 
     ts_coverage = sum(1 for s in all_selected if ts_map.get(s[0]) is not None)

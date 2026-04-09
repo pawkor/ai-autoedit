@@ -30,8 +30,6 @@ services:
     build: .
     image: autoframe:latest
     user: "${UID}:${GID}"
-    ports:
-      - "8000:8000"
     shm_size: '2gb'
     security_opt:
       - apparmor:unconfined
@@ -44,13 +42,20 @@ services:
     environment:
       BROWSE_ROOT: /data
       ENABLE_AUTH: ${ENABLE_AUTH:-false}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      LAST_FM_API_KEY: ${LAST_FM_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ACRCLOUD_HOST: ${ACRCLOUD_HOST}
+      ACRCLOUD_ACCESS_KEY: ${ACRCLOUD_ACCESS_KEY}
+      ACRCLOUD_ACCESS_SECRET: ${ACRCLOUD_ACCESS_SECRET}
+      LAST_FM_API_KEY: ${LAST_FM_API_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      IG_ACCESS_TOKEN: ${IG_ACCESS_TOKEN:-}
+      IG_USER_ID: ${IG_USER_ID:-}
+      IG_APP_ID: ${IG_APP_ID:-}
+      IG_APP_SECRET: ${IG_APP_SECRET:-}
     deploy:
       resources:
         reservations:

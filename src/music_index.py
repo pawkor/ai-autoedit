@@ -174,7 +174,7 @@ def analyze_track(mp3_path: str) -> dict | None:
             if not artist: artist = fa
             if not title:  title  = ft
 
-        return {
+        entry = {
             "file":        mp3_path,
             "title":       title or Path(mp3_path).stem,
             "artist":      artist,
@@ -184,6 +184,17 @@ def analyze_track(mp3_path: str) -> dict | None:
             "energy_norm": 0.0,
             "duration":    round(duration, 1),
         }
+        # YouTube source metadata (from .yt.json sidecar written by save-downloaded)
+        sidecar = Path(mp3_path).with_suffix(".yt.json")
+        if sidecar.exists():
+            try:
+                yt = json.loads(sidecar.read_text())
+                entry["yt_url"]     = yt.get("yt_url", "")
+                entry["yt_license"] = yt.get("yt_license", "")
+                entry["yt_channel"] = yt.get("yt_channel", "")
+            except Exception:
+                pass
+        return entry
     except Exception as e:
         print(f"  Error {Path(mp3_path).name}: {e}", file=sys.stderr)
         return None

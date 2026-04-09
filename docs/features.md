@@ -37,8 +37,9 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Themes: dark / light / gruvbox / nord / solarized | ✅ | CSS variable-based |
 | Language switcher (EN / PL) | ✅ | i18n via TRANS map |
 | UI preferences server-side (config.ini) | ✅ | cross-device via webapp/config.ini |
-| Job sort order (newest/oldest) | ✅ | persisted server-side |
-| YouTube Shorts generation (make_shorts.py) | ✅ | top-scored scenes, 1.5s shots, center crop to 9:16, `*-short_vNN.mp4` |
+| Job sort order (a..z / z..a) | ✅ | alphabetical by work_dir path, persisted server-side |
+| YouTube Shorts generation (make_shorts.py) | ✅ | fully random alternating cam-a/cam-b, 1.5s shots, center crop to 9:16, `*-short_vNN.mp4` |
+| Shorts per-camera crop X offset | ✅ | `[shorts] crop_x_offsets` in config.ini, e.g. `back=-250` shifts back-cam crop left |
 | Shorts visible in Results tab | ✅ | `*short*` filename detected, separate **▲ YT Shorts** button |
 | ▶ Render Short button in Render tab | ✅ | streams log + pulsing progress bar, separate from Render Highlight |
 
@@ -53,8 +54,11 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Auto-generate title/description via Claude | ✅ | ↺ button in upload modal |
 | Hashtag / footer line preservation on regen | ✅ | detects trailing hashtag/URL lines |
 | Save title/desc to config.ini | ✅ | persists across modal opens |
-| YouTube Shorts upload (separate flow) | ✅ | dedicated modal: title (from project config.ini), description + ↺ Claude, privacy |
+| YouTube Shorts upload (separate flow) | ✅ | dedicated modal: title (from project config.ini), description + ↺ Claude, privacy, playlist |
 | Block Shorts upload if full video not yet published | ✅ | require known YouTube URL of full video before allowing Shorts upload |
+| Playlist select / create — Shorts modal | ✅ | same UX as regular upload modal |
+| Upload description without title (both modals) | ✅ | description starts with hashtags/footer, not repeated title |
+| Instagram Reels upload | ✅ | Creator/Business account, Graph API, NCS attribution auto-fill, token auto-refresh |
 | Scheduled / delayed upload | 💡 | useful for time-zone optimised posting |
 | Chapter markers in description | 💡 | derive from scene timestamps |
 
@@ -75,7 +79,11 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 |---|---|---|
 | BPM / energy / loudness analysis | ✅ | librosa |
 | Last.fm genre lookup | ✅ | |
-| yt-dlp YouTube download | ✅ | |
+| yt-dlp YouTube download | ✅ | saves `.yt.json` sidecar with license + source URL |
+| YouTube license badge (CC / ©) | ✅ | shown per track in Music tab for YT-sourced files |
+| Delete track from library | ✅ | removes file, index.json entry, shorts_used.json entry |
+| ACRCloud Content ID check (manual) | ✅ | ⚙ button per track, fingerprint via ACRCloud API |
+| ACRCloud auto pre-check before render | ✅ | skips claimed tracks, retries until free candidate found |
 | Waveform visualisation | 💡 | small inline waveform on music cards |
 | Auto-trim silence at start/end of tracks | 💡 | |
 
@@ -86,6 +94,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Per-job config.ini overrides | ✅ | local config wins over global |
 | Job state persistence (JSON) | ✅ | survives server restart |
 | Concurrent job limit | ✅ | max_concurrent_jobs in webapp/config.ini |
+| Parallel Shorts rendering | ✅ | `shorts_semaphore` (limit 4) independent of main pipeline semaphore |
 | GPU batch size tuning | ✅ | batch_size, num_workers |
 | Graceful stop mid-render | 💡 | currently kills process, no cleanup step |
 | Re-run individual pipeline steps | 💡 | skip already-done steps |
@@ -106,11 +115,11 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 
 | Feature | Demand | Status | Notes |
 |---|---|---|---|
-| Mobile / tablet responsive UI | Medium | 💡 | layout works but not optimised |
+| Mobile / tablet responsive UI | Medium | ✅ | sidebar drawer, hamburger, 2-row tabs, dvh |
 | Dark/light auto-follow OS preference | Low | 💡 | prefers-color-scheme media query |
 | Export to Premiere / DaVinci project | Low | 💡 | EDL or XML with scene timecodes |
 | Face-detection blur for bystanders | Low | 💡 | privacy feature, GDPR relevant |
 | Subtitle / caption generation (Whisper) | Medium | 💡 | for spoken commentary tracks |
-| Hardware-accelerated encode (NVENC) | High | 💡 | ffmpeg -c:v h264_nvenc |
+| Hardware-accelerated encode (NVENC) | High | ✅ | h264_nvenc used in pipeline |
 | Multiple output resolutions (1080p + 4K) | Low | 💡 | |
 | Automatic colour grading LUT | Low | 💡 | apply a LUT in ffmpeg filter chain |

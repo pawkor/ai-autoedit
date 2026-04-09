@@ -75,6 +75,7 @@ async function openJob(jobId) {
   jobPhase = null;
   analyzeResult = null;
   pinnedTrack = null;
+  _shortsCount = 1;
   framesData = [];
   manualOverrides = {};
   _autoFillOverrides.clear();
@@ -109,7 +110,8 @@ async function openJob(jobId) {
   stopVideo();
   document.getElementById('log-panel').innerHTML = '';
   document.getElementById('frames-grid').innerHTML = '';
-  document.getElementById('rf-files').innerHTML = '';
+  document.getElementById('rf-files-main').innerHTML = '';
+  document.getElementById('rf-files-short').innerHTML = '';
   document.getElementById('btn-kill').style.display = 'none';
   document.getElementById('btn-kill-log').style.display = 'none';
   document.getElementById('jh-path').textContent = '…';
@@ -153,10 +155,12 @@ async function openJob(jobId) {
     document.getElementById('jh-elapsed').textContent = formatDur(job.ended_at - job.started_at);
   }
 
-  if (job.log.length) {
+  // Load log from dedicated .log file (not from JSON)
+  api.get(`/api/jobs/${jobId}/log`).then(data => {
+    if (!data?.lines?.length) return;
     const panel = document.getElementById('log-panel');
     const frag = document.createDocumentFragment();
-    for (const line of job.log) {
+    for (const line of data.lines) {
       const div = document.createElement('div');
       div.className = 'log-line';
       const kind = _classifyLogLine(div, line);
@@ -165,7 +169,7 @@ async function openJob(jobId) {
     }
     panel.appendChild(frag);
     panel.scrollTop = panel.scrollHeight;
-  }
+  });
   connectJobWs(jobId, job.started_at);
 
   if (job.status === 'done' || job.status === 'failed' || jobPhase === 'analyzed') {
@@ -215,8 +219,9 @@ function connectJobWs(jobId, startedAt) {
           }
         }
       }
-      if (jobPhase === 'shorts') {
-        const m = msg.line.match(/\[\s*(\d+)\/(\d+)\]/);
+      if (jobPhase === 'shorts' && _shortsCount === 1) {
+        // Single-short mode: derive progress from make_shorts.py clip log lines "[X/Y]"
+        const m = msg.line.match(/^\s*\[(\d+)\/(\d+)\]/);
         if (m) {
           const pct = Math.round(parseInt(m[1]) / parseInt(m[2]) * 100);
           const bar = document.getElementById('shorts-progress-bar');
@@ -225,6 +230,13 @@ function connectJobWs(jobId, startedAt) {
           if (lbl) lbl.textContent = pct + '%';
         }
       }
+    } else if (msg.type === 'shorts_batch_progress') {
+      const bar = document.getElementById('shorts-progress-bar');
+      const lbl = document.getElementById('shorts-pct');
+      const slbl = document.getElementById('shorts-status-label');
+      if (bar)  bar.style.width = msg.pct + '%';
+      if (lbl)  lbl.textContent = msg.pct + '%';
+      if (slbl) slbl.textContent = `${msg.done} / ${msg.total} done`;
     } else if (msg.type==='status') {
       const prevPhase = jobPhase;
       if (msg.phase) { jobPhase = msg.phase; updatePhaseUI(); }
@@ -247,7 +259,7 @@ function connectJobWs(jobId, startedAt) {
           loadAnalyzeResult(jobId);
           if (msg.phase === 'shorts' || prevPhase === 'shorts') {
             const btnS = document.getElementById('btn-render-short');
-            if (btnS) { btnS.disabled = false; btnS.textContent = '▶ Render Short'; }
+            if (btnS) { btnS.disabled = false; _updateShortsBtn(); }
             const sbar = document.getElementById('shorts-progress-bar');
             if (sbar) sbar.style.width = msg.status === 'done' ? '100%' : '0%';
             const slbl = document.getElementById('shorts-status-label');
@@ -342,19 +354,33 @@ async function loadAnalyzeResult(jobId) {
   if (infoEl) infoEl.style.display = 'flex';
 }
 
+function _updateShortsBtn() {
+  const count = Math.max(1, parseInt(document.getElementById('js-shorts-count')?.value || '1') || 1);
+  const btn = document.getElementById('btn-render-short');
+  if (btn && !btn.disabled) btn.textContent = count > 1 ? '▶ Render Shorts' : '▶ Render Short';
+}
+
 async function startRenderShort() {
   if (!currentJobId) return;
+  const count = Math.max(1, parseInt(document.getElementById('js-shorts-count')?.value || '1') || 1);
+  _shortsCount = count;
   const btn = document.getElementById('btn-render-short');
   btn.disabled = true;
-  btn.textContent = 'Generating…';
-  document.getElementById('shorts-progress-wrap').style.display = '';
-  document.getElementById('shorts-status-label').textContent = 'Generating Short…';
-  const resp = await api.post(`/api/jobs/${currentJobId}/render-short`, {});
+  btn.textContent = count > 1 ? `Queuing ${count}…` : 'Generating…';
+  const wrap = document.getElementById('shorts-progress-wrap');
+  wrap.style.display = '';
+  const slbl = document.getElementById('shorts-status-label');
+  const spct = document.getElementById('shorts-pct');
+  const sbar = document.getElementById('shorts-progress-bar');
+  if (slbl) slbl.textContent = count > 1 ? `0 / ${count} done` : 'Generating Short…';
+  if (spct) spct.textContent = '';
+  if (sbar) sbar.style.width = '0%';
+  const resp = await api.post(`/api/jobs/${currentJobId}/render-short`, {count});
   if (!resp?.id) {
     alert('Render Short failed to start: ' + JSON.stringify(resp));
     btn.disabled = false;
     btn.textContent = '▶ Render Short';
-    document.getElementById('shorts-progress-wrap').style.display = 'none';
+    wrap.style.display = 'none';
     return;
   }
   if (jobWs) { jobWs.close(); jobWs = null; }

@@ -92,6 +92,8 @@
 
 }
 
+@media (max-width: 768px) {
+
   /* ── Mobile top bar ── */
   #mobile-topbar {
     display: flex;

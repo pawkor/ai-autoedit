@@ -51,11 +51,12 @@ let _overridesChangedSinceRender = false;
 let _avgBackCamTakeSec = null; // avg back-cam clip take (pre-capped), loaded with /frames
 let _perFileCuts = new Set();
 let _balancedScenes = null; // Set<scene> when dual-cam active, null = single-cam / not needed
-let _filterScore = '', _filterTime = '';
+let _gapExcluded = new Set();
 let _ytFilePath = null;
 let _refreshing=false;
 let musicTracks=[], musicSelected=new Set();
-let jobPhase=null, analyzeResult=null, pinnedTrack=null, _sdTotal=0;
+let _acrConfigured = false;
+let jobPhase=null, analyzeResult=null, pinnedTrack=null, _sdTotal=0, _shortsCount=1;
 const _frameCache = new Map(); // original url → blob URL
 let _galleryDirty = true;
 let _musicSort = { key: null, asc: true };
@@ -182,7 +183,10 @@ async function refreshJobList() {
   _refreshing = true;
   try {
     let jobs = await api.get('/api/jobs') || [];
-    if (!jobSortNewest) jobs = [...jobs].reverse();
+    jobs = [...jobs].sort((a, b) => {
+      const ka = a.work_dir || '', kb = b.work_dir || '';
+      return jobSortNewest ? ka.localeCompare(kb) : kb.localeCompare(ka);
+    });
     const list = document.getElementById('job-list');
     list.innerHTML = '';
     for (const j of jobs) {
@@ -204,7 +208,6 @@ async function refreshJobList() {
 }
 setInterval(refreshJobList, 3000);
 refreshJobList();
-initAuth();
 setLang(currentLang);
 applyTheme(currentTheme);
 setLogFilter(_logFilter);
@@ -303,11 +306,7 @@ async function loadFrames(jobId) {
   document.getElementById('gallery-stats-text').style.display = '';
   document.getElementById('gallery-stats-text').textContent = '—';
 
-  let threshold = job?.params?.threshold;
-  if (!threshold && job?.log) {
-    const m = job.log.find(l=>/^Threshold:\s+[\d.]+/.test(l));
-    if (m) threshold = parseFloat(m.replace('Threshold:','').trim());
-  }
+  const threshold = job?.params?.threshold;
   const targetMin = job?.params?.target_minutes ? parseFloat(job.params.target_minutes) : null;
   if (targetMin && targetMin > 0) {
     // Apply saved threshold immediately for instant display, then refine via binary search.
@@ -331,6 +330,7 @@ async function loadFrames(jobId) {
   }
 }
 
+let _confirmResolve = null;
 function showConfirm(heading, msg, files, okLabel = 'Delete') {
   return new Promise(resolve => {
     _confirmResolve = resolve;

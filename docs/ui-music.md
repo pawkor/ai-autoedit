@@ -52,10 +52,10 @@ After download the file is saved automatically:
 
 ## Filtrowanie / Filtering
 
-- Pole tekstowe **Filter** — filtruje po tytule lub wykonawcy
+- Pole tekstowe **Filter** — filtruje jednocześnie po tytule i wykonawcy (szukanie podciągu, bez rozróżniania wielkości liter)
 - Dropdown **genre** — filtruje po gatunku
 
-- **Filter** text field — filters by title or artist
+- **Filter** text field — searches across both title and artist simultaneously (substring, case-insensitive)
 - **genre** dropdown — filters by genre
 
 ---
@@ -77,6 +77,73 @@ Clicking a column header (title, duration, BPM, energy) sorts by that column. Cl
 Kliknięcie ▶ przy ścieżce uruchamia odtwarzanie. Pod tytułem pojawia się suwak seek do przewijania utworu. Kliknięcie ▶ ponownie lub przy innej ścieżce zatrzymuje poprzedni utwór.
 
 Clicking ▶ next to a track starts playback. A seek bar appears below the title for scrubbing. Clicking ▶ again or on another track stops the previous one.
+
+---
+
+## Usuwanie / Delete
+
+Czerwony przycisk **✕** (widoczny po najechaniu kursorem na wiersz) usuwa utwór z dysku po potwierdzeniu. Plik MP3/M4A, wpis w `index.json` i ewentualny wpis w `shorts_used.json` są usuwane jednocześnie.
+
+The red **✕** button (visible on row hover) deletes a track from disk after confirmation. The MP3/M4A file, its entry in `index.json`, and any entry in `shorts_used.json` are all removed at once.
+
+---
+
+## Weryfikacja Content ID / Content ID check
+
+Przycisk **⚙** (widoczny po najechaniu kursorem) uruchamia fingerprint audio przez ACRCloud i sprawdza, czy utwór jest zarejestrowany w bazie Content ID. Wymaga skonfigurowania zmiennych `ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET` w `.env`.
+
+The **⚙** button (visible on hover) fingerprints the audio via ACRCloud and checks whether the track is registered in the Content ID database. Requires `ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET` in `.env`.
+
+Wyniki / Results:
+
+| Plakietka | Znaczenie |
+|-----------|-----------|
+| **✓ Free** | Brak matchu — nie znaleziono roszczeń Content ID. Bezpieczny do użycia na YouTube. |
+| **✓ No match** | Utwór nie rozpoznany w bazie ACRCloud. |
+| **⚠ Claimed** | Właściciel praw zarejestrował utwór — może być blokowany lub monetyzowany przez właściciela w filmach na YouTube. Tooltip pokazuje nazwę właściciela i listę roszczeń. |
+
+| Badge | Meaning |
+|-------|---------|
+| **✓ Free** | No match — no Content ID claims found. Safe to use on YouTube. |
+| **✓ No match** | Track not recognised in the ACRCloud database. |
+| **⚠ Claimed** | Rights holder has registered the track — may be blocked or monetised by the owner on YouTube videos. Tooltip shows owner name and claim list. |
+
+Automatyczna weryfikacja przed renderem: gdy ACRCloud jest skonfigurowany i nie wybrano ręcznie żadnego utworu, pipeline przed renderem próbuje kolejnych kandydatów dopóki nie trafi na **Free**. Wynik widoczny jest w logu: `ACR check: <nazwa> … ✓ Free → using <nazwa>` lub `⚠ Claimed — skipping`.
+
+Automatic pre-render check: when ACRCloud is configured and no track is manually pinned, the pipeline tries candidates in order until it finds a **Free** one. The result appears in the log: `ACR check: <name> … ✓ Free → using <name>` or `⚠ Claimed — skipping`.
+
+Konfiguracja / Configuration (`.env`):
+```
+ACRCLOUD_HOST=identify-eu-west-1.acrcloud.com
+ACRCLOUD_ACCESS_KEY=your_access_key
+ACRCLOUD_ACCESS_SECRET=your_access_secret
+```
+
+Darmowy plan ACRCloud: 100 rozpoznań dziennie — wystarczy do osobistego użytku. Zarejestruj projekt na [console.acrcloud.com](https://console.acrcloud.com) → typ: **Audio & Video Recognition**.
+
+ACRCloud free plan: 100 recognitions per day — sufficient for personal use. Register a project at [console.acrcloud.com](https://console.acrcloud.com) → type: **Audio & Video Recognition**.
+
+---
+
+## Plakietka licencji YouTube / YouTube license badge
+
+Ścieżki pobrane przez **↓ Download** z YouTube wyświetlają plakietkę przy tytule:
+
+Tracks downloaded via **↓ Download** from YouTube show a badge next to the title:
+
+| Plakietka | Znaczenie |
+|-----------|-----------|
+| Zielone **CC** | Creative Commons — licencja wolna, link do źródłowego wideo YT |
+| Czerwone **©** | Standardowy copyright YouTube — wysokie ryzyko Content ID |
+
+| Badge | Meaning |
+|-------|---------|
+| Green **CC** | Creative Commons — free license, links to the source YT video |
+| Red **©** | Standard YouTube copyright — high Content ID risk |
+
+Plakietka zapisywana jest w pliku `.yt.json` obok MP3 i czytana przy każdym przebudowaniu indeksu.
+
+The badge is stored in a `.yt.json` sidecar file next to the MP3 and read on every index rebuild.
 
 ---
 

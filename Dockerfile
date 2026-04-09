@@ -1,7 +1,9 @@
 # ubuntu:24.04 — matches host OS; required for jellyfin-ffmpeg7 apt package
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -39,13 +41,9 @@ RUN pip install --no-cache-dir --break-system-packages \
         --extra-index-url https://download.pytorch.org/whl/cu128 \
         -r requirements.txt
 
-# Copy application
-COPY config.ini ./
-COPY src/ ./src/
-COPY webapp/ ./webapp/
-
-# Jobs directory — writable by container user (bind-mounted at runtime)
-RUN mkdir -p /app/webapp/jobs && chmod 777 /app/webapp/jobs
+# src/, webapp/, config.ini are bind-mounted at runtime via docker-compose volumes.
+# Create placeholder dirs so the image can start even without mounts (e.g. docker run).
+RUN mkdir -p /app/src /app/webapp/jobs && chmod 777 /app/webapp/jobs
 
 EXPOSE 8000
 

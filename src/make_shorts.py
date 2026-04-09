@@ -148,7 +148,8 @@ def make_clip(src: Path, ss: float, shot_dur: float,
               word: str, angle: float, direction: str,
               width: int, height: int,
               tmp: Path, idx: int, use_text: bool,
-              xfade_dur: float = XFADE_DUR) -> Path | None:
+              xfade_dur: float = XFADE_DUR,
+              x_shift: int = 0) -> Path | None:
     """
     Crop + scale source clip, overlay animated text image.
     Two-pass: (1) crop/scale, (2) overlay text.
@@ -160,7 +161,7 @@ def make_clip(src: Path, ss: float, shot_dur: float,
     cmd = [
         "ffmpeg", "-y",
         "-ss", f"{ss:.3f}", "-i", str(src), "-t", str(shot_dur),
-        "-vf", f"crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale={width}:{height}:flags=lanczos",
+        "-vf", f"crop=ih*9/16:ih:(iw-ih*9/16)/2+({x_shift}):0,scale={width}:{height}:flags=lanczos",
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
         "-an", str(crop_out),
     ]
@@ -327,11 +328,15 @@ def _mark_track_used(track_path: Path, music_dirs: list[Path]):
     p.write_text(json.dumps(used, indent=2))
 
 
+_HISTORY_MIN_LIBRARY = 10   # reset history when library has fewer than this many tracks
+
+
 def pick_music(music_dirs: list[Path]) -> Path | None:
     """
     Pick the highest-energy unplayed track from the music library.
     Tracks used in previous Shorts runs are recorded in shorts_used.json.
-    If all tracks have been used, the history is reset and selection starts fresh.
+    History is reset when all tracks have been used, or when the library
+    has fewer than _HISTORY_MIN_LIBRARY tracks (forces rotation through small libraries).
     """
     # Collect all available indexed tracks
     all_tracks: list[tuple[float, Path]] = []   # (energy, path)
@@ -353,6 +358,15 @@ def pick_music(music_dirs: list[Path]) -> Path | None:
     all_tracks.sort(reverse=True)   # highest energy first
 
     used = _used_tracks(music_dirs)
+
+    # Small library: reset history so every track is available again
+    if len(all_tracks) < _HISTORY_MIN_LIBRARY and used:
+        print(f"  (library has {len(all_tracks)} tracks < {_HISTORY_MIN_LIBRARY} — resetting history)")
+        for root in music_dirs:
+            p = root / "shorts_used.json"
+            if p.exists():
+                p.write_text("[]")
+        used = set()
 
     # Filter out recently used tracks
     fresh = [(e, f) for e, f in all_tracks if str(f) not in used]
@@ -446,13 +460,33 @@ def main():
     ap.add_argument("--width",      type=int,   default=1080)
     ap.add_argument("--height",     type=int,   default=1920)
     ap.add_argument("--text",       action="store_true", help="Overlay animated text words per shot")
+    ap.add_argument("--multicam",   action="store_true", help="Use all-cam scores (main + back cam)")
+    ap.add_argument("--ncs",        action="store_true", help="Pick music from /data/music/NCS instead of /data/music/shorts")
     ap.add_argument("--seed",       type=int,   default=None)
+    ap.add_argument("--version",    default="",               help="Force output version string (e.g. v03) — avoids race in batch mode")
     args = ap.parse_args()
 
     xfade_dur = args.xfade_dur
 
     if args.seed is not None:
         random.seed(args.seed)
+
+    # Per-camera crop X offsets from project config.ini  e.g. [shorts] crop_x_offsets = back:-300
+    _crop_x_offsets: dict[str, int] = {}
+    try:
+        import configparser as _cp
+        _cfg = _cp.ConfigParser()
+        _cfg.read(str(Path(__file__).parent.parent / "config.ini"))
+        raw_offsets = _cfg.get("shorts", "crop_x_offsets", fallback="")
+        for part in raw_offsets.split(","):
+            part = part.strip()
+            if ":" in part:
+                cam_name, val = part.split(":", 1)
+                _crop_x_offsets[cam_name.strip()] = int(val.strip())
+    except Exception:
+        pass
+    if _crop_x_offsets:
+        print(f"Crop X offsets: {_crop_x_offsets}")
 
     work_dir    = Path(args.work_dir).resolve()
     auto_dir    = work_dir / "_autoframe"
@@ -463,6 +497,14 @@ def main():
         sys.exit(f"ERROR: {scores_csv} not found")
     if not autocut_dir.is_dir():
         sys.exit(f"ERROR: {autocut_dir} not found")
+
+    # ── Choose scores file ────────────────────────────────────────────────────
+    allcam_csv = auto_dir / "scene_scores_allcam.csv"
+    if args.multicam and allcam_csv.exists():
+        scores_csv = allcam_csv
+        print(f"Multicam mode: using {allcam_csv.name}")
+    elif args.multicam:
+        print("Multicam requested but scene_scores_allcam.csv not found — re-run Analyze first")
 
     # ── Scenes ────────────────────────────────────────────────────────────────
     raw: list[tuple[float, str]] = []
@@ -478,6 +520,7 @@ def main():
     # Per-camera score normalisation (mirrors server.py job_frames logic).
     # Without this, one camera may dominate top-N if its raw scores are higher.
     cam_csv = auto_dir / "camera_sources.csv"
+    by_cam: dict[str, list[int]] = {}
     if cam_csv.exists():
         # Build source → camera map
         cam_map: dict[str, str] = {}
@@ -508,8 +551,58 @@ def main():
     # Account for xfade overlap: N*shot - (N-1)*xfade = duration
     # → N = (duration - xfade) / (shot - xfade). Add +4 as buffer for skipped scenes.
     _eff = max(args.shot - xfade_dur, 0.01)
-    n_shots    = args.top if args.top > 0 else max(1, math.ceil((args.duration - xfade_dur) / _eff) + 4)
-    candidates = scenes[:n_shots]
+    n_shots = args.top if args.top > 0 else max(1, math.ceil((args.duration - xfade_dur) / _eff) + 4)
+
+    # ── Per-camera random pools ───────────────────────────────────────────────
+    # For shorts scoring is irrelevant — we want variety, not the same top scenes
+    # every time. Build a random pool for every camera:
+    #   • scored cameras  → scenes from scores CSV, shuffled
+    #   • unscored cameras → all autocut clips, shuffled
+    cam_pools: dict[str, list[str]] = {}
+    if cam_csv.exists():
+        # Scored cameras: take scene names, shuffle
+        for cam, idxs in by_cam.items():
+            scene_names = [raw[i][1] for i in idxs]
+            cam_pools[cam] = random.sample(scene_names, len(scene_names))
+
+        # Unscored cameras: scan autocut dir
+        all_cam_names = set(cam_map.values())
+        for uc in sorted(all_cam_names - set(by_cam.keys())):
+            uc_sources = {src for src, c in cam_map.items() if c == uc}
+            pool = [
+                clip.stem
+                for src in sorted(uc_sources)
+                for clip in sorted(autocut_dir.glob(f"{src}-scene-*.mp4"))
+            ]
+            if pool:
+                cam_pools[uc] = random.sample(pool, len(pool))
+
+        for cam, pool in cam_pools.items():
+            print(f"Camera '{cam}': {len(pool)} clips (random)")
+
+    # ── Alternating-camera selection ──────────────────────────────────────────
+    if len(cam_pools) > 1:
+        cam_order = sorted(cam_pools.keys())
+        pool_ptrs = {cam: 0 for cam in cam_order}
+        candidates = []
+        slot = 0
+        while len(candidates) < n_shots:
+            cam  = cam_order[slot % len(cam_order)]
+            ptr  = pool_ptrs[cam]
+            pool = cam_pools[cam]
+            if ptr < len(pool):
+                candidates.append((0.0, pool[ptr]))
+                pool_ptrs[cam] = ptr + 1
+            slot += 1
+            if all(pool_ptrs[c] >= len(cam_pools[c]) for c in cam_order):
+                break
+        picks = ", ".join(f"{c}:{pool_ptrs[c]}" for c in cam_order)
+        print(f"Alternating selection: {picks} (total {len(candidates)})")
+    else:
+        # Single camera or no camera map — pick randomly from all scored scenes
+        scene_names = [s for _, s in raw]
+        candidates = [(0.0, s) for s in random.sample(scene_names, min(n_shots, len(scene_names)))]
+
     print(f"Scenes: {len(scenes)} available  |  picking top {len(candidates)}")
     print(f"Score range: {candidates[-1][0]:.3f} – {candidates[0][0]:.3f}")
     print(f"Shot: {args.shot}s  |  xfade: {xfade_dur}s  |  target: ~{len(candidates)*args.shot:.0f}s\n")
@@ -526,8 +619,12 @@ def main():
             cp.read(str(Path(__file__).parent.parent / "config.ini"))
             d = cp.get("music", "dir", fallback="")
             if d:
-                shorts_dir = Path(d) / "shorts"
-                search_roots.append(shorts_dir if shorts_dir.is_dir() else Path(d))
+                if args.ncs:
+                    ncs_dir = Path(d) / "NCS"
+                    search_roots.append(ncs_dir if ncs_dir.is_dir() else Path(d))
+                else:
+                    shorts_dir = Path(d) / "shorts"
+                    search_roots.append(shorts_dir if shorts_dir.is_dir() else Path(d))
         except Exception:
             pass
         if search_roots:
@@ -590,10 +687,13 @@ def main():
             word      = word_pool[i]
             angle     = random.choice(angles)
             direction = random.choice(directions)
+            src_base  = re.sub(r"-scene-\d+$", "", scene)
+            cam_name  = cam_map.get(src_base, "") if cam_csv.exists() else ""
+            x_shift   = _crop_x_offsets.get(cam_name, 0)
 
             clip = make_clip(src, ss, args.shot, word, angle, direction,
                              args.width, args.height, tmp, i, args.text,
-                             xfade_dur)
+                             xfade_dur, x_shift)
             if clip:
                 clips.append((clip, probe_duration(clip)))
                 print(f"  [{i+1:2d}/{len(candidates)}] score={score:.3f}  ss={ss:.1f}s  "
@@ -620,7 +720,7 @@ def main():
 
         # ── Pass 1: video-only (xfade chain, no audio) ───────────────────────
         base      = _output_name(work_dir)
-        version   = _next_version(work_dir, base)
+        version   = args.version if args.version else _next_version(work_dir, base)
         out_path  = work_dir / f"{base}-short_{version}.mp4"
 
         fc, vout = build_xfade_graph(len(clip_paths), args.shot, transitions, xfade_dur)
@@ -680,6 +780,16 @@ def main():
     print(f"\n✓ {out_path.name}")
     print(f"  {len(clip_paths)} shots × {args.shot}s  xfade {xfade_dur}s{text_info}{music_info}")
     print(f"  {args.width}×{args.height}  |  {actual_dur:.1f}s")
+
+    # Write sidecar metadata so the web UI can show IG Reel option for NCS tracks
+    import datetime as _dt
+    meta = {
+        "ncs":          args.ncs,
+        "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "music":        str(music_file) if music_file else None,
+    }
+    meta_path = out_path.with_suffix(".meta.json")
+    meta_path.write_text(json.dumps(meta))
 
 
 if __name__ == "__main__":

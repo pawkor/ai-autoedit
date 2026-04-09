@@ -42,6 +42,33 @@ Zakładka **Music**:
 
 Filtr czasu trwania: pokazywane są tylko ścieżki o czasie trwania zbliżonym do szacowanego czasu highlight (±5s). Jeśli żadna ścieżka nie pasuje — rozszerz bibliotekę lub zmień threshold w Gallery.
 
+### Weryfikacja Content ID (ACRCloud)
+
+Przed użyciem muzyki na YouTube warto sprawdzić czy utwór nie jest zarejestrowany w Content ID. ACRCloud to serwis audio-fingerprint używany przez wiele platform.
+
+**Ręcznie:** przycisk **⚙** przy ścieżce w zakładce Music → wynik pojawi się jako plakietka `✓ Free` lub `⚠ Claimed`.
+
+**Automatycznie:** gdy ustawione są zmienne `ACRCLOUD_*` w `.env`, pipeline przed każdym renderem (bez ręcznie wybranego utworu) sprawdza kandydatów po kolei i pomija zgłoszone — w logu zobaczysz `ACR check: <nazwa> … ✓ Free → using <nazwa>`.
+
+```
+# .env
+ACRCLOUD_HOST=identify-eu-west-1.acrcloud.com
+ACRCLOUD_ACCESS_KEY=your_key
+ACRCLOUD_ACCESS_SECRET=your_secret
+```
+
+Darmowy plan: 100 rozpoznań/dzień. Rejestracja: [console.acrcloud.com](https://console.acrcloud.com) → projekt **Audio & Video Recognition**.
+
+Before using music on YouTube it's worth checking whether the track is registered in Content ID. ACRCloud is an audio-fingerprint service used by many platforms.
+
+**Manually:** the **⚙** button next to a track in the Music tab → result shown as `✓ Free` or `⚠ Claimed` badge.
+
+**Automatically:** when `ACRCLOUD_*` vars are set in `.env`, the pipeline checks candidates before every render (when no track is manually pinned) and skips claimed ones — the log shows `ACR check: <name> … ✓ Free → using <name>`.
+
+Free plan: 100 recognitions/day. Register at [console.acrcloud.com](https://console.acrcloud.com) → project type **Audio & Video Recognition**.
+
+---
+
 ### Logika doboru utworu
 
 Pipeline mapuje średni score CLIP wszystkich wybranych scen na docelową energię muzyki:
@@ -105,3 +132,21 @@ energy_target = (avg_score - 0.14) × 10   (clamped 0.2–0.9)
 ```
 
 High-scoring footage → energetic music. Final pick chosen randomly from top 5 candidates — ensures variety across renders of the same footage.
+
+---
+
+### Pobieranie z YouTube i plakietka licencji / YouTube download and license badge
+
+Pobieranie przez zakładkę Music → pole **YouTube** → **↓ Download** automatycznie zapisuje metadane źródłowego wideo (licencja, URL, kanał) w pliku `.yt.json` obok MP3. Przy kolejnym przebudowaniu indeksu dane trafiają do `index.json` i widoczne są jako plakietka:
+
+- Zielone **CC** — Creative Commons (film źródłowy miał licencję CC na YouTube)
+- Czerwone **©** — standardowy copyright — wysokie ryzyko Content ID
+
+Plakietka to wskazówka, nie gwarancja: właściciel CC może równolegle zarejestrować utwór w Content ID. Dla pewności użyj weryfikacji ACRCloud.
+
+Downloading via the Music tab → **YouTube** field → **↓ Download** automatically saves source video metadata (license, URL, channel) in a `.yt.json` sidecar alongside the MP3. On the next index rebuild the data is included in `index.json` and shown as a badge:
+
+- Green **CC** — Creative Commons (the source video had a CC license on YouTube)
+- Red **©** — standard copyright — high Content ID risk
+
+The badge is a hint, not a guarantee: a CC owner can simultaneously register the track in Content ID. For certainty use the ACRCloud check.

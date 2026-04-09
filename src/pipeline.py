@@ -165,6 +165,7 @@ async def estimate(params: dict, work_dir: Path) -> dict:
     threshold   = float(params.get("threshold") or _f(cp, "scene_selection", "threshold",        0.148))
     max_scene   = float(params.get("max_scene") or _f(cp, "scene_selection", "max_scene_sec",    10))
     per_file    = float(params.get("per_file")  or _f(cp, "scene_selection", "max_per_file_sec", 45))
+    min_gap     = float(params.get("min_gap_sec") or _f(cp, "scene_selection", "min_gap_sec",    0))
     _raw_cams   = params.get("cameras") or []
     if isinstance(_raw_cams, str):
         _raw_cams = [c.strip() for c in _raw_cams.split(",") if c.strip()]
@@ -201,6 +202,7 @@ async def estimate(params: dict, work_dir: Path) -> dict:
         "EMBEDDINGS_FILE":   str(auto_dir / "scene_embeddings.npz"),
         "DUPLICATES_FILE":   str(auto_dir / "scene_duplicates.json"),
         "DRY_RUN":           "1",
+        **({"MIN_GAP_SEC": str(min_gap)} if min_gap > 0 else {}),
         **({"CAM_OFFSETS": json.dumps(_cam_offsets)} if _cam_offsets else {}),
     }
     proc = await asyncio.create_subprocess_exec(
@@ -415,6 +417,7 @@ async def run(params: dict, work_dir: Path,
     threshold   = float(params.get("threshold")  or _f(cp, "scene_selection", "threshold",        0.148))
     max_scene   = float(params.get("max_scene")  or _f(cp, "scene_selection", "max_scene_sec",    10))
     per_file    = float(params.get("per_file")   or _f(cp, "scene_selection", "max_per_file_sec", 45))
+    min_gap_r   = float(params.get("min_gap_sec") or _f(cp, "scene_selection", "min_gap_sec",     0))
     no_intro    = bool(params.get("no_intro",  False))
     no_music    = bool(params.get("no_music",  False))
     # cameras: ordered list, first = audio cam; falls back to legacy cam_a/cam_b
@@ -563,7 +566,8 @@ async def run(params: dict, work_dir: Path,
         for f in stale_csv + stale_clips + stale_frames + stale_trimmed:
             f.unlink()
         # Scores reference old clip filenames → must be regenerated too
-        for stale_score in [auto_dir / "scene_scores.csv", auto_dir / "scores_prompts.hash",
+        for stale_score in [auto_dir / "scene_scores.csv", auto_dir / "scene_scores_allcam.csv",
+                             auto_dir / "scores_prompts.hash",
                              auto_dir / "duration_cache.json", auto_dir / "validation_ok.txt",
                              auto_dir / "scene_embeddings.npz", auto_dir / "scene_duplicates.json"]:
             stale_score.unlink(missing_ok=True)
@@ -855,6 +859,7 @@ async def run(params: dict, work_dir: Path,
             scores_csv.unlink()
             yield "  Corrupt scores CSV — rescoring..."
     if not scores_csv.exists():
+        _is_dual = bool(cameras and len(cameras) > 1)
         clip_env = {
             **_safe_env,
             "FRAMES_DIR":       str(auto_dir / "frames") + "/",
@@ -862,6 +867,8 @@ async def run(params: dict, work_dir: Path,
             "EMBEDDINGS_FILE":  str(auto_dir / "scene_embeddings.npz"),
             "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
             "AUDIO_CAM":        cam_a,
+            **({"SCORE_ALL_CAMS":    "1",
+                "OUTPUT_CSV_ALLCAM": str(auto_dir / "scene_scores_allcam.csv")} if _is_dual else {}),
             **({"CLIP_BATCH_SIZE":   str(params["batch_size"])}   if params.get("batch_size")   else {}),
             **({"CLIP_NUM_WORKERS":  str(params["clip_workers"])}  if params.get("clip_workers")  else {}),
         }
@@ -984,6 +991,7 @@ async def run(params: dict, work_dir: Path,
         "MANUAL_OVERRIDES":  str(auto_dir / "manual_overrides.json"),
         "EMBEDDINGS_FILE":   str(auto_dir / "scene_embeddings.npz"),
         "DUPLICATES_FILE":   str(auto_dir / "scene_duplicates.json"),
+        **({"MIN_GAP_SEC": str(min_gap_r)} if min_gap_r > 0 else {}),
         **({"CAM_OFFSETS": json.dumps(_cam_offsets_render)} if _cam_offsets_render else {}),
     }
     sel_proc = await asyncio.create_subprocess_exec(

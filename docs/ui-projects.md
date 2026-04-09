@@ -8,6 +8,10 @@ Lewy pasek wyświetla historię zadań z ich statusem (`done` / `running` / `fai
 
 The left sidebar shows job history with status and elapsed time. The **en / pl** switcher changes the interface language without reload. Clicking a project opens it and switches to the Summary tab.
 
+Przycisk **a..z / z..a** sortuje listę projektów alfabetycznie rosnąco lub malejąco według ścieżki katalogu roboczego. Sortowanie leksykograficzne działa poprawnie dla typowej struktury `YYYY/MM-Miejsce/DD` (np. `04.21 < 04.22 < 04.23`). Ustawienie zapisywane jest po stronie serwera.
+
+The **a..z / z..a** button sorts the project list alphabetically ascending or descending by the working directory path. Lexicographic order works correctly for the typical `YYYY/MM-Place/DD` structure (e.g. `04.21 < 04.22 < 04.23`). The preference is saved server-side.
+
 ---
 
 ## Nowy projekt / New project

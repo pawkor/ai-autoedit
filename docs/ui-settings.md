@@ -10,8 +10,6 @@ The **Settings** tab lets you change all pipeline parameters without editing fil
 
 ### Source / Proxy media
 
-![Ustawienia — jedna kamera](img/AI-autoedit-settings-single-cam.png)
-
 Katalog roboczy z plikami MP4 (tylko do odczytu — ustawiony przy tworzeniu projektu). Przycisk 📁 otwiera przeglądarkę plików dla tego katalogu (patrz niżej).
 
 Working directory with MP4 files (read-only — set when the project is created). The 📁 button opens the file browser for that directory (see below).
@@ -23,6 +21,12 @@ Working directory with MP4 files (read-only — set when the project is created)
 Lista podkatalogów kamer. Cam A = źródło audio; pozostałe kamery są wyciszane w mikście. Przycisk **+ Add camera** dodaje kolejny wiersz. Przycisk 📁 przy każdej kamerze otwiera przeglądarkę plików dla tego podkatalogu.
 
 List of camera subdirectories. Cam A = audio source; other cameras are muted in the mix. **+ Add camera** adds a row. The 📁 button next to each camera opens the file browser for that subfolder.
+
+**Przesunięcia zegarowe kamer / Camera clock offsets**
+
+Pole **Clock offset (s)** przy każdej kamerze pozwala skompensować stały dryft zegara — np. kask nagrany 2h za wcześnie (Helmet Ace Pro 2) → wpisz `7200`. Wartości zapisywane są w sekcji `[cam_offsets]` w `config.ini` projektu i stosowane przy synchronizacji multicam.
+
+The **Clock offset (s)** field per camera compensates for a fixed clock drift — e.g. a helmet cam recorded 2h early → enter `7200`. Values are saved in `[cam_offsets]` in the project `config.ini` and applied during multicam sync.
 
 **Proxy media**
 
@@ -102,6 +106,19 @@ POSITIVE/NEGATIVE prompts can also be edited directly, one prompt per line.
 |----------|-----------|--------------------|
 | Batch size | `64` | Klatki przez GPU jednocześnie. Obniż do 32/16 przy błędach OOM. / Frames per GPU batch. Lower to 32/16 if OOM errors occur. |
 | Workers | `4` | Wątki ładowania klatek. / Frame-loading worker threads. |
+
+---
+
+### Shorts
+
+Parametry generowania krótkich filmów (YouTube Shorts / Instagram Reels).
+
+Parameters for short-form video generation (YouTube Shorts / Instagram Reels).
+
+| Parametr | Opis / Description |
+|----------|--------------------|
+| **Text overlays** | Dodaje animowane hashtagi do shorta (flaga `--text` w `make_shorts.py`). / Adds animated hashtags to the short (`--text` flag in `make_shorts.py`). |
+| **Crop X offsets** | Przesunięcie poziome kadru 9:16 per kamera (piksele). Format: `kamera=wartość`, jedna para na linię. Np. `back=-250` przesuwa kadr tylnej kamery o 250 px w lewo. Używane gdy obiekt jest poza środkiem kadru po automatycznym przycinaniu do 9:16. / Horizontal crop offset for 9:16 per camera (pixels). Format: `camera=value`, one pair per line. E.g. `back=-250` shifts the back camera crop 250 px left. Used when the subject is off-center after the automatic 9:16 crop. |
 
 ---
 

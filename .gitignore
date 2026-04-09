@@ -1,5 +1,6 @@
 # Per-event configs (personal prompts/paths)
 config.ini.bak
+webapp/ig_last_upload.json
 
 # Python
 __pycache__/

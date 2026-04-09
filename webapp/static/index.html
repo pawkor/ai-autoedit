@@ -23,7 +23,7 @@
         <button id="sidebar-theme" onclick="toggleTheme()">dark</button>
         <button id="sidebar-lang" onclick="toggleLang()">en</button>
       </div>
-      <button id="sidebar-sort" onclick="toggleSortOrder()" data-i18n="misc.newest">newest</button>
+      <button id="sidebar-sort" onclick="toggleSortOrder()" data-i18n="misc.newest">a..z</button>
     </div>
     <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
   </div>
@@ -107,7 +107,7 @@
           <div class="lfm-item" data-lf="all"   onclick="setLogFilter('all')">All</div>
         </div>
       </div>
-      <button id="btn-clear-log" style="display:none" onclick="document.getElementById('log-panel').innerHTML=''" title="Clear log">✕</button>
+      <button id="btn-clear-log" style="display:none" onclick="if(currentJobId){api.del('/api/jobs/'+currentJobId+'/log').then(()=>{document.getElementById('log-panel').innerHTML=''})}" title="Clear log">✕</button>
     </div>
     <div id="tab-content">
 
@@ -257,13 +257,11 @@
             <span style="font-size:11px;color:var(--muted)">min</span>
             <span id="target-dur-warn" style="font-size:11px;margin-left:6px;display:none" data-tip="Maximum achievable duration with current settings.&#10;Limited by Max per file (sec) × number of source files.&#10;Lower the threshold further or increase Max per file to get more content."></span>
             <button class="btn-sm" style="margin-left:6px;padding:1px 6px;font-size:14px;line-height:1" title="Clear manual overrides and re-run target search" onclick="resetThreshold()">↺</button>
-            <span style="margin-left:8px;color:var(--muted);font-size:11px">Filter:</span>
-            <input class="gf-filter-input" id="filter-score" type="text" placeholder="score" title="Score prefix — Enter to apply (e.g. 0.8 → 0.800–0.899)"
-              onkeydown="if(event.key==='Enter'){onGalleryFilter();this.blur()}"
-              onblur="onGalleryFilter()">
-            <input class="gf-filter-input" id="filter-time" type="text" placeholder="HH:MM" title="Time prefix — Enter to apply (e.g. 09 → 09:xx, 09:2 → 09:2x)"
-              onkeydown="if(event.key==='Enter'){onGalleryFilter();this.blur()}"
-              onblur="onGalleryFilter()">
+            <span style="margin-left:8px;color:var(--muted);font-size:11px" title="Minimum gap between auto-selected scenes on the timeline (seconds). Manual overrides ignore this.">Min gap:</span>
+            <input class="gf-filter-input" id="min-gap-input" type="number" min="0" step="30" placeholder="s" style="width:52px"
+              title="Minimum seconds between selected scenes. 0 = disabled. Manual overrides bypass this."
+              onkeydown="if(event.key==='Enter'){onMinGapChange();this.blur()}"
+              onblur="onMinGapChange()">
           </div>
           <div id="gallery-status" style="margin-top:2px">
             <span id="gallery-stats-text" style="flex:1;min-width:0">—</span>
@@ -351,14 +349,54 @@
       <div id="summary-panel">
         <div class="fsec">
           <h3 data-i18n="sec.render">RENDER</h3>
-          <div style="display:flex;align-items:flex-start;gap:20px">
-            <!-- Left: buttons + progress bars (width = button row width) -->
-            <div style="display:inline-flex;flex-direction:column;gap:0;flex-shrink:0">
-              <div style="display:flex;gap:8px;flex-wrap:nowrap">
-                <button id="btn-render" class="btn-primary" onclick="startRender()" data-i18n="btn.render">▶ Render Highlight</button>
-                <button id="btn-render-short" class="btn-primary" onclick="startRenderShort()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text)" data-i18n="btn.render_short">▶ Render Short</button>
+          <div style="display:flex;align-items:flex-start;gap:0">
+            <!-- Left: Highlight -->
+            <div style="flex:1;min-width:0;padding-right:20px;display:flex;flex-direction:column;gap:0">
+              <button id="btn-render" class="btn-primary" onclick="startRender()" data-i18n="btn.render" style="align-self:flex-start">▶ Render Highlight</button>
+              <div style="margin-top:14px">
+                <div style="font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--muted);margin-bottom:6px" data-i18n="sec.highlight_song">HIGHLIGHT SONG</div>
+                <div id="sum-track" style="font-size:12px;color:var(--muted)" data-i18n="misc.no_pin">No track pinned — will auto-select.</div>
               </div>
-              <div id="render-progress-wrap" style="display:none;margin-top:10px">
+              <div style="margin-top:12px">
+                <div style="font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--muted);margin-bottom:6px" data-i18n="sec.analysis_results">STATS</div>
+                <div style="display:flex;align-items:center;font-size:12px;gap:0">
+                  <span data-i18n="lbl.scenes_count_prefix">Scenes</span>&nbsp;<span id="sum-scene-selected" style="color:var(--accent)">—</span>/<span id="sum-scene-count" style="color:var(--accent)">—</span>
+                  <div style="width:1px;background:var(--border);height:1.1em;margin:0 14px;flex-shrink:0"></div>
+                  <span data-i18n="lbl.est_duration">Est. duration:</span>&nbsp;<span id="sum-duration" style="color:var(--accent)">—</span>
+                </div>
+              </div>
+            </div>
+            <!-- Vertical divider -->
+            <div style="width:1px;background:var(--border);align-self:stretch;flex-shrink:0"></div>
+            <!-- Right: Shorts -->
+            <div style="flex:1;min-width:0;padding-left:20px;display:flex;flex-direction:column;gap:0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <button id="btn-render-short" class="btn-primary" onclick="startRenderShort()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text)" data-i18n="btn.render_short">▶ Render Short</button>
+                <input type="number" id="js-shorts-count" value="1" min="1" max="99"
+                       title="Number of shorts to generate in parallel"
+                       style="width:3.2em;text-align:center;appearance:textfield;-moz-appearance:textfield;padding:4px 6px"
+                       oninput="_updateShortsBtn()"
+                       onkeydown="if(event.key==='Enter'){this.blur();}">
+                <style>#js-shorts-count::-webkit-inner-spin-button,#js-shorts-count::-webkit-outer-spin-button{-webkit-appearance:none}</style>
+              </div>
+              <div id="shorts-multicam-wrap" style="display:none;margin-top:8px;font-size:12px">
+                <label class="chk"><input type="checkbox" id="js-shorts-multicam" onchange="saveSettingsField()"><span> Multicam shorts</span></label>
+              </div>
+              <div style="margin-top:6px;font-size:12px">
+                <label class="chk"><input type="checkbox" id="js-shorts-ncs" onchange="saveSettingsField()"><span> NCS music</span></label>
+              </div>
+              <div style="margin-top:8px;font-size:12px">
+                <label style="color:var(--muted);display:block;margin-bottom:3px">Crop X offsets</label>
+                <input type="text" id="js-shorts-crop-offsets" placeholder="back:-300,helmet:0"
+                       onchange="saveSettingsField()"
+                       style="width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none">
+              </div>
+            </div>
+          </div>
+          <!-- Shared progress row: each bar is half-width, meeting at the vertical divider -->
+          <div style="display:flex;margin-top:14px;gap:0">
+            <div style="flex:1;min-width:0;padding-right:20px">
+              <div id="render-progress-wrap" style="display:none">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
                   <span id="render-status-label" style="color:var(--muted)" data-i18n="misc.rendering">Rendering…</span>
                   <span id="render-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
@@ -368,7 +406,10 @@
                   <div id="render-progress-bar" style="height:8px;background:var(--accent);width:0%;transition:width .4s ease"></div>
                 </div>
               </div>
-              <div id="shorts-progress-wrap" style="display:none;margin-top:10px">
+            </div>
+            <div style="width:1px;flex-shrink:0"></div>
+            <div style="flex:1;min-width:0;padding-left:20px">
+              <div id="shorts-progress-wrap" style="display:none">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
                   <span id="shorts-status-label" style="color:var(--muted)" data-i18n="misc.generating_short">Generating Short…</span>
                   <span id="shorts-pct" style="margin-left:auto;color:var(--muted)"></span>
@@ -378,29 +419,23 @@
                 </div>
               </div>
             </div>
-            <!-- Vertical divider -->
-            <div style="width:1px;background:var(--border);align-self:stretch;flex-shrink:0"></div>
-            <!-- Right: Highlight Song -->
-            <div style="flex:1;min-width:0">
-              <div style="font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--muted);margin-bottom:6px" data-i18n="sec.highlight_song">HIGHLIGHT SONG</div>
-              <div id="sum-track" style="font-size:12px;color:var(--muted)" data-i18n="misc.no_pin">No track pinned — will auto-select.</div>
-            </div>
-          </div>
-        </div>
-        <div class="fsec">
-          <h3 data-i18n="sec.analysis_results">STATS</h3>
-          <div style="display:flex;align-items:center;font-size:12px;gap:0">
-            <span data-i18n="lbl.scenes_count_prefix">Scenes</span>&nbsp;<span id="sum-scene-selected" style="color:var(--accent)">—</span>/<span id="sum-scene-count" style="color:var(--accent)">—</span>
-            <div style="width:1px;background:var(--border);height:1.1em;margin:0 14px;flex-shrink:0"></div>
-            <span data-i18n="lbl.est_duration">Est. duration:</span>&nbsp;<span id="sum-duration" style="color:var(--accent)">—</span>
           </div>
         </div>
       </div>
 
       <!-- Results tab -->
       <div id="results-panel">
-        <div class="rf-files" id="rf-files"></div>
         <div id="video-wrap"><video id="video-player" controls preload="auto"></video></div>
+        <div id="results-cols">
+          <div class="results-col">
+            <div class="results-col-hdr">Highlight</div>
+            <div class="rf-files" id="rf-files-main"></div>
+          </div>
+          <div class="results-col">
+            <div class="results-col-hdr">Shorts</div>
+            <div class="rf-files" id="rf-files-short"></div>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -668,6 +703,30 @@
   </div>
 </div>
 
+<!-- Instagram Reels upload modal -->
+<div id="ig-reel-modal">
+  <div id="ig-reel-box">
+    <div class="modal-header">
+      <span>▲ Upload to Instagram Reels</span>
+      <button class="icon-btn" onclick="igReelModalClose()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ff"><label>File</label><div id="ig-file-name" style="font-size:11px;color:var(--muted)"></div></div>
+      <div class="ff">
+        <label>Caption</label>
+        <textarea id="ig-caption" rows="4" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box"></textarea>
+      </div>
+      <div id="ig-token-warn" style="display:none;font-size:11px;color:var(--orange,#f5a623);margin-top:4px"></div>
+      <div id="ig-cooldown-warn" style="display:none;font-size:11px;color:var(--red);margin-top:4px"></div>
+      <div id="ig-status" style="font-size:11px;min-height:16px;color:var(--muted);margin-top:4px"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-sm" onclick="igReelModalClose()">Cancel</button>
+      <button type="button" class="btn-primary" id="btn-ig-upload" onclick="igReelUpload()">▲ Upload</button>
+    </div>
+  </div>
+</div>
+
 <!-- Login modal -->
 <div id="login-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:3000;align-items:center;justify-content:center">
   <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px 28px;min-width:300px;max-width:360px;width:90%">
@@ -711,12 +770,23 @@
   </div>
 </div>
 
-<!-- Refactored Scripts -->
+<!-- Scripts -->
 <script src="/js/app.js" defer></script>
-<script src="/js/gallery.js" defer></script>
-<script src="/js/jobs.js" defer></script>
-<script src="/js/services.js" defer></script>
 <script src="/js/ui.js" defer></script>
+<script src="/js/jobs.js" defer></script>
 <script src="/js/mobile.js" defer></script>
+<!-- Gallery module -->
+<script src="/js/gallery/select.js" defer></script>
+<script src="/js/gallery/music.js" defer></script>
+<script src="/js/gallery/jobs.js" defer></script>
+<script src="/js/gallery/results.js" defer></script>
+<!-- Services module -->
+<script src="/js/services/s3.js" defer></script>
+<script src="/js/services/ytdl.js" defer></script>
+<script src="/js/services/files.js" defer></script>
+<script src="/js/services/forms.js" defer></script>
+<script src="/js/services/youtube.js" defer></script>
+<script src="/js/services/instagram.js" defer></script>
+<script src="/js/services/auth.js" defer></script>
 </body>
 </html>
