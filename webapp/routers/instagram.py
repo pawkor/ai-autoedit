@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Body
 from webapp.state import (
     WEBAPP_DIR,
     BROWSE_ROOT,
+    in_browse_root,
 )
 
 router = APIRouter()
@@ -213,7 +214,7 @@ async def ig_upload_start(data: dict = Body(...)):
     p = Path(file_path).resolve()
     if not p.exists():
         raise HTTPException(400, "File not found")
-    if not str(p).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(p):
         raise HTTPException(403)
 
     upload_id = str(uuid.uuid4())[:8]

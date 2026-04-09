@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 from webapp.state import (
     WEBAPP_DIR,
     BROWSE_ROOT,
+    in_browse_root,
     jobs,
 )
 
@@ -127,11 +128,11 @@ async def yt_upload(payload: dict):
     creds = _yt_creds()
     if not creds:
         raise HTTPException(401, "Not authenticated")
-    file_path = Path(payload["file_path"])
+    file_path = Path(payload["file_path"]).resolve()
+    if not in_browse_root(file_path):
+        raise HTTPException(403, "Access denied")
     if not file_path.exists():
         raise HTTPException(404, "File not found")
-    if not str(file_path).startswith(str(BROWSE_ROOT)):
-        raise HTTPException(403, "Access denied")
 
     upload_id = str(uuid.uuid4())[:8]
     _yt_uploads[upload_id] = {"status": "uploading", "pct": 0, "url": None, "error": None}

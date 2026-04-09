@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from webapp.state import (
     SCRIPT_DIR,
     BROWSE_ROOT,
+    in_browse_root,
     _rebuild_tasks,
 )
 
@@ -36,7 +37,7 @@ async def music_rebuild(payload: dict):
     if not music_dir:
         raise HTTPException(400, "dir required")
     d = Path(music_dir).expanduser().resolve()
-    if not str(d).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(d):
         raise HTTPException(403, "Outside allowed root")
     if not d.is_dir():
         raise HTTPException(404, "Directory not found")
@@ -81,7 +82,7 @@ async def music_rebuild_status(task_id: str):
 @router.get("/api/music-files")
 async def music_files_endpoint(dir: str = Query(...)):
     d = Path(dir).expanduser().resolve()
-    if not str(d).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(d):
         raise HTTPException(403, "Outside allowed root")
     idx = d / "index.json"
     if idx.exists():
@@ -97,7 +98,7 @@ async def music_files_endpoint(dir: str = Query(...)):
 @router.delete("/api/music-file")
 async def delete_music_file(path: str = Query(...)):
     p = Path(path).resolve()
-    if not str(p).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(p):
         raise HTTPException(403)
     if not p.exists():
         raise HTTPException(404)
@@ -211,7 +212,7 @@ async def acr_check(data: dict = Body(...)):
     if not (_ACR_HOST and _ACR_KEY and _ACR_SECRET):
         raise HTTPException(400, "ACRCloud credentials not configured")
     path = Path(data.get("path", "")).resolve()
-    if not str(path).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(path):
         raise HTTPException(403, "Outside allowed root")
     if not path.exists():
         raise HTTPException(404, "File not found")
@@ -302,7 +303,7 @@ async def music_save_downloaded(data: dict = Body(...)):
         raise HTTPException(400, "Source must be a temp file")
     if not src.is_file():
         raise HTTPException(404, "Temp file not found")
-    if not str(dst_dir).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(dst_dir):
         raise HTTPException(403, "music_dir outside allowed root")
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / src.name

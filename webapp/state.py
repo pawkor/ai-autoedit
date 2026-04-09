@@ -52,6 +52,20 @@ BROWSE_ROOT = Path(os.environ.get("BROWSE_ROOT", str(Path.home())))
 
 JOBS_DIR.mkdir(exist_ok=True)
 
+_BROWSE_ROOT_RESOLVED: Path | None = None
+
+
+def in_browse_root(p: Path) -> bool:
+    """Return True iff resolved path p is inside BROWSE_ROOT (safe path check)."""
+    global _BROWSE_ROOT_RESOLVED
+    if _BROWSE_ROOT_RESOLVED is None:
+        _BROWSE_ROOT_RESOLVED = BROWSE_ROOT.resolve()
+    try:
+        p.resolve().relative_to(_BROWSE_ROOT_RESOLVED)
+        return True
+    except ValueError:
+        return False
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 ENABLE_AUTH  = os.environ.get("ENABLE_AUTH", "false").lower() in ("1", "true", "yes")

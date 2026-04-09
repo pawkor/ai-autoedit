@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse, Response
 
 from webapp.state import (
     BROWSE_ROOT,
+    in_browse_root,
     DATA_ROOT,
 )
 
@@ -25,7 +26,7 @@ _UPLOAD_EXTS = _VIDEO_EXTS | {'.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'}
 @router.get("/api/file")
 async def serve_file(request: Request, path: str = Query(...), dl: int = Query(0)):
     p = Path(path).resolve()
-    if not str(p).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(p):
         raise HTTPException(403)
     if not p.exists():
         raise HTTPException(404)
@@ -99,7 +100,7 @@ async def serve_thumb(request: Request, path: str = Query(...), w: int = Query(3
     from PIL import Image
 
     p = Path(path).resolve()
-    if not str(p).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(p):
         raise HTTPException(403)
     if not p.exists():
         raise HTTPException(404)
@@ -136,7 +137,7 @@ async def serve_thumb(request: Request, path: str = Query(...), w: int = Query(3
 @router.get("/api/files")
 async def list_files(path: str = Query(...)):
     d = Path(path).resolve()
-    if not str(d).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(d):
         raise HTTPException(403)
     if not d.is_dir():
         raise HTTPException(400)
@@ -150,7 +151,7 @@ async def list_files(path: str = Query(...)):
 @router.delete("/api/file")
 async def delete_file_endpoint(path: str = Query(...)):
     f = Path(path).resolve()
-    if not str(f).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(f):
         raise HTTPException(403)
     if not f.is_file():
         raise HTTPException(404)
@@ -161,7 +162,7 @@ async def delete_file_endpoint(path: str = Query(...)):
 @router.get("/api/browse")
 async def browse(path: str = Query(default=None)):
     root = Path(path).resolve() if path else (DATA_ROOT or BROWSE_ROOT)
-    if not str(root).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(root):
         raise HTTPException(403, "Outside allowed root")
     try:
         entries = sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name))
@@ -188,7 +189,7 @@ async def browse(path: str = Query(default=None)):
 async def list_subdirs(dir: str = Query(...)):
     """List immediate subdirectories of a path."""
     p = Path(dir).resolve()
-    if not str(p).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(p):
         raise HTTPException(403)
     if not p.is_dir():
         raise HTTPException(404)
@@ -205,7 +206,7 @@ async def mkdir(data: dict):
     name = (data.get("name") or "").strip()
     if not name or "/" in name or "\\" in name or name in (".", ".."):
         raise HTTPException(400, "Invalid folder name")
-    if not str(parent).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(parent):
         raise HTTPException(403)
     new_dir = parent / name
     new_dir.mkdir(exist_ok=True)
@@ -215,7 +216,7 @@ async def mkdir(data: dict):
 @router.post("/api/upload")
 async def upload_file(file: UploadFile, work_dir: str = Form(...)):
     dest_dir = Path(work_dir).resolve()
-    if not str(dest_dir).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(dest_dir):
         raise HTTPException(403)
     if not dest_dir.is_dir():
         raise HTTPException(400, "Directory not found")
@@ -237,7 +238,7 @@ async def upload_file(file: UploadFile, work_dir: str = Form(...)):
 async def count_sources(dir: str = Query(...), cameras: str = Query(default="")):
     """Count source MP4 files in camera subdirectories."""
     work_dir = Path(dir).resolve()
-    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(work_dir):
         raise HTTPException(403)
     if not work_dir.is_dir():
         raise HTTPException(404)

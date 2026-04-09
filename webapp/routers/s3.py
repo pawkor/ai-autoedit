@@ -12,6 +12,7 @@ from webapp.state import (
     S3_CLIENT,
     S3_BUCKET,
     BROWSE_ROOT,
+    in_browse_root,
 )
 
 router = APIRouter()
@@ -60,7 +61,7 @@ async def s3_upload_sse(local_path: str = Query(...), key: str = Query(...)):
         return StreamingResponse(_err(), media_type="text/event-stream")
 
     local = Path(local_path).resolve()
-    if not str(local).startswith(str(BROWSE_ROOT)) or not local.is_file():
+    if not in_browse_root(local) or not local.is_file():
         async def _err():
             yield 'data: {"error":"File not found or access denied"}\n\n'
         return StreamingResponse(_err(), media_type="text/event-stream")
@@ -115,7 +116,7 @@ async def s3_download_sse(key: str = Query(...), local_path: str = Query(...)):
             return
 
         dest = Path(local_path).resolve()
-        if not str(dest).startswith(str(BROWSE_ROOT)):
+        if not in_browse_root(dest):
             yield f"data: {json.dumps({'error': 'Access denied'})}\n\n"
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +157,7 @@ async def s3_source_status(work_dir: str = Query(...)):
     if not S3_CLIENT:
         raise HTTPException(503, "S3 not configured")
     wd = Path(work_dir).resolve()
-    if not str(wd).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(wd):
         raise HTTPException(403)
     prefix = _s3_prefix(wd)
     try:
@@ -194,7 +195,7 @@ async def s3_fetch_sources(work_dir: str = Query(...), keys: str = Query(default
         return StreamingResponse(_err(), media_type="text/event-stream")
 
     wd = Path(work_dir).resolve()
-    if not str(wd).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(wd):
         async def _err():
             yield 'data: {"error":"Access denied"}\n\n'
         return StreamingResponse(_err(), media_type="text/event-stream")
@@ -247,7 +248,7 @@ async def s3_fetch_sources(work_dir: str = Query(...), keys: str = Query(default
         fetched = 0
         for idx, (key, size) in enumerate(missing):
             dest = (wd / key[len(prefix):]).resolve()
-            if not str(dest).startswith(str(BROWSE_ROOT)):
+            if not in_browse_root(dest):
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             name = key.split("/")[-1]
@@ -290,7 +291,7 @@ async def s3_fetch_sources(work_dir: str = Query(...), keys: str = Query(default
 async def purge_local(data: dict = Body(...)):
     """Delete local source video files and autocut scenes to free disk space."""
     wd = Path(data.get("work_dir", "")).resolve()
-    if not str(wd).startswith(str(BROWSE_ROOT)) or not wd.is_dir():
+    if not in_browse_root(wd) or not wd.is_dir():
         raise HTTPException(400, "invalid work_dir")
     removed = 0
     for sub in wd.iterdir():

@@ -15,6 +15,7 @@ from webapp.state import (
     SCRIPT_DIR,
     STATIC_DIR,
     BROWSE_ROOT,
+    in_browse_root,
     DATA_ROOT,
     wcfg,
     save_wcfg,
@@ -52,7 +53,7 @@ async def set_data_root(data: dict):
     path = data.get("path", "").strip()
     if not path or not Path(path).is_dir():
         raise HTTPException(400, "Invalid directory")
-    if not str(Path(path).resolve()).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(Path(path).resolve()):
         raise HTTPException(403, "Outside allowed root")
     save_wcfg({"data_root": path})
     _st.DATA_ROOT = Path(path)
@@ -139,7 +140,7 @@ async def save_prompts(data: dict):
 async def get_job_config(dir: str):
     from webapp.routers.jobs import read_job_config
     work_dir = Path(dir).resolve()
-    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(work_dir):
         raise HTTPException(403)
     result = read_job_config(work_dir)
     result["_resolved"] = str(work_dir)
@@ -152,7 +153,7 @@ async def get_job_config(dir: str):
 async def put_job_config(data: dict):
     from webapp.routers.jobs import save_job_config
     work_dir = Path(data.get("work_dir", "")).resolve()
-    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(work_dir):
         raise HTTPException(403)
     if not work_dir.is_dir():
         raise HTTPException(400, "work_dir not found")

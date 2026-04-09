@@ -23,6 +23,7 @@ from webapp.state import (
     SCRIPT_DIR,
     JOBS_DIR,
     BROWSE_ROOT,
+    in_browse_root,
     jobs,
     job_semaphore,
     shorts_semaphore,
@@ -499,7 +500,7 @@ def _probe_duration(path: Path) -> Optional[float]:
 @router.post("/api/jobs/import")
 async def import_job(data: dict):
     work_dir = Path(data.get("work_dir", "")).resolve()
-    if not str(work_dir).startswith(str(BROWSE_ROOT)):
+    if not in_browse_root(work_dir):
         raise HTTPException(403)
     if not work_dir.is_dir():
         raise HTTPException(400, "work_dir not found")
@@ -865,7 +866,7 @@ async def render_job(job_id: str, params: RenderParams):
     track = params.selected_track
     if track:
         tp = Path(track).resolve()
-        if not str(tp).startswith(str(BROWSE_ROOT)):
+        if not in_browse_root(tp):
             raise HTTPException(403, "Track path outside allowed root")
         if not tp.exists():
             raise HTTPException(400, f"Track not found: {track}")
