@@ -112,16 +112,30 @@ async function loadResults(jobId) {
     (isShort ? shortContainer : mainContainer).appendChild(div);
   }
 
-  // Auto-play first highlight (or first short if no highlight)
-  const firstCard = mainContainer.querySelector('.rf') || shortContainer.querySelector('.rf');
-  if (firstCard) playVideoOrPreview(firstCard);
+  // Auto-play first highlight on desktop only
+  if (window.innerWidth > 768) {
+    const firstCard = mainContainer.querySelector('.rf') || shortContainer.querySelector('.rf');
+    if (firstCard) playVideoOrPreview(firstCard);
+  }
 }
 
 function playVideo(url, card) {
   document.querySelectorAll('.rf').forEach(c=>c.classList.remove('playing'));
   if (card) card.classList.add('playing');
-  const wrap = document.getElementById('video-wrap');
   const video = document.getElementById('video-player');
+  if (window.innerWidth <= 768) {
+    video.src = url;
+    video.load();
+    const tryFS = () => {
+      if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      else if (document.fullscreenEnabled) video.requestFullscreen().catch(()=>{});
+      video.play().catch(()=>{});
+    };
+    if (video.readyState >= 1) tryFS();
+    else video.addEventListener('loadedmetadata', tryFS, { once: true });
+    return;
+  }
+  const wrap = document.getElementById('video-wrap');
   wrap.style.display = 'block';
   video.src = url;
   video.load();

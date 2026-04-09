@@ -81,9 +81,11 @@
   /* ── Summary panel ── */
   #summary-panel { padding: 12px; }
 
-  /* ── Results: full width cards ── */
+  /* ── Results: full width cards, no inline player (tap = fullscreen) ── */
+  #video-wrap { display: none !important; }
   .rf-files { flex-direction: column; }
   .rf { width: 100%; }
+  .rf::after { content: '▶'; position: absolute; top: 8px; right: 32px; font-size: 16px; color: rgba(255,255,255,.45); pointer-events: none; }
 
   /* ── Music tab: hide BPM/energy columns ── */
   .mt-bpm, .mt-energy,

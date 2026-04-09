@@ -48,9 +48,10 @@ function sortMusic(key) {
 
 function _sortedTracks(tracks) {
   const targetFromInput = _parseTargetInput(document.getElementById('gallery-target-min')?.value);
-  const targetDur = analyzeResult?._live_est_dur
+  // Prefer explicit user target over clips-only estimate (clips don't include intro/outro)
+  const targetDur = (targetFromInput > 0 ? targetFromInput : null)
+    ?? analyzeResult?._live_est_dur
     ?? (analyzeResult?.estimated_duration_sec > 0 ? analyzeResult.estimated_duration_sec : null)
-    ?? (targetFromInput > 0 ? targetFromInput : null)
     ?? 0;
   if (!_musicSort.key) {
     if (!targetDur) return tracks;

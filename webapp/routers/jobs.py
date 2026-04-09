@@ -785,6 +785,7 @@ async def get_analyze_result(job_id: str):
     _actual_thr = None
     _actual_scenes = None
     _actual_dur = None
+    _final_dur = None
     for line in job.log:
         m = re.search(r'Threshold:\s*([\d.]+)', line)
         if m:
@@ -796,9 +797,15 @@ async def get_analyze_result(job_id: str):
         m = re.search(r'Total:.*\(([\d.]+)s\)', line) or re.search(r'Total:\s*([\d.]+)s', line)
         if m:
             _actual_dur = float(m.group(1))
+        m = re.search(r'Final:.*\(([\d.]+)s\)', line)
+        if m:
+            _final_dur = float(m.group(1))
     if _actual_scenes is not None:
         result["actual_selected_scenes"] = _actual_scenes
-    if _actual_dur is not None:
+    # Prefer final (post-intro/outro) duration over raw clips total
+    if _final_dur is not None:
+        result["actual_duration_sec"] = _final_dur
+    elif _actual_dur is not None:
         result["actual_duration_sec"] = _actual_dur
     if _actual_thr is not None:
         result["actual_threshold"] = _actual_thr

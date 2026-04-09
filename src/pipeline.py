@@ -1176,6 +1176,7 @@ async def run(params: dict, work_dir: Path,
         concat_list.unlink(missing_ok=True)
 
         final_dur = await _probe_duration(final, ffprobe) or 0
+        yield f"  Final: {int(final_dur//60)}:{int(final_dur%60):02d} ({final_dur:.1f}s)"
 
     # ── Music mix ─────────────────────────────────────────────────────────────
     if not no_music and (music_dir.is_dir() or selected_track):
