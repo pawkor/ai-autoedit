@@ -281,7 +281,6 @@
           <div id="music-analyze-info" style="display:none;font-size:11px;color:var(--muted);padding:2px 0;align-items:center;gap:12px">
             <span>Est. highlight: <strong id="music-est-duration">—</strong></span>
             <span id="music-est-scenes-wrap">(<span id="music-est-scenes">—</span> scenes)</span>
-            <button id="btn-music-to-summary" class="btn-sm" style="margin-left:auto" data-i18n="btn.to_summary" onclick="switchTab('summary')">→ Summary</button>
           </div>
           <div id="music-dir-row">
             <label data-i18n="lbl.music_dir_header">Music dir</label>
@@ -330,11 +329,13 @@
           <div id="music-list-header">
             <span class="mh-cb"></span>
             <span class="mh-play"></span>
+            <span class="mh-del-acr"></span>
             <span class="mh-title" onclick="sortMusic('title')" data-sort="title" data-label="Title / Artist">Title / Artist</span>
             <span class="mh-genre" onclick="sortMusic('genre')" data-sort="genre" data-label="Genre">Genre</span>
             <span class="mh-dur"   onclick="sortMusic('dur')"   data-sort="dur"   data-label="Dur">Dur</span>
             <span class="mh-bpm"   onclick="sortMusic('bpm')"   data-sort="bpm"   data-label="BPM">BPM</span>
             <span class="mh-energy" onclick="sortMusic('energy')" data-sort="energy" data-label="Nrg">Nrg</span>
+            <span class="mh-copyright">Copyright</span>
             <span id="btn-music-sort-reset" onclick="resetMusicSort()" title="Reset — sort by estimated duration" style="display:none;color:var(--accent);cursor:pointer;font-size:10px;flex-shrink:0">↺ est.</span>
           </div>
           <div id="music-list"></div>

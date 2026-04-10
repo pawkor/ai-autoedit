@@ -315,6 +315,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #music-list-header .mh-dur  { flex-shrink:0; min-width:36px; text-align:right; }
 #music-list-header .mh-bpm { flex-shrink:0; min-width:48px; text-align:right; }
 #music-list-header .mh-energy { width:36px; flex-shrink:0; text-align:right; }
+#music-list-header .mh-del-acr { width:37px; flex-shrink:0; }
+#music-list-header .mh-copyright { width:80px; flex-shrink:0; }
 .mt { display:flex; align-items:center; gap:9px; padding:7px 14px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
 .mt:hover { background:var(--bg3); }
 .mt input[type=checkbox] { accent-color:var(--accent); cursor:pointer; flex-shrink:0; width:13px; height:13px; }
@@ -326,8 +328,8 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .mt-acr { background:none; border:none; color:var(--muted); cursor:pointer; font-size:11px; padding:0; width:14px; flex-shrink:0; line-height:1; text-align:center; opacity:0; transition:opacity .15s; }
 .mt:hover .mt-acr { opacity:1; }
 .mt-acr:hover { color:var(--accent); }
-.mt-acr-badge { font-size:9px; font-weight:600; padding:0 4px; border-radius:3px; flex-shrink:0; white-space:nowrap; line-height:16px; }
-.mt-acr-badge:empty { display:none; }
+.mt-acr-badge { font-size:9px; font-weight:600; padding:0 4px; border-radius:3px; flex-shrink:0; white-space:nowrap; line-height:16px; min-width:56px; text-align:center; }
+.mt-acr-badge:empty { visibility:hidden; }
 .acr-ok      { background:#16a34a22; color:#16a34a; border:1px solid #16a34a55; }
 .acr-blocked { background:#dc262622; color:#dc2626; border:1px solid #dc262655; }
 .mt-playing .mt-play { color:var(--accent); }

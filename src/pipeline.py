@@ -1194,7 +1194,16 @@ async def run(params: dict, work_dir: Path,
         yield "Adding intro/outro..."
 
         df_scores = pd.read_csv(scores_csv)
-        best_frame = auto_dir / "frames" / f"{df_scores.iloc[0]['scene']}.jpg"
+        _best_scene = df_scores.iloc[0]['scene']
+        _frames_dir = auto_dir / "frames"
+        best_frame = next(
+            (p for p in [
+                _frames_dir / f"{_best_scene}_f1.jpg",
+                _frames_dir / f"{_best_scene}_f0.jpg",
+                _frames_dir / f"{_best_scene}.jpg",
+            ] if p.exists()),
+            _frames_dir / f"{_best_scene}_f1.jpg"  # fallback (ffmpeg will error clearly)
+        )
 
         # Get video dimensions
         dim_proc = await asyncio.create_subprocess_exec(

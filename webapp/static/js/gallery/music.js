@@ -29,7 +29,11 @@ async function loadMusicTracks() {
 }
 
 function _trackVisible(t, filter, genre) {
-  if (filter && !`${t.title} ${t.artist || ''}`.toLowerCase().includes(filter)) return false;
+  if (filter) {
+    const text   = `${t.title} ${t.artist || ''}`.toLowerCase();
+    const durStr = t.duration ? fmtDur(t.duration) : '';
+    if (!text.includes(filter) && !durStr.startsWith(filter)) return false;
+  }
   if (genre && (t.genre || '').toLowerCase() !== genre) return false;
   return true;
 }
@@ -279,12 +283,12 @@ function renderMusicList() {
     row.appendChild(playBtn);
     row.appendChild(delBtn);
     row.appendChild(acrBtn);
-    row.appendChild(acrBadge);
     row.appendChild(titleWrap);
     row.appendChild(meta);
     row.appendChild(durSpan);
     row.appendChild(bpm);
     row.appendChild(energyWrap);
+    row.appendChild(acrBadge);
     row.onclick = e => {
       if ([cb, playBtn, seek, delBtn, acrBtn, acrBadge].includes(e.target)) return;
       cb.checked = !cb.checked; cb.dispatchEvent(new Event('change'));
@@ -307,7 +311,7 @@ function updateMusicCount(shown) {
 
 async function rebuildMusicIndex() {
   const dir = document.getElementById('music-dir-input').value.trim();
-  if (!dir) return;
+  if (!dir) { alert('Set Music dir first'); return; }
   const btn  = document.getElementById('btn-music-rebuild');
   const wrap = document.getElementById('music-rebuild-progress');
   const bar  = document.getElementById('music-rebuild-bar');
