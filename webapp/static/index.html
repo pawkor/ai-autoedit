@@ -164,13 +164,10 @@
               <button class="btn-sm" style="margin-left:auto;color:var(--red);border-color:var(--red)" onclick="s3PurgeLocal()">✕ Purge local</button>
             </div>
           </div>
-          <!-- SCENE DETECTION -->
-          <div class="fsec" style="margin-bottom:0;padding-right:16px;border-top:1px solid var(--border);padding-top:16px">
-            <h3 data-i18n="sec.scene_detect">Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(requires Analyze)</span></h3>
-            <div class="frow">
-              <div class="ff"><label data-i18n-tip="sd_threshold" data-i18n="lbl.sd_threshold">Detect threshold</label><input type="number" id="js-sd-threshold" placeholder="20" min="5" max="100" step="1" onchange="saveSettingsField()"></div>
-              <div class="ff"><label data-i18n-tip="sd_min_scene" data-i18n="lbl.sd_min_scene">Min scene len</label><input type="number" id="js-sd-min-scene" placeholder="10" min="1" max="120" step="1" style="width:60px" onchange="saveSettingsField()"></div>
-            </div>
+          <!-- SCENE DETECTION — collapsed into Advanced -->
+          <div class="fsec" style="margin-bottom:0;padding-right:16px;border-top:1px solid var(--border);padding-top:16px;display:flex;align-items:center;justify-content:space-between">
+            <h3 data-i18n="sec.scene_detect" style="margin:0">Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(auto-calibrated)</span></h3>
+            <button class="btn-sm" onclick="openAdvancedDetect()" style="white-space:nowrap">⚙ Advanced</button>
           </div>
           <!-- SCENE SELECTION -->
           <div class="fsec" style="margin-bottom:0;border-left:1px solid var(--border);border-top:1px solid var(--border);padding-left:16px;padding-top:16px">
@@ -803,5 +800,30 @@
 <script src="/js/services/youtube.js" defer></script>
 <script src="/js/services/instagram.js" defer></script>
 <script src="/js/services/auth.js" defer></script>
+
+<!-- Advanced detect modal -->
+<div id="advanced-detect-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1100;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:20px;min-width:320px;max-width:420px;width:90%">
+    <div class="modal-header" style="margin-bottom:16px">
+      <span style="font-weight:600;font-size:13px;letter-spacing:.05em">SCENE DETECTION — ADVANCED</span>
+      <button class="icon-btn" onclick="closeAdvancedDetect()">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="ff">
+        <label data-i18n-tip="sd_threshold" data-i18n="lbl.sd_threshold" style="font-size:12px">Detect threshold</label>
+        <input type="number" id="js-sd-threshold" placeholder="24" min="5" max="100" step="1" onchange="saveSettingsField();_syncAdvancedHint()" style="width:70px">
+        <span style="font-size:11px;color:var(--muted);margin-top:4px">Auto-calibrated before each detection run. Override only if calibration picks a wrong sample file.</span>
+      </div>
+      <div class="ff">
+        <label data-i18n-tip="sd_min_scene" data-i18n="lbl.sd_min_scene" style="font-size:12px">Min scene len (s)</label>
+        <input type="number" id="js-sd-min-scene" placeholder="10" min="1" max="120" step="1" style="width:70px" onchange="saveSettingsField()">
+        <span style="font-size:11px;color:var(--muted);margin-top:4px">Minimum scene duration in seconds. 10s works for all motorcycle footage.</span>
+      </div>
+    </div>
+    <div style="margin-top:18px;display:flex;justify-content:flex-end">
+      <button class="btn-sm" onclick="closeAdvancedDetect()">Close</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

@@ -287,7 +287,7 @@ function renderGallery() {
     card.querySelector('.fc-name').textContent = sceneLabel;
     // Hover → video clip preview
     if (f.frame_url) {
-      const clipPath = f.frame_url.replace('_autoframe/frames/', '_autoframe/autocut/').replace(/\.jpg$/, '.mp4');
+      const clipPath = f.frame_url.replace('_autoframe/frames/', '_autoframe/autocut/').replace(/_f\d+\.jpg$/, '.mp4').replace(/\.jpg$/, '.mp4');
       card.addEventListener('mouseenter', e2 => _showFilePreview(clipPath, e2, 500));
       card.addEventListener('mouseleave', _hideFilePreview);
       card.addEventListener('mousemove',  _moveFileTip);

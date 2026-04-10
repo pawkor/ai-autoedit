@@ -501,10 +501,12 @@ async def run(params: dict, work_dir: Path,
         vid_codec   = "h264_nvenc"
         vid_quality = ["-rc", "vbr", "-cq", nvenc_cq, "-b:v", "0", "-preset", nvenc_preset]
         hwaccel     = ["-hwaccel", "cuda"]
+        yield f"[DBG] encoder: h264_nvenc  hwaccel: cuda  cq: {nvenc_cq}  preset: {nvenc_preset}"
     else:
         vid_codec   = "libx264"
         vid_quality = ["-crf", x264_crf, "-preset", x264_preset]
         hwaccel     = []
+        yield f"[DBG] encoder: libx264  hwaccel: none  crf: {x264_crf}  preset: {x264_preset}"
 
     # ── Header ────────────────────────────────────────────────────────────────
     title_line1 = title.split("\n")[0]
@@ -597,6 +599,50 @@ async def run(params: dict, work_dir: Path,
             to_detect.append(sf)
 
     if to_detect:
+        # ── Auto-calibrate detect threshold on one representative file ────────
+        _sample = max(to_detect, key=lambda f: f.stat().st_size)
+        yield f"  Calibrating threshold on {_sample.name}..."
+        _cal_threshold = int(float(sd_threshold))
+        import tempfile as _tempfile, csv as _csv_cal
+        for _attempt in range(3):
+            _proxy_s   = _proxy_path(_sample, work_dir, auto_dir, cameras)
+            _detect_s  = str(_proxy_s) if _proxy_s.exists() else str(_sample)
+            with _tempfile.TemporaryDirectory() as _tmpdir:
+                _cp = await asyncio.create_subprocess_exec(
+                    "scenedetect", "-i", _detect_s,
+                    "detect-content", "--threshold", str(_cal_threshold),
+                    "--min-scene-len", sd_min_scene,
+                    "list-scenes", "-o", _tmpdir,
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                )
+                await _cp.wait()
+                _cal_csvs = list(Path(_tmpdir).glob("*-Scenes.csv"))
+                _cal_durs = []
+                if _cal_csvs:
+                    with open(_cal_csvs[0]) as _fh:
+                        _lines = _fh.readlines()
+                    for _row in _csv_cal.DictReader(_lines[1:]):
+                        try:
+                            _cal_durs.append(float(_row["Length (seconds)"]))
+                        except (KeyError, ValueError):
+                            pass
+            if not _cal_durs:
+                break
+            _micro_pct = sum(1 for d in _cal_durs if d < 5) / len(_cal_durs) * 100
+            if _micro_pct > 20:
+                _new = min(_cal_threshold + 8, 60)
+                yield f"  {_micro_pct:.0f}% micro-scenes → threshold {_cal_threshold} → {_new}"
+                _cal_threshold = _new
+            else:
+                break
+        _cal_str = str(_cal_threshold)
+        if _cal_str != sd_threshold:
+            yield f"  ✓ Calibrated: {sd_threshold} → {_cal_str}  (median={sorted(_cal_durs)[len(_cal_durs)//2]:.1f}s)"
+            sd_threshold = _cal_str
+            _detect_params_sig = f"{sd_threshold}|{sd_min_scene}"
+        else:
+            yield f"  ✓ Threshold {sd_threshold} OK  (median={sorted(_cal_durs)[len(_cal_durs)//2]:.1f}s, {len(_cal_durs)} scenes)"
+
         workers = min(len(to_detect), int(params.get("max_detect_workers") or os.cpu_count() or 4))
         yield f"  Running {len(to_detect)} files in parallel (workers={workers})..."
         sem = asyncio.Semaphore(workers)
@@ -642,33 +688,81 @@ async def run(params: dict, work_dir: Path,
 
     _detect_params_file.write_text(_detect_params_sig)
 
-    # ── [3/6] Split scenes ───────────────────────────────────────────────────
+    # ── Scene detection stats + threshold hint ────────────────────────────────
+    _all_csv = list((auto_dir / "csv").glob("*-Scenes.csv"))
+    if _all_csv:
+        import csv as _csv_stats
+        _durations = []
+        for _csv_path in _all_csv:
+            try:
+                with open(_csv_path) as _fh:
+                    _lines = _fh.readlines()
+                # First line is "Timecode List:,..."; real headers are on line 2
+                for _row in _csv_stats.DictReader(_lines[1:]):
+                    try:
+                        _durations.append(float(_row["Length (seconds)"]))
+                    except (KeyError, ValueError):
+                        pass
+            except Exception:
+                pass
+        if _durations:
+            _durations.sort()
+            _n = len(_durations)
+            _median = _durations[_n // 2]
+            _micro = sum(1 for d in _durations if d < 5)
+            _micro_pct = round(_micro / _n * 100)
+            yield f"  Scene stats: {_n} total  median={_median:.1f}s  min={_durations[0]:.1f}s  max={_durations[-1]:.1f}s"
+            if _micro_pct > 20:
+                _suggested = min(int(sd_threshold) + 8, 60)
+                yield f"  ⚠ {_micro_pct}% scenes < 5s (vibration noise) — try raising Detect threshold to ~{_suggested}"
+            elif _n < 50 and len(source_files) > 1:
+                _suggested = max(int(sd_threshold) - 8, 5)
+                yield f"  ⚠ Very few scenes ({_n}) — try lowering Detect threshold to ~{_suggested}"
+            else:
+                yield f"  ✓ Scene distribution looks healthy"
+
+    # ── [3/6] Split scenes (parallel) ────────────────────────────────────────
     yield ""
     total_split = len(source_files)
-    yield f"[3/6] Splitting scenes... (0/{total_split})"
+    split_workers = min(total_split, int(params.get("max_detect_workers") or os.cpu_count() or 8))
+    yield f"[3/6] Splitting scenes... (workers={split_workers})"
 
-    for split_i, sf in enumerate(source_files, 1):
-        csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
-        if not csv.exists():
-            yield f"  [{split_i}/{total_split}] ✗ {sf.name}: no CSV, skipping"
-            continue
-        expected = _count_csv_scenes(csv)
+    split_sem       = asyncio.Semaphore(split_workers)
+    split_queue: asyncio.Queue = asyncio.Queue()
+    split_finished  = 0
+
+    async def _split_one(sf: Path):
+        nonlocal split_finished
+        csv_f    = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
+        expected = _count_csv_scenes(csv_f) if csv_f.exists() else 0
         existing = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
+        if not csv_f.exists():
+            split_finished += 1
+            await split_queue.put({"file": sf.name, "done": False, "msg": f"✗ {sf.name}: no CSV, skipping"})
+            return
         if existing >= expected > 0:
-            yield f"  [{split_i}/{total_split}] ✓ {sf.name} ({existing} scenes, cached)"
-            continue
-        yield f"  [{split_i}/{total_split}] {sf.name} — splitting {expected} scenes..."
-        proc = await asyncio.create_subprocess_exec(
-            "scenedetect", "-i", str(sf),
-            "load-scenes", "-i", str(csv),
-            "split-video", "-o", str(auto_dir / "autocut"),
-            "--filename", f"{sf.stem}-scene-$SCENE_NUMBER",
-            "--copy",
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
+            split_finished += 1
+            await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({existing} scenes, cached)"})
+            return
+        async with split_sem:
+            proc = await asyncio.create_subprocess_exec(
+                "scenedetect", "-i", str(sf),
+                "load-scenes", "-i", str(csv_f),
+                "split-video", "-o", str(auto_dir / "autocut"),
+                "--filename", f"{sf.stem}-scene-$SCENE_NUMBER",
+                "--copy",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
         done = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
-        yield f"  [{split_i}/{total_split}] ✓ {sf.name} ({done} scenes)"
+        split_finished += 1
+        await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({done} scenes)"})
+
+    split_tasks = [asyncio.create_task(_split_one(sf)) for sf in source_files]
+    for _ in range(total_split):
+        msg = await split_queue.get()
+        yield f"  [{split_finished}/{total_split}] {msg['msg']}"
+    await asyncio.gather(*split_tasks)
 
     scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
     yield f"  Total: {len(scene_files)} scenes"
@@ -784,33 +878,46 @@ async def run(params: dict, work_dir: Path,
 
     # Remove stale frames from previous runs that no longer have a matching scene clip
     _valid_stems = {sf.stem for sf in scene_files_main}
-    _stale = [p for p in (auto_dir / "frames").glob("*.jpg") if p.stem not in _valid_stems]
+    _stale = [p for p in (auto_dir / "frames").glob("*.jpg")
+              if re.sub(r'_f\d+$', '', p.stem) not in _valid_stems]
     if _stale:
         for p in _stale:
             p.unlink(missing_ok=True)
         yield f"  Removed {len(_stale)} stale frame(s) from previous runs"
 
+    # Upgrade old single-frame format (scene.jpg) to multi-frame (_f0/_f1/_f2)
+    _old_format = [p for p in (auto_dir / "frames").glob("*.jpg")
+                   if not re.search(r'_f\d+$', p.stem)]
+    if _old_format:
+        for p in _old_format:
+            p.unlink(missing_ok=True)
+        yield f"  Upgrading {len(_old_format)} frames → multi-frame format (re-extracting)"
+
     async def _extract_frame(sf: Path) -> None:
-        out_jpg = auto_dir / "frames" / f"{sf.stem}.jpg"
-        if out_jpg.exists() or sf.stat().st_size < 5_000_000:
+        if sf.stat().st_size < 5_000_000:
             return
         dur = await _probe_duration(sf, ffprobe)
         if not dur:
             return
-        proc = await asyncio.create_subprocess_exec(
-            ffmpeg, *hwaccel, "-ss", f"{dur / 2:.3f}", "-i", str(sf),
-            "-vframes", "1", "-vf", "scale=640:-2", "-q:v", "4", "-update", "1",
-            str(out_jpg), "-y", "-loglevel", "quiet",
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
+        for fi, frac in enumerate([0.25, 0.50, 0.75]):
+            out_jpg = auto_dir / "frames" / f"{sf.stem}_f{fi}.jpg"
+            if out_jpg.exists():
+                continue
+            proc = await asyncio.create_subprocess_exec(
+                ffmpeg, *hwaccel, "-ss", f"{dur * frac:.3f}", "-i", str(sf),
+                "-vframes", "1", "-vf", "scale=640:-2,crop=iw:ih*0.65:0:0", "-q:v", "4", "-update", "1",
+                str(out_jpg), "-y", "-loglevel", "quiet",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
 
     batch_size = os.cpu_count() or 4
     for i in range(0, len(scene_files_main), batch_size):
         await asyncio.gather(*[_extract_frame(sf) for sf in scene_files_main[i:i + batch_size]])
 
-    frame_count = len(list((auto_dir / "frames").glob("*.jpg")))
-    yield f"  Frames: {frame_count}"
+    _all_jpg = list((auto_dir / "frames").glob("*.jpg"))
+    frame_count = len({re.sub(r'_f\d+$', '', p.stem) for p in _all_jpg})
+    yield f"  Frames: {frame_count} scenes ({len(_all_jpg)} files)"
     if frame_count == 0:
         raise RuntimeError("No frames extracted. All scenes may be < 5MB or unreadable.")
 
@@ -836,12 +943,12 @@ async def run(params: dict, work_dir: Path,
             # Count only main-cam frames (same filter as clip_score.py)
             _back_srcs = _back_cam_sources(_cam_src_csv, cam_a)
             if _back_srcs:
-                _frame_count = sum(
-                    1 for f in _all_frames
-                    if re.sub(r'-scene-\d+$', '', f.stem) not in _back_srcs
-                )
+                _frame_count = len({
+                    re.sub(r'_f\d+$', '', f.stem) for f in _all_frames
+                    if re.sub(r'-scene-\d+$', '', re.sub(r'_f\d+$', '', f.stem)) not in _back_srcs
+                })
             else:
-                _frame_count = len(_all_frames)
+                _frame_count = len({re.sub(r'_f\d+$', '', f.stem) for f in _all_frames})
             _csv_count   = len(_check_df)
             _saved_hash  = prompts_hash_file.read_text().strip() if prompts_hash_file.exists() else None
             if _nan_count:
@@ -1027,6 +1134,7 @@ async def run(params: dict, work_dir: Path,
                     concat_dur += d
 
     yield f"  Encoding highlight ({concat_dur:.1f}s)..."
+    yield f"[DBG] enc: {vid_codec}  {resolution}@{framerate}fps  audio: {audio_bitrate}  hwaccel: {'cuda' if hwaccel else 'none'}"
 
     enc_cmd = [
         ffmpeg, *hwaccel, "-f", "concat", "-safe", "0",
@@ -1063,8 +1171,10 @@ async def run(params: dict, work_dir: Path,
     yield ""
 
     if not highlight.exists():
-        err = enc_stderr.decode("utf-8", errors="replace")
-        raise RuntimeError(f"Encoding failed: {err[:300]}")
+        err = enc_stderr.decode("utf-8", errors="replace").strip()
+        for ln in err.splitlines():
+            yield f"  [ffmpeg] {ln}"
+        raise RuntimeError(f"Encoding failed: {err[:200] if err else 'no output'}")
 
     hl_dur = await _probe_duration(highlight, ffprobe) or 0.0
 
@@ -1190,6 +1300,7 @@ async def run(params: dict, work_dir: Path,
                 video_to_mix = final or highlight
                 vid_dur      = await _probe_video_duration(video_to_mix, ffprobe) or 0
                 yield f"  Track (pinned): {_st_path.stem}"
+                yield f"[DBG] music: {_st_path}  fade: {music_fade}s  vol: orig={orig_vol} music={music_vol}"
                 output_music = _next_version(work_dir / f"{_output_name(work_dir)}.mp4")
                 fade_start = vid_dur - music_fade
                 await _run([

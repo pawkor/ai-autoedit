@@ -164,7 +164,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .fitem .fdel { background:none; border:none; color:var(--muted); cursor:pointer; padding:0 3px; font-size:13px; flex-shrink:0; line-height:1; }
 .fitem .fdel:hover { color:var(--red); }
 #file-tip { position:fixed; z-index:300; display:none; pointer-events:none; border:1px solid var(--border); border-radius:4px; overflow:hidden; background:#000; box-shadow:0 4px 16px rgba(0,0,0,.6); }
-#file-tip video { display:block; width:480px; height:270px; object-fit:contain; }
+#file-tip video { display:block; width:960px; height:540px; object-fit:contain; }
 
 /* ── Settings modal ── */
 #settings-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; align-items:center; justify-content:center; }
@@ -213,14 +213,17 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #log-split { flex:1; display:flex; overflow:hidden; }
 #log-panel { flex:1; overflow-y:auto; padding:10px 14px; font-size:12px; line-height:1.6; }
 .log-line { white-space:pre-wrap; word-break:break-all; }
-.log-step { color:var(--accent); font-weight:bold; }
-.log-ok   { color:var(--green); }
-.log-err  { color:var(--red); }
+.log-step  { color:var(--accent); font-weight:bold; }
+.log-ok    { color:var(--green); }
+.log-err   { color:var(--red); }
+.log-debug { color:var(--muted); font-size:11px; }
 /* Steps: only step headers + errors */
 #log-panel.lf-steps .log-ok,
 #log-panel.lf-steps .log-info,
+#log-panel.lf-steps .log-debug,
 #log-panel.lf-steps .log-progress { display:none; }
-/* Info: everything except raw progress bars */
+/* Info: everything except debug and raw progress bars */
+#log-panel.lf-info .log-debug,
 #log-panel.lf-info .log-progress { display:none; }
 #log-filter-widget { position:relative; }
 #log-filter-trigger, #btn-clear-log { background:transparent; border:1px solid var(--border); color:var(--muted); padding:2px 8px; cursor:pointer; font-family:var(--font); font-size:10px; border-radius:3px; white-space:nowrap; }

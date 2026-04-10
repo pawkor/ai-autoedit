@@ -249,6 +249,10 @@ def _resolve_params(d: dict, work_dir: Path) -> dict:
             except Exception:
                 raw = None
         d["sd_min_scene"] = raw if raw else "10s"
+    if not d.get("positive"):
+        d["positive"] = cfg_chain[0].get("positive", "")
+    if not d.get("negative"):
+        d["negative"] = cfg_chain[0].get("negative", "")
     return d
 
 
@@ -1198,8 +1202,14 @@ async def job_frames(job_id: str):
             "score":      round(float(row["score"]), 4),
             "duration":   durations.get(row["scene"]),
             "camera":     row.get("camera") if "camera" in df.columns else None,
-            "frame_url":  str(frames_dir / (row['scene'] + '.jpg'))
-                          if (frames_dir / (row["scene"] + ".jpg")).exists() else None,
+            "frame_url":  next(
+                              (str(p) for p in [
+                                  frames_dir / (row["scene"] + "_f1.jpg"),
+                                  frames_dir / (row["scene"] + "_f0.jpg"),
+                                  frames_dir / (row["scene"] + ".jpg"),
+                              ] if p.exists()),
+                              None
+                          ),
             "file_start": file_starts.get(row["scene"]),
             "duplicate":  row["scene"] in dup_scenes,
         }

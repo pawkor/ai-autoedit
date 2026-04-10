@@ -506,6 +506,11 @@ function _classifyLogLine(div, line) {
     div.textContent = line;
     return 'err';
   }
+  if (/^\[DBG\]/.test(line)) {
+    div.classList.add('log-debug');
+    div.textContent = line;
+    return 'debug';
+  }
   div.classList.add('log-info');
   div.textContent = line;
   return 'info';

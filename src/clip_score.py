@@ -110,11 +110,16 @@ if CAM_SOURCES and os.path.exists(CAM_SOURCES) and AUDIO_CAM:
 def _is_main_cam(path: Path) -> bool:
     if not _back_sources:
         return True
-    src = _re.sub(r'-scene-\d+$', '', path.stem)
+    stem = _re.sub(r'_f\d+$', '', path.stem)          # strip _f0/_f1/_f2
+    src  = _re.sub(r'-scene-\d+$', '', stem)
     return src not in _back_sources
 
+def _scene_stem(path: Path) -> str:
+    """Return scene stem without _fN suffix."""
+    return _re.sub(r'_f\d+$', '', path.stem)
+
 all_frames_list = sorted(Path(FRAMES_DIR).glob("*.jpg"))
-main_cam_stems  = set(f.stem for f in all_frames_list if _is_main_cam(f))
+main_cam_stems  = set(_scene_stem(f) for f in all_frames_list if _is_main_cam(f))
 frames = all_frames_list if SCORE_ALL_CAMS else [f for f in all_frames_list if _is_main_cam(f)]
 skipped = len(all_frames_list) - len(main_cam_stems)
 if skipped and not SCORE_ALL_CAMS:
@@ -125,8 +130,8 @@ print(f"Scoring {len(frames)} frames (batch={BATCH_SIZE}, workers={NUM_WORKERS})
 dataset = FrameDataset(frames, preprocess)
 loader  = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
                      pin_memory=(DEVICE == "cuda"), prefetch_factor=2 if NUM_WORKERS > 0 else None)
-results = []
-scene_embs: dict[str, np.ndarray] = {}
+frame_results: list[dict] = []
+frame_embs:    dict[str, np.ndarray] = {}
 
 for batch_imgs, batch_paths, batch_ok in tqdm(loader, total=len(loader)):
     valid_mask = batch_ok.bool()
@@ -153,18 +158,84 @@ for batch_imgs, batch_paths, batch_ok in tqdm(loader, total=len(loader)):
         final_scores.float().cpu().tolist(),
         embs_cpu,
     ):
-        stem = Path(path).stem
-        results.append({
-            "scene":     stem,
+        frame_stem = Path(path).stem
+        frame_results.append({
+            "frame":     frame_stem,
+            "scene":     _scene_stem(Path(path)),
             "score":     final,
             "pos_score": pos,
             "neg_score": neg,
         })
-        scene_embs[stem] = emb
+        frame_embs[frame_stem] = emb
+
+# Aggregate: per scene take the frame with max score
+scene_best: dict[str, dict] = {}
+scene_embs: dict[str, np.ndarray] = {}
+for r in frame_results:
+    sc = r["scene"]
+    if sc not in scene_best or r["score"] > scene_best[sc]["score"]:
+        scene_best[sc] = r
+        scene_embs[sc] = frame_embs[r["frame"]]
+
+results = [{"scene": r["scene"], "score": r["score"],
+            "pos_score": r["pos_score"], "neg_score": r["neg_score"]}
+           for r in scene_best.values()]
 
 if not results:
     print("No frames scored — check that autocut/ has .mp4 files > 5MB.")
     sys.exit(1)
+
+# ── Aesthetic scoring (LAION improved predictor, ViT-L-14) ───────────────────
+def _aesthetic_mlp():
+    import torch.nn as nn
+    class _MLP(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layers = nn.Sequential(
+                nn.Linear(768, 1024), nn.Dropout(0.2),
+                nn.Linear(1024, 128), nn.Dropout(0.2),
+                nn.Linear(128, 64),  nn.Dropout(0.1),
+                nn.Linear(64, 16),
+                nn.Linear(16, 1),
+            )
+        def forward(self, x):
+            return self.layers(x)
+    return _MLP()
+
+def _load_aesthetic_predictor():
+    import urllib.request, torch.nn as nn
+    cache = Path.home() / ".cache" / "aesthetic_predictor" / "sac+logos+ava1-l14-linearMSE.pth"
+    if not cache.exists():
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        url = ("https://github.com/christophschuhmann/improved-aesthetic-predictor"
+               "/raw/main/sac%2Blogos%2Bava1-l14-linearMSE.pth")
+        print("  Downloading aesthetic predictor weights (~5MB)...")
+        urllib.request.urlretrieve(url, str(cache))
+    m = _aesthetic_mlp()
+    state = torch.load(str(cache), map_location="cpu", weights_only=True)
+    # Strip Lightning prefix if present
+    if any(k.startswith("model.") for k in state):
+        state = {k[6:]: v for k, v in state.items()}
+    m.load_state_dict(state)
+    return m.eval().to(DEVICE)
+
+aes_scores: dict[str, float] = {}
+try:
+    _aes_model = _load_aesthetic_predictor()
+    _stems = list(scene_embs.keys())
+    _emb_t = torch.tensor(
+        np.array([scene_embs[s] for s in _stems]), dtype=torch.float32
+    ).to(DEVICE)
+    _emb_t = _emb_t / _emb_t.norm(dim=-1, keepdim=True)
+    with torch.no_grad():
+        _aes_raw = _aes_model(_emb_t).squeeze(-1).cpu().tolist()
+    aes_scores = dict(zip(_stems, _aes_raw))
+    print(f"Aesthetic: {min(_aes_raw):.2f}–{max(_aes_raw):.2f}  mean={sum(_aes_raw)/len(_aes_raw):.2f}")
+except Exception as _e:
+    print(f"Aesthetic scoring skipped: {_e}")
+
+for r in results:
+    r["aesthetic_score"] = round(aes_scores.get(r["scene"], float("nan")), 4)
 
 df_all = pd.DataFrame(results).sort_values("score", ascending=False)
 

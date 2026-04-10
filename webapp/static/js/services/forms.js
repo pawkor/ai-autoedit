@@ -240,3 +240,12 @@ async function openSettings() {
   document.getElementById('settings-modal').classList.add('open');
   ytCheckStatus();
 }
+
+// ── Advanced detect modal ─────────────────────────────────────────────────────
+function openAdvancedDetect() {
+  document.getElementById('advanced-detect-modal').style.display = 'flex';
+}
+function closeAdvancedDetect() {
+  document.getElementById('advanced-detect-modal').style.display = 'none';
+}
+function _syncAdvancedHint() {}  // placeholder for future live hint
