@@ -203,6 +203,7 @@ function _closeJobWs() {
 function connectJobWs(jobId, startedAt) {
   const proto = location.protocol==='https:'?'wss':'ws';
   jobWs = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+  let wsInitial = true; // first status msg after connect = sync only, not reload
   jobWs.onmessage = e => {
     const msg = JSON.parse(e.data);
     if (msg.type==='log') {
@@ -272,6 +273,8 @@ function connectJobWs(jobId, startedAt) {
       if (lbl)  lbl.textContent = msg.pct + '%';
       if (slbl) slbl.textContent = `${msg.done} / ${msg.total} done`;
     } else if (msg.type==='status') {
+      const isInitialSync = wsInitial;
+      wsInitial = false;
       const prevPhase = jobPhase;
       if (msg.phase) { jobPhase = msg.phase; updatePhaseUI(); }
       setStatusDot(msg.status);
@@ -285,12 +288,12 @@ function connectJobWs(jobId, startedAt) {
   document.getElementById('btn-kill-log').style.display = 'none';
         if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
         if (msg.phase === 'analyzed') {
-          loadFrames(jobId);
-          loadAnalyzeResult(jobId);
+          if (!isInitialSync || !framesData.length) loadFrames(jobId);
+          if (!isInitialSync || !analyzeResult) loadAnalyzeResult(jobId);
         } else if (msg.status==='done' || msg.status==='failed') {
-          loadFrames(jobId);
-          loadResults(jobId);
-          loadAnalyzeResult(jobId);
+          if (!isInitialSync || !framesData.length) loadFrames(jobId);
+          if (!isInitialSync) loadResults(jobId);
+          if (!isInitialSync || !analyzeResult) loadAnalyzeResult(jobId);
           if (msg.phase === 'shorts' || prevPhase === 'shorts') {
             const btnS = document.getElementById('btn-render-short');
             if (btnS) { btnS.disabled = false; _updateShortsBtn(); }
@@ -373,7 +376,11 @@ async function loadAnalyzeResult(jobId) {
   const data = await api.get(`/api/jobs/${jobId}/analyze-result`);
   if (!data || currentJobId !== jobId) return;
   analyzeResult = data;
-  _overridesChangedSinceRender = false;
+  // Reset only when actual render data arrived (new render supersedes manual overrides).
+  // If user has pending manual overrides, preserve them so calculateGalleryStats stays live.
+  if (!_overridesChangedSinceRender || (data.actual_selected_scenes != null && data.actual_duration_sec != null)) {
+    _overridesChangedSinceRender = false;
+  }
   document.getElementById('sum-scene-count').textContent = data.scene_count ?? '—';
 
   // If actual render results are available, show them directly (no threshold needed).

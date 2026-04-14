@@ -11,7 +11,7 @@ function _computePerFileCuts() {
       const ov = manualOverrides[f.scene];
       if (ov === 'include' || ov === 'exclude') continue;
       if (f.score == null || f.score < _galleryThreshold) continue;
-      const src = f.scene.replace(/-scene-\d+$/, '');
+      const src = f.scene.replace(/-(scene|clip)-\d+$/, '');
       if (!groups.has(src)) groups.set(src, []);
       groups.get(src).push(f);
     }
@@ -85,7 +85,7 @@ function _computeBalancedScenes() {
       if (g.length >= targetMin) continue;
       const srcUsed = new Map();
       for (const f of g) {
-        const src = f.scene.replace(/-scene-\d+$/, '');
+        const src = f.scene.replace(/-(scene|clip)-\d+$/, '');
         srcUsed.set(src, (srcUsed.get(src) || 0) + Math.min(f.duration ?? maxSec, maxSec));
       }
       const candidates = framesData
@@ -96,7 +96,7 @@ function _computeBalancedScenes() {
       for (const f of candidates) {
         if (g.length >= targetMin) break;
         if (f.duration == null) continue;
-        const src = f.scene.replace(/-scene-\d+$/, '');
+        const src = f.scene.replace(/-(scene|clip)-\d+$/, '');
         const used = srcUsed.get(src) || 0;
         if (used >= perFile) continue;
         const take = Math.min(f.duration, maxSec, perFile - used);
@@ -342,7 +342,7 @@ function _estimateDuration(scenes) {
   const avgDur = _knownCnt > 0 ? _knownTot / _knownCnt : maxSec * 0.5;
   const bySource = new Map();
   for (const f of scenes) {
-    const src = f.scene.replace(/-scene-\d+$/, '');
+    const src = f.scene.replace(/-(scene|clip)-\d+$/, '');
     if (!bySource.has(src)) bySource.set(src, []);
     bySource.get(src).push(f);
   }
@@ -376,8 +376,17 @@ function _balancedEstimate() {
   const scaledCount = balanced.length;
   const camRatio = analyzeResult?.cam_ratio ?? 1.0;
 
-  // Scale from the server's last dry-run estimate proportionally by current scene count.
-  // scaledCount already reflects both threshold changes and manual overrides.
+  // Prefer direct calculation when clips have duration info (CLIP-first always sets clip_dur).
+  // Proportional scaling from server estimate is inaccurate after manual toggles because
+  // serverMain counts only main-cam scenes while scaledCount may differ.
+  const durKnown = balanced.filter(f => f.duration != null).length;
+  if (durKnown > balanced.length * 0.5) {
+    const mainDur = _estimateDuration(balanced);
+    const duration = _estimateTotalDuration(mainDur, balanced.length);
+    return { scenes: balanced, duration, scaledCount, camRatio };
+  }
+
+  // Proportional fallback for old-style scenes without duration metadata.
   const serverDur  = analyzeResult?.estimated_duration_sec;
   const serverMain = analyzeResult?.estimated_main_scenes ?? analyzeResult?.estimated_scenes;
   if (serverDur > 0 && serverMain > 0) {
@@ -385,7 +394,6 @@ function _balancedEstimate() {
     return { scenes: balanced, duration, scaledCount, camRatio };
   }
 
-  // Fallback used only before any binary-search/estimate has run.
   const mainDur = _estimateDuration(balanced);
   const duration = _estimateTotalDuration(mainDur, balanced.length);
   return { scenes: balanced, duration, scaledCount, camRatio };
@@ -401,14 +409,15 @@ function _introDurSec() {
 function calculateGalleryStats() {
   if (_targetSearchActive) return; // progress bar is shown; don't overwrite with stale estimate
   const v = _galleryThreshold;
+  const hasOverrides = Object.keys(manualOverrides).length > 0;
   // useActual: threshold matches last render (actual_threshold)
   const renderThr = analyzeResult?.actual_threshold;
-  const useActual = v !== null && analyzeResult?.actual_selected_scenes != null &&
+  const useActual = !hasOverrides && v !== null && analyzeResult?.actual_selected_scenes != null &&
                     analyzeResult?.actual_duration_sec != null && !_overridesChangedSinceRender &&
                     renderThr != null && Math.abs(v - renderThr) < 0.0015;
   // useEstimated: threshold matches last server estimate (auto_threshold, set by binary search)
   const estThr = analyzeResult?.auto_threshold;
-  const useEstimated = !useActual && !_overridesChangedSinceRender &&
+  const useEstimated = !hasOverrides && !useActual && !_overridesChangedSinceRender &&
                        analyzeResult?.estimated_scenes > 0 &&
                        analyzeResult?.estimated_duration_sec > 0 &&
                        estThr != null && Math.abs(v - estThr) < 0.0015;
@@ -514,14 +523,15 @@ function _syncThresholdDisplay() {
   const v = _galleryThreshold;
   if (!framesData.length) return;
 
+  const hasOverrides = Object.keys(manualOverrides).length > 0;
   const renderThr = analyzeResult?.actual_threshold;
-  const useActual = analyzeResult?.actual_selected_scenes != null &&
+  const useActual = !hasOverrides && analyzeResult?.actual_selected_scenes != null &&
                     analyzeResult?.actual_duration_sec   != null &&
                     !_overridesChangedSinceRender &&
                     renderThr != null && Math.abs(v - renderThr) < 0.0015;
 
   const estThr = analyzeResult?.auto_threshold;
-  const useEstimated = !useActual && !_overridesChangedSinceRender &&
+  const useEstimated = !hasOverrides && !useActual && !_overridesChangedSinceRender &&
                        analyzeResult?.estimated_scenes > 0 &&
                        analyzeResult?.estimated_duration_sec > 0 &&
                        estThr != null && Math.abs(v - estThr) < 0.0015;

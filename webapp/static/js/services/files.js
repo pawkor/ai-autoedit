@@ -208,7 +208,8 @@ function _showFilePreview(path, e, delay = 400) {
   clearTimeout(_previewTimer);
   _previewTimer = setTimeout(() => {
     const v = document.getElementById('file-tip-video');
-    v.src = path.startsWith('/data/') ? path : `/api/file?path=${encodeURIComponent(path)}`;
+    const src = path.startsWith('/data/') ? path : `/api/file?path=${encodeURIComponent(path)}`;
+    v.src = src;
     v.addEventListener('loadedmetadata', () => {
       v.currentTime = Math.min(3, v.duration * 0.05);
       v.play().catch(() => {});
