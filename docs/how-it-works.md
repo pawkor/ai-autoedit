@@ -4,29 +4,49 @@
 
 Pipeline zamienia surowy materiał z całego dnia w highlight reel bez ręcznego montażu. Uruchamiany przez przeglądarkę, wyniki dostępne w zakładce Results bez kopiowania plików.
 
-### Kroki pipeline
+### Kroki pipeline — Analyze (wspólne dla obu trybów)
 
 | Krok | Opis |
 |------|------|
 | 1 | Znalezienie plików MP4 w katalogu roboczym |
-| 2 | Detekcja cięć — PySceneDetect `detect-content` z fps wykrytym przez ffprobe |
+| 2 | Detekcja cięć — PySceneDetect `detect-content` **lub** CLIP-first (skanowanie klatek co N s, peaki CLIP) |
 | 3 | Podział — każda scena jako osobny plik w `_autoframe/autocut/` (stream copy) |
-| 4 | Ekstrakcja klatki środkowej dla każdego klipu → `_autoframe/frames/` (640px) |
-| 5 | Scoring CLIP — `ViT-L-14` na GPU, wyniki w `_autoframe/scene_scores.csv` |
-| 6 | Selekcja + manualne overrides + przycinanie + enkodowanie scen |
-| 7 | Concat → `_autoframe/highlight.mp4` |
-| 8 | Intro (klatka z najwyższym score) + outro + fade → `_autoframe/highlight_final.mp4` |
-| 9 | Dobór muzyki, miks → `highlight_final_music_v1.mp4` (kolejne rundy: v2, v3…) |
+| 4 | Ekstrakcja 3 klatek per klip (_f0/_f1/_f2 = 25/50/75%) → `_autoframe/frames/` |
+| 5 | Scoring CLIP — `ViT-L-14` na GPU → `scene_scores.csv` / `scene_scores_allcam.csv` |
 
-Wyniki kroków 1–5 są cache'owane — ponowne uruchomienie (np. po zmianie threshold) pomija już przetworzone etapy.
+Wyniki kroków 1–5 są cache'owane — ponowne uruchomienie pomija już przetworzone etapy.
 
-### Detekcja scen
+### Kroki pipeline — ♪ Music-driven (tryb domyślny)
 
-Każdy plik MP4 przechodzi przez algorytm `detect-content` PySceneDetect — różnice histogramów kolorów między klatkami. Przed uruchomieniem ffprobe wykrywa rzeczywisty fps pliku i przekazuje go do scenedetect przez `--frame-rate` — rozwiązuje problem błędnych timecode'ów w plikach VFR (np. kamery tylne z niestandardowym `time_base`).
+| Krok | Opis |
+|------|------|
+| 6 | Analiza muzyki — librosa: beaty, energia → harmonogram cięć zsynchronizowany z rytmem |
+| 7 | Analiza ruchu klipów — OpenCV frame diff dla top-N klipów wg CLIP score |
+| 8 | Dopasowanie klipów do slotów — rank: CLIP×0.50 + ruch×0.30 + łuk chronologiczny×0.20; naprzemienne kamery |
+| 9 | Trimming + enkodowanie każdego klipu (NVENC) → concat → miks muzyczny |
+| 10 | Intro (klatka z najwyższym score CLIP, pełna rozdzielczość) + outro + fade |
+| 11 | Wynik: `YYYY-MM-Miejsce-DD-md_v1.mp4` — kolejne rundy `md_v2`, `md_v3…` |
 
-Parametry sterowane z UI (Settings → Scene detection):
-- `threshold` (domyślnie 20) — czułość detektora, zakres typowy 20–35
-- `min_scene_len` (domyślnie 8s) — minimalna długość sceny
+### Kroki pipeline — ▶ Render Highlight (Traditional mode)
+
+| Krok | Opis |
+|------|------|
+| 6 | Selekcja scen — threshold CLIP, manualne overrides, balansowanie kamer, per-file cap |
+| 7 | Przycinanie + enkodowanie wybranych scen → concat → `_autoframe/highlight.mp4` |
+| 8 | Intro + outro + fade → `_autoframe/highlight_final.mp4` |
+| 9 | Dobór muzyki wg BPM/energii, miks → `YYYY-MM-Miejsce-DD_v1.mp4` |
+
+### Detekcja scen — CLIP-first (domyślna)
+
+Domyślna metoda. Nie szuka cięć montażowych — szuka dobrego materiału. Skanuje klatki co N sekund (domyślnie 3s), oblicza score CLIP dla każdej klatki, wykrywa lokalne maxima (peaki) i wycina klip (domyślnie 8s) wokół każdego piku. Minimalna przerwa między klipami (domyślnie 30s) zapobiega nakładaniu.
+
+Wyniki: pliki `-clip-NNN` w `autocut/`. Wymagane dla music-driven multicam — `score_all_cams` scoruje wszystkie kamery → `scene_scores_allcam.csv`.
+
+### Detekcja scen — PySceneDetect (opcjonalna)
+
+Dostępna gdy CLIP-first jest wyłączony w Advanced modal. Wykrywa cięcia przez różnice histogramów kolorów (`detect-content`). ffprobe wykrywa rzeczywisty fps i przekazuje przez `--frame-rate` — naprawia błędne timecody w plikach VFR (np. kamery tylne z niestandardowym `time_base`).
+
+Parametry: `threshold` (domyślnie 20), `min_scene_len` (domyślnie 8s). Wyniki: pliki `-scene-NNN` w `autocut/`.
 
 Wyniki detekcji są cache'owane per plik — zmiana parametrów i Re-analyze przetwarza tylko pliki bez CSV.
 
@@ -40,31 +60,17 @@ neg_score   = średnie podobieństwo cosinusowe do wszystkich promptów negatywn
 final_score = pos_score - neg_score × neg_weight
 ```
 
-Wyniki trafiają do `_autoframe/scene_scores.csv`.
+Wyniki trafiają do `_autoframe/scene_scores.csv` (główna kamera) lub `scene_scores_allcam.csv` (wszystkie kamery).
 
-### Selekcja scen
+### Selekcja scen (Traditional mode)
 
-Sceny filtrowane i wybierane osobno dla każdego pliku źródłowego:
+Używana wyłącznie w trybie Traditional. Sceny filtrowane i wybierane osobno dla każdego pliku źródłowego:
 
 - Tylko sceny powyżej `threshold` (ustawiany w Select scenes).
 - Każdy plik ma limit `max_per_file_sec`.
 - Każda scena przycinana do `max_scene_sec`, wyśrodkowana na środku klipu.
 - Klipy krótsze niż `min_take_sec` po przycięciu odrzucane.
 - Manualne overrides z Select scenes (force-include / force-exclude) mają pierwszeństwo.
-
-### CLIP-first mode
-
-Alternatywa dla PySceneDetect — nie szuka cięć, tylko dobrego materiału. Skanuje klatki co N sekund (domyślnie 3s), oblicza score CLIP dla każdej klatki, wykrywa lokalne maxima (peaki) i wycina klip (domyślnie 8s) wokół każdego piku. Minimalna przerwa między klipami (domyślnie 30s) zapobiega nakładaniu.
-
-Wyniki: pliki `-clip-NNN` w `autocut/` zamiast `-scene-NNN`. `select_scenes.py` i `music_driven.py` obsługują oba formaty.
-
-Kiedy używać: długie ciągłe nagrania bez cięć (np. kamera tylna bez rozdziałów). PySceneDetect nie wykrywa cięć → jedna ogromna "scena". CLIP-first znajdzie dobre momenty wewnątrz.
-
-An alternative to PySceneDetect — searches for good content rather than cuts. Scans frames every N seconds, computes CLIP scores, detects local maxima (peaks), and extracts a clip around each peak. Minimum gap between clips prevents overlap.
-
-Output: `-clip-NNN` files in `autocut/` instead of `-scene-NNN`. Both formats are handled by `select_scenes.py` and `music_driven.py`.
-
-When to use: long continuous footage without cuts (e.g. rear camera without chapters). PySceneDetect finds no cuts → one huge "scene". CLIP-first finds good moments inside.
 
 ### Dual-camera (multicam)
 
@@ -154,29 +160,49 @@ projekt/
 
 The pipeline turns a full day of raw footage into a highlight reel without manual editing. Launched from the browser; results available in the Results tab without copying files.
 
-### Pipeline steps
+### Pipeline steps — Analyze (shared by both modes)
 
 | Step | Description |
 |------|-------------|
 | 1 | Find MP4 files in the working directory |
-| 2 | Scene cut detection — PySceneDetect `detect-content` with ffprobe-detected fps |
+| 2 | Scene cut detection — PySceneDetect `detect-content` **or** CLIP-first (frame scan every N s, CLIP peaks) |
 | 3 | Split — each scene as a separate file in `_autoframe/autocut/` (stream copy) |
-| 4 | Key frame extraction (midpoint JPEG, 640px) → `_autoframe/frames/` |
-| 5 | CLIP scoring — `ViT-L-14` on GPU, results in `_autoframe/scene_scores.csv` |
-| 6 | Selection + manual overrides + trimming + scene encoding |
-| 7 | Concat → `_autoframe/highlight.mp4` |
-| 8 | Intro (top-scoring frame) + outro + fade → `_autoframe/highlight_final.mp4` |
-| 9 | Music selection, mix → `highlight_final_music_v1.mp4` (subsequent runs: v2, v3…) |
+| 4 | Key frame extraction — 3 frames per clip (_f0/_f1/_f2 = 25/50/75%) → `_autoframe/frames/` |
+| 5 | CLIP scoring — `ViT-L-14` on GPU → `scene_scores.csv` / `scene_scores_allcam.csv` |
 
-Steps 1–5 results are cached — rerunning after a threshold change skips already-processed stages.
+Steps 1–5 results are cached — rerunning skips already-processed stages.
 
-### Scene detection
+### Pipeline steps — ♪ Music-driven (default mode)
 
-PySceneDetect `detect-content` — frame-to-frame colour histogram differences. ffprobe detects the real fps before each run and passes it via `--frame-rate` — fixes ~10x timecode errors in VFR files (common in back-cam footage with non-standard `time_base`).
+| Step | Description |
+|------|-------------|
+| 6 | Music analysis — librosa: beats + energy envelope → cut schedule synced to rhythm |
+| 7 | Motion analysis — OpenCV frame diff for top-N clips by CLIP score |
+| 8 | Clip matching — rank: CLIP×0.50 + motion×0.30 + chronological arc×0.20; per-shot camera alternation |
+| 9 | Trim + encode each clip (NVENC) → concat → music mix |
+| 10 | Intro (top CLIP-scored frame, full resolution) + outro + fade |
+| 11 | Output: `YYYY-MM-Place-DD-md_v1.mp4` — subsequent runs `md_v2`, `md_v3…` |
 
-Parameters controlled from UI (Settings → Scene detection):
-- `threshold` (default 20) — detector sensitivity, typical range 20–35
-- `min_scene_len` (default 8s) — minimum scene duration
+### Pipeline steps — ▶ Render Highlight (Traditional mode)
+
+| Step | Description |
+|------|-------------|
+| 6 | Scene selection — CLIP threshold, manual overrides, camera balancing, per-file cap |
+| 7 | Trim + encode selected scenes → concat → `_autoframe/highlight.mp4` |
+| 8 | Intro + outro + fade → `_autoframe/highlight_final.mp4` |
+| 9 | Music selection by BPM/energy, mix → `YYYY-MM-Place-DD_v1.mp4` |
+
+### Scene detection — CLIP-first (default)
+
+The default method. Does not look for edit cuts — looks for good content. Scans frames every N seconds (default 3s), scores each with CLIP, detects local maxima (peaks), and extracts a clip (default 8s) around each peak. Minimum gap between clips (default 30s) prevents overlap.
+
+Output: `-clip-NNN` files in `autocut/`. Required for music-driven multicam — `score_all_cams` scores all cameras → `scene_scores_allcam.csv`.
+
+### Scene detection — PySceneDetect (optional)
+
+Available when CLIP-first is disabled in the Advanced modal. Detects cuts via frame-to-frame colour histogram differences (`detect-content`). ffprobe detects real fps and passes it via `--frame-rate` — fixes ~10x timecode errors in VFR files (common in back-cam footage with non-standard `time_base`).
+
+Parameters: `threshold` (default 20), `min_scene_len` (default 8s). Output: `-scene-NNN` files in `autocut/`.
 
 Detection results cached per file — changing parameters and Re-analyzing only reprocesses files without a cached CSV.
 
@@ -188,7 +214,9 @@ OpenCLIP `ViT-L-14` (OpenAI weights) on GPU, processing frames in batches (defau
 final_score = pos_score - neg_score × neg_weight
 ```
 
-### Scene selection
+Results written to `scene_scores.csv` (main camera) or `scene_scores_allcam.csv` (all cameras).
+
+### Scene selection (Traditional mode only)
 
 Scenes filtered and selected per source file:
 
@@ -197,12 +225,6 @@ Scenes filtered and selected per source file:
 - Each scene trimmed to `max_scene_sec`, centred on the midpoint.
 - Clips shorter than `min_take_sec` after trimming are discarded.
 - Manual overrides from Select scenes (force-include / force-exclude) take precedence.
-
-### CLIP-first mode
-
-Scans frames every N seconds, scores each with CLIP, finds local score peaks, extracts a clip around each peak. No scene cuts needed. Output files: `-clip-NNN` in `autocut/` (vs `-scene-NNN` from PySceneDetect). Both formats handled transparently downstream.
-
-Use when: long continuous footage without camera cuts. PySceneDetect would produce one giant scene; CLIP-first finds the good moments inside.
 
 ### Dual-camera (multicam)
 

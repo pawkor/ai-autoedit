@@ -57,9 +57,9 @@ The **⚙ Advanced** button opens a modal with detection parameters.
 | Detect threshold | `20` (auto) | Czułość detektora. Auto-kalibrowany przed każdym runs. / Detector sensitivity. Auto-calibrated before each run. |
 | Min scene len | `8` | Minimalna długość sceny w sekundach. / Minimum scene duration in seconds. |
 
-**CLIP-first mode (experimental)** — pomija PySceneDetect; skanuje klatki co N sekund i extraktuje klipy wokół CLIP score peaks. Lepsza selekcja dla długich ciągłych nagrań. Wymagany re-analyze po zmianie.
+**CLIP-first mode** *(domyślny)* — skanuje klatki co N sekund i ekstraktuje klipy wokół peaków CLIP score. Nie szuka cięć montażowych — szuka dobrego materiału. Wymagany re-analyze po zmianie. PySceneDetect dostępny jako fallback po odznaczeniu.
 
-**CLIP-first mode (experimental)** — skips PySceneDetect; scans frames every N seconds and extracts clips around CLIP score peaks. Better for long continuous shots. Re-analyze required after change.
+**CLIP-first mode** *(default)* — scans frames every N seconds and extracts clips around CLIP score peaks. Finds good content rather than edit cuts. Re-analyze required after change. PySceneDetect available as fallback when unchecked.
 
 | Parametr CLIP-first | Domyślnie | Opis |
 |--------------------|-----------|------|

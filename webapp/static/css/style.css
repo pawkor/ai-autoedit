@@ -303,7 +303,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .thresh-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text); width:22px; height:22px; cursor:pointer; font-size:12px; border-radius:3px; display:flex; align-items:center; justify-content:center; padding:0; line-height:1; flex-shrink:0; }
 .thresh-btn:hover { border-color:var(--accent); color:var(--accent); }
 #gallery-status { display:flex; align-items:center; gap:10px; padding:6px 11px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; font-size:11px; }
-#gallery-stats-text { flex:1; color:var(--muted); }
+#gallery-stats-text { color:var(--muted); }
 #sidebar-sort, #sidebar-theme, #sidebar-lang { font-size:10px; color:var(--muted); padding:2px 6px; background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; width:100%; }
 #sidebar-sort:hover, #sidebar-theme:hover, #sidebar-lang:hover { border-color:var(--accent); color:var(--accent); }
 #sidebar-btns { display:flex; flex-direction:column; gap:3px; }
