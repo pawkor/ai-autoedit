@@ -182,7 +182,6 @@ Details on the music library, index building, and selection logic: [Music librar
 
 ### S3 music
 
-![Muzyka z S3](img/AI-autoedit-s3-music.png)
 
 Gdy S3 jest skonfigurowane, w zakładce Music pojawia się wiersz **S3** z polem prefiksu i przyciskiem **Browse S3**.
 

@@ -154,8 +154,10 @@ function setLogFilter(f) {
   _logFilter = f;
   localStorage.setItem('logFilter', f);
   const panel = document.getElementById('log-panel');
-  panel.classList.remove('lf-steps', 'lf-info', 'lf-all');
-  panel.classList.add('lf-' + f);
+  if (!panel.classList.contains('lf-' + f)) {
+    panel.classList.remove('lf-steps', 'lf-info', 'lf-all');
+    panel.classList.add('lf-' + f);
+  }
   const label = {steps: 'Steps', info: 'Info', all: 'All'}[f] || f;
   const trigger = document.getElementById('log-filter-trigger');
   if (trigger) trigger.textContent = label + ' ▾';
@@ -193,19 +195,24 @@ async function refreshJobList() {
       return jobSortNewest ? ka.localeCompare(kb) : kb.localeCompare(ka);
     });
     const list = document.getElementById('job-list');
-    list.innerHTML = '';
-    for (const j of jobs) {
+    // Build new HTML string first — only touch DOM if content changed
+    const rows = jobs.map(j => {
       const dir = trimPath(j.work_dir);
       const dur = j.ended_at ? formatDur(j.ended_at - j.started_at) : '';
-      const div = document.createElement('div');
-      div.className = 'job-item' + (j.id===currentJobId?' active':'');
       const statusLabel = j.status === 'idle' ? 'new' : j.status;
-      div.innerHTML = `<div class="ji-dir"><span class="dot s-${j.status}"></span><span class="ji-dir-txt"></span></div>
-        <div class="ji-meta">${statusLabel}${dur?' · '+dur:''}</div>
-        <button class="ji-del" title="Remove job" onclick="event.stopPropagation();removeJob('${j.id}')">×</button>`;
-      div.querySelector('.ji-dir-txt').textContent = dir;
-      div.onclick = ()=>openJob(j.id);
-      list.appendChild(div);
+      const active = j.id === currentJobId ? ' active' : '';
+      return `<div class="job-item${active}" data-id="${j.id}">` +
+        `<div class="ji-dir"><span class="dot s-${j.status}"></span><span class="ji-dir-txt">${_esc(dir)}</span></div>` +
+        `<div class="ji-meta">${statusLabel}${dur?' · '+dur:''}</div>` +
+        `<button class="ji-del" title="Remove job" onclick="event.stopPropagation();removeJob('${j.id}')">×</button>` +
+        `</div>`;
+    }).join('');
+    if (list.dataset.lastHtml !== rows) {
+      list.innerHTML = rows;
+      list.dataset.lastHtml = rows;
+      list.querySelectorAll('.job-item').forEach((div, i) => {
+        div.onclick = () => openJob(jobs[i].id);
+      });
     }
   } finally {
     _refreshing = false;

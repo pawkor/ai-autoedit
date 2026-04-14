@@ -105,7 +105,15 @@ src/music_driven.py
 
 Różnorodność źródeł: `recent_sources` deque (maxlen = max(4, num_sources×2)) zapobiega skupieniu klipów z jednego pliku. Każda scena użyta max raz (`used` set).
 
+Różnorodność kamer: `recent_cameras` deque (maxlen=1) wymusza naprzemienną zmianę kamery przy każdym cięciu — back cam nigdy nie pojawia się dwa razy z rzędu gdy dostępne są klipy z drugiej kamery.
+
+Łuk chronologiczny: gdy pliki źródłowe mają `creation_time` w metadanych, czas każdego klipu normalizowany jest do [0, 1] w skali dnia. Rank funkcja dostaje dodatkowy składnik `chron_match × 0.20` — klipy z rana trafiają na początku muzyki, wieczorne pod koniec (zachody słońca w finale).
+
 Source diversity: `recent_sources` deque prevents clustering clips from the same source file. Each scene used at most once.
+
+Camera diversity: `recent_cameras` deque (maxlen=1) enforces shot-by-shot camera alternation — back cam never appears twice in a row when clips from other cameras are available.
+
+Chronological arc: when source files have `creation_time` metadata, each clip's timestamp is normalised to [0, 1] over the recording day. The rank function gains a `chron_match × 0.20` term — morning clips land at the start of the track, evening clips (sunsets) towards the fade-out.
 
 ### Dobór i miks muzyki (Traditional mode)
 
@@ -230,7 +238,13 @@ match_clips()   → fill each segment with highest-scoring available clips
 render()        → ffmpeg concat + music mix + intro/outro
 ```
 
-Source diversity: a rolling `recent_sources` window prevents visual repetition from the same source file. Each clip used at most once. Output: `*-md_v1.mp4`, subsequent runs `md_v2`, `md_v3…`
+Source diversity: a rolling `recent_sources` window prevents visual repetition from the same source file. Each clip used at most once.
+
+Camera diversity: `recent_cameras` deque (maxlen=1) alternates cameras on every cut. Falls back gracefully when one camera's clips are exhausted.
+
+Chronological arc: source file `creation_time` → normalised day timeline [0, 1]. Morning footage opens the edit, evening footage closes it. Weight 0.20 in rank function (score×0.50 + motion×0.30 + chron×0.20). Disabled automatically when metadata is absent.
+
+Output: `*-md_v1.mp4`, subsequent runs `md_v2`, `md_v3…`
 
 ### Music selection (Traditional mode)
 

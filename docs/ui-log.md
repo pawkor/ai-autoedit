@@ -1,6 +1,6 @@
 # Zakładka Log / Log tab
 
-![Log](img/AI-autoedit-log.png)
+![Log](img/AI-autoedit-logs.png)
 
 Zakładka **Log** pokazuje pełny output pipeline w czasie rzeczywistym przez WebSocket. Widoczne są wszystkie kroki: detekcja, scoring CLIP, selekcja scen, enkodowanie. Pasek postępu enkodowania aktualizuje się na bieżąco z ETA.
 

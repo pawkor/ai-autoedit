@@ -1,6 +1,6 @@
 # Zakładka Results / Results tab
 
-![Wyniki z odtwarzaczem](img/AI-autoedit-results-player.png)
+![Wyniki](img/AI-autoedit-results.png)
 
 Zakładka **Results** wyświetla gotowe pliki wideo projektu z wbudowanym odtwarzaczem.
 
@@ -52,7 +52,6 @@ The red **×** next to each file deletes it from disk after confirmation (messag
 
 ## Upload na YouTube / YouTube upload
 
-![Modal uploadu YouTube](img/AI-autoedit-results-yt-upload.png)
 
 Przycisk **▲ YT** przy każdym pliku otwiera modal uploadu.
 
@@ -73,7 +72,6 @@ Upload progress is shown in real time in the modal.
 
 ## Upload YouTube Shorts / YouTube Shorts upload
 
-![Modal uploadu Shorts](img/AI-autoedit-results-short-upload.png)
 
 Pliki z `short` w nazwie (np. `2025-04-Grecja-04.21-short_v01.mp4`) wyświetlają przycisk **▲ YT Shorts** zamiast **▲ YT**.
 
@@ -119,7 +117,6 @@ Token is saved in `webapp/youtube_token.json` and refreshed automatically.
 
 ## Upload Instagram Reels / Instagram Reels upload
 
-![Modal uploadu IG](img/AI-autoedit-results-ig-upload.png)
 
 Przycisk **▲ IG Reel** widoczny jest przy shortach oznaczonych jako NCS (plik muzyczny z biblioteki NCS). Otwiera modal uploadu rolki na Instagram.
 
@@ -158,13 +155,9 @@ NCS (NoCopyrightSounds) requires the caption to include: `Music: Artist - Title 
 
 ### Upload do S3 / Upload to S3
 
-![Wyniki z przyciskiem S3](img/AI-autoedit-s3-results-player.png)
-
 Gdy S3 jest skonfigurowane, przy każdym pliku wynikowym pojawia się przycisk **▲ S3**.
 
 When S3 is configured, an **▲ S3** button appears next to each result file.
-
-![Modal uploadu S3](img/AI-autoedit-s3-results-upload-s3.png)
 
 Kliknięcie otwiera modal uploadu. Pole **S3 key** jest pre-filled jako `highlights/<nazwa_pliku>` — można zmienić przed wysłaniem.
 

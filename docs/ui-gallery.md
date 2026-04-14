@@ -1,6 +1,6 @@
 # Zakładka Select scenes / Select scenes tab
 
-![Selekcja scen](img/AI-autoedit-select-scene.png)
+![Selekcja scen](img/AI-autoedit-select-scenes.png)
 
 Zakładka **Select scenes** pokazuje klatkę środkową każdej wykrytej sceny z jej wynikiem CLIP, posortowane chronologicznie.
 

@@ -1,6 +1,5 @@
 # Zakładka Render / Render tab
 
-![Render](img/AI-autoedit-render.png)
 
 Zakładka **Render** zbiera wyniki analizy i daje dostęp do renderowania.
 
@@ -47,12 +46,16 @@ Generates a highlight synchronised to the music structure — beats, segments, e
 - Wybierz utwór w zakładce Music (lub zostaw auto-select) → **♪ Music-driven**
 - Klipy dobierane z pełnej puli scen (`scene_scores_allcam.csv` gdy istnieje — wszystkie kamery)
 - Każda scena użyta maksymalnie raz (`used` set); source diversity przez rolling window
+- Różnorodność kamer: naprzemienne cięcia back/helmet przy każdym ujęciu
+- Łuk chronologiczny: klipy z rana na początku, wieczorne (zachód słońca) przy fade-out — z metadanych `creation_time`
 - Wynik: `*-md_v1.mp4`, kolejne rundy `md_v2`, `md_v3…` — poprzednie nie są nadpisywane
 - Guzik wraca po potwierdzeniu startu — można kolejkować kolejne rendery
 
 Select a track in the Music tab (or leave auto-select) → **♪ Music-driven**.
 - Clips drawn from the full scene pool (`scene_scores_allcam.csv` when present — all cameras)
 - Each scene used at most once; source diversity enforced via rolling window
+- Camera diversity: back/helmet alternate on every cut
+- Chronological arc: morning clips open the edit, evening clips (sunsets) close it — derived from source file `creation_time` metadata
 - Output: `*-md_v1.mp4`, subsequent runs `md_v2`, `md_v3…` — previous versions not overwritten
 - Button re-enables after confirmed start — multiple renders can be queued
 

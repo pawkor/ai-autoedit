@@ -555,7 +555,7 @@ async def import_job(data: dict):
     job = Job(job_id, params)
     job.status = "done"
     job.log = _LogList(JOBS_DIR / f"{job_id}.log", ["[imported from existing files]"])
-    mp4s = list(work_dir.glob("highlight*.mp4"))
+    mp4s = list(work_dir.glob("*-v*.mp4")) + list(work_dir.glob("*_v*.mp4"))
     if mp4s:
         job.started_at = min(p.stat().st_mtime for p in mp4s)
         job.ended_at   = max(p.stat().st_mtime for p in mp4s)
@@ -1514,12 +1514,12 @@ async def job_result(job_id: str):
             }
 
     def _ver(p: Path) -> int:
-        m = re.search(r'_v(\d+)$', p.stem)
+        m = re.search(r'[-_]v(\d+)$', p.stem)
         return int(m.group(1)) if m else 0
 
     auto_dir = work_dir / "_autoframe"
     seen: set[str] = set()
-    for pat in ("highlight-v*.mp4", "short-v*.mp4"):
+    for pat in ("*-v*.mp4", "*_v*.mp4"):
         for p in sorted(work_dir.glob(pat), key=_ver, reverse=True):
             if "_preview" in p.stem:
                 continue

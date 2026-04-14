@@ -21,6 +21,18 @@ async function loadResults(jobId) {
   if (!data) return;
   const mainContainer  = document.getElementById('rf-files-main');
   const shortContainer = document.getElementById('rf-files-short');
+
+  // Skip full rebuild if data hasn't changed (prevents flicker on repeated calls)
+  const _fp = JSON.stringify(Object.keys(data).sort().map(k => [
+    k, data[k].size_mb, data[k].yt_url || null, data[k].ig_url || null
+  ]));
+  if (mainContainer.dataset.fp === _fp) return;
+  mainContainer.dataset.fp = _fp;
+
+  // Fetch S3 status once for all cards
+  const s3Status = await api.get('/api/s3/status').catch(() => null);
+  const s3Configured = s3Status?.configured || false;
+
   mainContainer.innerHTML = '';
   shortContainer.innerHTML = '';
   for (const [name, info] of Object.entries(data)) {
@@ -74,7 +86,7 @@ async function loadResults(jobId) {
     s3Btn.textContent = '▲ S3';
     s3Btn.title = 'Upload to S3';
     s3Btn.onclick = e => { e.stopPropagation(); s3ModalOpen(filePath, name); };
-    api.get('/api/s3/status').then(s => { if (!s?.configured) s3Btn.style.display = 'none'; });
+    if (!s3Configured) s3Btn.style.display = 'none';
     btnRow.appendChild(s3Btn);
     div.appendChild(btnRow);
     if (info.yt_url) {
@@ -112,10 +124,13 @@ async function loadResults(jobId) {
     (isShort ? shortContainer : mainContainer).appendChild(div);
   }
 
-  // Auto-play first highlight on desktop only
+  // Auto-play first highlight on desktop only — skip if player already has content
   if (window.innerWidth > 768) {
-    const firstCard = mainContainer.querySelector('.rf') || shortContainer.querySelector('.rf');
-    if (firstCard) playVideoOrPreview(firstCard);
+    const video = document.getElementById('video-player');
+    if (!video.src || video.src === window.location.href) {
+      const firstCard = mainContainer.querySelector('.rf') || shortContainer.querySelector('.rf');
+      if (firstCard) playVideoOrPreview(firstCard);
+    }
   }
 }
 

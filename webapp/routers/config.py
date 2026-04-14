@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+import webapp.state as _st
 from webapp.state import (
     APP_DIR,
     SCRIPT_DIR,
@@ -77,7 +78,10 @@ async def get_settings():
 @router.put("/api/settings")
 async def put_settings(data: dict):
     save_wcfg(data)
-    return {"ok": True, "note": "restart server for max_concurrent_jobs to take effect"}
+    if "max_concurrent_jobs" in data:
+        new_val = max(1, int(data["max_concurrent_jobs"]))
+        _st.job_semaphore = asyncio.Semaphore(new_val)
+    return {"ok": True}
 
 
 @router.post("/api/about")

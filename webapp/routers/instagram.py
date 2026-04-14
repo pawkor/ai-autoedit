@@ -149,23 +149,49 @@ def _ig_save_last_time():
     _IG_LAST_UPLOAD_FILE.write_text(json.dumps({"last_upload": time.time()}))
 
 
+def _ig_http_error(exc) -> str:
+    """Extract JSON body from urllib HTTPError for readable IG error messages."""
+    try:
+        import urllib.error as _ue
+        if isinstance(exc, _ue.HTTPError):
+            body = exc.read().decode("utf-8", errors="replace")
+            try:
+                d = json.loads(body)
+                msg = d.get("error", {})
+                return f"HTTP {exc.code}: {msg.get('message', body)}"
+            except Exception:
+                return f"HTTP {exc.code}: {body[:500]}"
+    except Exception:
+        pass
+    return str(exc)
+
+
 def _ig_graph_post(url: str, params: dict) -> dict:
     import urllib.request as _ur
     import urllib.parse as _up
+    import urllib.error as _ue
     body = _up.urlencode(params).encode()
-    with _ur.urlopen(_ur.Request(url, data=body, method="POST"), timeout=30) as r:
-        return json.loads(r.read())
+    try:
+        with _ur.urlopen(_ur.Request(url, data=body, method="POST"), timeout=30) as r:
+            return json.loads(r.read())
+    except _ue.HTTPError as exc:
+        raise RuntimeError(_ig_http_error(exc)) from None
 
 
 def _ig_graph_get(url: str, params: dict) -> dict:
     import urllib.request as _ur
     import urllib.parse as _up
-    with _ur.urlopen(f"{url}?{_up.urlencode(params)}", timeout=30) as r:
-        return json.loads(r.read())
+    import urllib.error as _ue
+    try:
+        with _ur.urlopen(f"{url}?{_up.urlencode(params)}", timeout=30) as r:
+            return json.loads(r.read())
+    except _ue.HTTPError as exc:
+        raise RuntimeError(_ig_http_error(exc)) from None
 
 
 def _ig_upload_bytes(upload_uri: str, file_path: Path) -> dict:
     import urllib.request as _ur
+    import urllib.error as _ue
     file_size = file_path.stat().st_size
     with open(file_path, "rb") as fh:
         data = fh.read()
@@ -174,8 +200,11 @@ def _ig_upload_bytes(upload_uri: str, file_path: Path) -> dict:
     req.add_header("offset", "0")
     req.add_header("file_size", str(file_size))
     req.add_header("Content-Type", "application/octet-stream")
-    with _ur.urlopen(req, timeout=600) as r:
-        return json.loads(r.read())
+    try:
+        with _ur.urlopen(req, timeout=600) as r:
+            return json.loads(r.read())
+    except _ue.HTTPError as exc:
+        raise RuntimeError(_ig_http_error(exc)) from None
 
 
 @router.get("/api/ig/status")
@@ -232,7 +261,7 @@ async def _do_ig_upload(upload_id: str, file_path: Path, caption: str):
         resp = await loop.run_in_executor(None, _ig_graph_post,
             f"{_IG_GRAPH}/{_IG_USER_ID}/media",
             {"media_type": "REELS", "upload_type": "resumable",
-             "caption": caption, "share_to_feed": "true",
+             "caption": caption,
              "access_token": _ig_current_token()},
         )
         print(f"[IG] media container response: {resp}", flush=True)

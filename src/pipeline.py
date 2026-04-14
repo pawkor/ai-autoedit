@@ -287,7 +287,8 @@ async def apply_postprocess(
             await _run([
                 ffmpeg, *hwaccel, "-i", str(highlight),
                 "-vf", f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_hl:.3f}:d={fade_dur}",
-                "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-c:a", "copy",
+                "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-ar", "48000", "-b:a", "192k",
                 str(hl_faded), "-y", "-loglevel", "quiet",
             ])
 
@@ -1617,7 +1618,8 @@ async def run(params: dict, work_dir: Path,
         await _run([
             ffmpeg, *hwaccel, "-i", str(highlight),
             "-vf", f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_hl:.3f}:d={fade_dur}",
-            "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-c:a", "copy",
+            "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ar", "48000", "-b:a", "192k",
             str(hl_faded), "-y", "-loglevel", "quiet",
         ])
 

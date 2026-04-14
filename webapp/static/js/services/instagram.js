@@ -79,6 +79,7 @@ async function igReelUpload() {
       a.textContent = '✓ ' + s.url;
       status.appendChild(a);
       status.style.color = 'var(--green)';
+      btn.disabled = false;
       btn.textContent = '✓ Done';
       btn.onclick = igReelModalClose;
     } else if (s.status === 'error') {

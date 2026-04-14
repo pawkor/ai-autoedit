@@ -12,7 +12,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Score all cameras (allcam CSV) | ✅ | `scene_scores_allcam.csv`; auto-enabled with CLIP-first |
 | LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |
 | Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only |
-| Music-driven render | ✅ | beat/segment sync, source diversity, multicam, full-res intro |
+| Music-driven render | ✅ | beat/segment sync, source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro |
 | Multi-cam sync (timestamp + clock offset) | ✅ | MP4 creation_time fallback |
 | Intro / outro overlay | ✅ | full-res frame from autocut clip (not thumbnail) |
 | Music mix with BPM/energy matching | ✅ | target duration drives track selection |
@@ -64,7 +64,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Block Shorts upload if full video not yet published | ✅ | require known YouTube URL of full video before allowing Shorts upload |
 | Playlist select / create — Shorts modal | ✅ | same UX as regular upload modal |
 | Upload description without title (both modals) | ✅ | description starts with hashtags/footer, not repeated title |
-| Instagram Reels upload | ✅ | Creator/Business account, Graph API, NCS attribution auto-fill, token auto-refresh |
+| Instagram Reels upload | ✅ | Creator/Business account, Graph API v20.0, NCS attribution auto-fill, token auto-refresh, resumable upload |
 | Scheduled / delayed upload | 💡 | useful for time-zone optimised posting |
 | Chapter markers in description | 💡 | derive from scene timestamps |
 
@@ -99,7 +99,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 |---|---|---|
 | Per-job config.ini overrides | ✅ | local config wins over global |
 | Job state persistence (JSON) | ✅ | survives server restart |
-| Concurrent job limit | ✅ | max_concurrent_jobs in webapp/config.ini |
+| Concurrent job limit | ✅ | max_concurrent_jobs in webapp/config.ini — changes take effect immediately, no restart needed |
 | Parallel Shorts rendering | ✅ | `shorts_semaphore` (limit 4) independent of main pipeline semaphore |
 | GPU batch size tuning | ✅ | batch_size, num_workers |
 | Graceful stop mid-render | 💡 | currently kills process, no cleanup step |

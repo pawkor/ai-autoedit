@@ -151,7 +151,6 @@ Reruns the pipeline. Skips scene detection if source files and `[scene_detection
 
 ## Przeglądarka plików / File browser
 
-![Przeglądarka plików](img/AI-autoedit-settings-file-browser.png)
 
 Otwierana przyciskiem 📁 przy katalogu roboczym lub podkatalogu kamery. Wyświetla pliki wideo (MP4, MOV, MTS, M2TS i inne) w danym katalogu.
 
