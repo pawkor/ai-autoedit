@@ -26,8 +26,11 @@ webapp/youtube_flow.json
 webapp/config.ini
 
 # OS
+.claude
 .DS_Store
+.obsidian
 .plandex-v2/
 Thumbs.db
 CLAUDE.md
+graphify-out
 webapp/users.json

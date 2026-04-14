@@ -16,9 +16,11 @@ Usage:
 
 import argparse
 import csv
+import fcntl
 import io
 import json
 import math
+import os
 import random
 import re
 import subprocess
@@ -36,6 +38,8 @@ warnings.filterwarnings("ignore", message=".*audioread.*")
 warnings.filterwarnings("ignore", category=FutureWarning, module="librosa")
 
 from PIL import Image, ImageDraw, ImageFont
+
+USE_NVENC = os.environ.get("USE_NVENC", "0") == "1"
 
 # ── Fixed intro words (first 2 shots) ─────────────────────────────────────────
 INTRO_WORDS = ["#EPIC", "#ADVENTURE"]
@@ -158,11 +162,13 @@ def make_clip(src: Path, ss: float, shot_dur: float,
     out      = tmp / f"clip_{idx:04d}.mp4"
 
     # ── Pass 1: crop + scale (fast, high quality) ──────────────────────────
+    _enc_crop = (["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "18", "-preset", "p4"]
+                 if USE_NVENC else ["-c:v", "libx264", "-preset", "fast", "-crf", "18"])
     cmd = [
         "ffmpeg", "-y",
         "-ss", f"{ss:.3f}", "-i", str(src), "-t", str(shot_dur),
         "-vf", f"crop=ih*9/16:ih:(iw-ih*9/16)/2+({x_shift}):0,scale={width}:{height}:flags=lanczos",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        *_enc_crop,
         "-an", str(crop_out),
     ]
     r = subprocess.run(cmd, capture_output=True)
@@ -199,13 +205,15 @@ def make_clip(src: Path, ss: float, shot_dur: float,
     )
 
     # ── Pass 2: overlay ─────────────────────────────────────────────────────
+    _enc_ov = (["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "18", "-preset", "p4"]
+               if USE_NVENC else ["-c:v", "libx264", "-preset", "fast", "-crf", "18"])
     cmd = [
         "ffmpeg", "-y",
         "-i", str(crop_out),
         "-i", str(png_path),
         "-filter_complex", vf,
         "-map", "[v]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        *_enc_ov,
         "-an", str(out),
     ]
     r = subprocess.run(cmd, capture_output=True)
@@ -300,6 +308,30 @@ def find_best_offset(music_path: Path, target_dur: float) -> float:
     return best_time
 
 
+def beat_shot_dur(music_path: Path, min_dur: float = 0.8, max_dur: float = 3.0) -> float | None:
+    """
+    Compute shot duration aligned to the track's beat interval.
+    Tries 2, 3, 4 then 1 beat(s) per shot, returning the first that falls in
+    [min_dur, max_dur].  Returns None if BPM detection fails or is out of range.
+    """
+    import librosa
+    # Load first 90 s only — enough for reliable BPM, fast to process
+    y, sr = librosa.load(str(music_path), sr=None, mono=True, duration=90.0)
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    tempo = float(tempo)
+    if not (40 <= tempo <= 220):
+        print(f"  Beat sync: BPM={tempo:.0f} out of range (40-220) — skipped")
+        return None
+    beat_interval = 60.0 / tempo
+    for n_beats in [2, 3, 4, 1]:
+        dur = round(beat_interval * n_beats, 3)
+        if min_dur <= dur <= max_dur:
+            print(f"  Beat sync: {tempo:.0f} BPM → {n_beats} beats = {dur:.3f}s/shot")
+            return dur
+    print(f"  Beat sync: BPM={tempo:.0f}, beat={beat_interval:.3f}s — no multiple fits [{min_dur}, {max_dur}]")
+    return None
+
+
 def _used_tracks(music_dirs: list[Path]) -> set[str]:
     """Load the set of recently used track paths from shorts_used.json files."""
     used: set[str] = set()
@@ -335,9 +367,12 @@ def pick_music(music_dirs: list[Path]) -> Path | None:
     """
     Pick the highest-energy unplayed track from the music library.
     Tracks used in previous Shorts runs are recorded in shorts_used.json.
-    History is reset when all tracks have been used, or when the library
-    has fewer than _HISTORY_MIN_LIBRARY tracks (forces rotation through small libraries).
+    History is reset when all tracks have been used.
+    Uses an exclusive file lock so parallel shorts processes pick different tracks.
     """
+    if not music_dirs:
+        return None
+
     # Collect all available indexed tracks
     all_tracks: list[tuple[float, Path]] = []   # (energy, path)
     for root in music_dirs:
@@ -357,31 +392,30 @@ def pick_music(music_dirs: list[Path]) -> Path | None:
 
     all_tracks.sort(reverse=True)   # highest energy first
 
-    used = _used_tracks(music_dirs)
+    # Exclusive lock so parallel short processes don't race on shorts_used.json
+    lock_path = music_dirs[0] / "shorts_pick.lock"
+    with open(lock_path, "w") as _lf:
+        fcntl.flock(_lf, fcntl.LOCK_EX)
+        try:
+            used = _used_tracks(music_dirs)
 
-    # Small library: reset history so every track is available again
-    if len(all_tracks) < _HISTORY_MIN_LIBRARY and used:
-        print(f"  (library has {len(all_tracks)} tracks < {_HISTORY_MIN_LIBRARY} — resetting history)")
-        for root in music_dirs:
-            p = root / "shorts_used.json"
-            if p.exists():
-                p.write_text("[]")
-        used = set()
+            # Filter out recently used tracks
+            fresh = [(e, f) for e, f in all_tracks if str(f) not in used]
 
-    # Filter out recently used tracks
-    fresh = [(e, f) for e, f in all_tracks if str(f) not in used]
+            if not fresh:
+                # All tracks have been used — reset history and start over
+                print("  (all tracks used — resetting history)")
+                for root in music_dirs:
+                    p = root / "shorts_used.json"
+                    if p.exists():
+                        p.write_text("[]")
+                fresh = all_tracks
 
-    if not fresh:
-        # All tracks have been used — reset history and start over
-        print("  (all tracks used — resetting history)")
-        for root in music_dirs:
-            p = root / "shorts_used.json"
-            if p.exists():
-                p.write_text("[]")
-        fresh = all_tracks
+            _energy, chosen = fresh[0]
+            _mark_track_used(chosen, music_dirs)
+        finally:
+            fcntl.flock(_lf, fcntl.LOCK_UN)
 
-    _energy, chosen = fresh[0]
-    _mark_track_used(chosen, music_dirs)
     return chosen
 
 
@@ -421,26 +455,11 @@ def read_project_title(work_dir: Path) -> list[str]:
         return []
 
 
-def _output_name(work_dir: Path) -> str:
-    parts = [p for p in work_dir.parts if p]
-    year = loc = day = ""
-    for i, p in enumerate(parts):
-        if re.match(r"^\d{4}$", p):
-            year = p
-            if i + 1 < len(parts) and re.match(r"^\d{2}-", parts[i + 1]):
-                loc = parts[i + 1]
-            if i + 2 < len(parts):
-                day = parts[i + 2]
-            break
-    tokens = [t for t in [year, loc, day] if t]
-    return "-".join(tokens) if tokens else work_dir.name
-
-
-def _next_version(work_dir: Path, base: str) -> str:
+def _next_version(work_dir: Path) -> str:
     nums = [
         int(m.group(1))
-        for p in work_dir.glob(f"{base}-short_v*.mp4")
-        if (m := re.search(r"-short_v(\d+)\.mp4$", p.name))
+        for p in work_dir.glob("short-v*.mp4")
+        if (m := re.search(r"^short-v(\d+)\.mp4$", p.name))
     ]
     return f"v{max(nums, default=0) + 1:02d}"
 
@@ -463,6 +482,7 @@ def main():
     ap.add_argument("--multicam",   action="store_true", help="Use all-cam scores (main + back cam)")
     ap.add_argument("--ncs",        action="store_true", help="Pick music from /data/music/NCS instead of /data/music/shorts")
     ap.add_argument("--best",       action="store_true", help="Best-of-best: 30s, top CLIP scenes in score order (no randomisation)")
+    ap.add_argument("--beat-sync",  action="store_true", help="Auto-compute shot duration from music BPM (snaps transitions to beats)")
     ap.add_argument("--seed",       type=int,   default=None)
     ap.add_argument("--version",    default="",               help="Force output version string (e.g. v03) — avoids race in batch mode")
     args = ap.parse_args()
@@ -475,18 +495,21 @@ def main():
     if args.seed is not None:
         random.seed(args.seed)
 
-    # Per-camera crop X offsets from project config.ini  e.g. [shorts] crop_x_offsets = back:-300
+    # Per-camera crop X offsets + clip_pool_percent from project config.ini
     _crop_x_offsets: dict[str, int] = {}
+    _clip_pool_percent: int = 50   # default: use top 50% of scenes by CLIP score
     try:
         import configparser as _cp
         _cfg = _cp.ConfigParser()
-        _cfg.read(str(Path(__file__).parent.parent / "config.ini"))
+        _cfg.read([str(Path(args.work_dir) / "config.ini"),
+                   str(Path(__file__).parent.parent / "config.ini")])
         raw_offsets = _cfg.get("shorts", "crop_x_offsets", fallback="")
         for part in raw_offsets.split(","):
             part = part.strip()
             if ":" in part:
                 cam_name, val = part.split(":", 1)
                 _crop_x_offsets[cam_name.strip()] = int(val.strip())
+        _clip_pool_percent = _cfg.getint("shorts", "clip_pool_percent", fallback=50)
     except Exception:
         pass
     if _crop_x_offsets:
@@ -539,7 +562,7 @@ def main():
             cam = cam_map.get(src, "default")
             by_cam.setdefault(cam, []).append(i)
 
-        if len(by_cam) > 1:
+        if args.multicam and len(by_cam) > 1:
             scores = [s for s, _ in raw]
             for cam, idxs in by_cam.items():
                 lo = min(scores[i] for i in idxs)
@@ -551,6 +574,40 @@ def main():
             print(f"Multicam normalisation: {cams_str}")
 
     scenes = sorted(raw, reverse=True)
+
+    # Build scored pool: top clip_pool_percent% of scenes by CLIP score
+    _pool_cutoff = max(1, int(len(scenes) * _clip_pool_percent / 100))
+    _pool_set    = {sn for _, sn in scenes[:_pool_cutoff]}
+    print(f"CLIP pool: top {_clip_pool_percent}% → {len(_pool_set)}/{len(scenes)} scenes")
+
+    # ── Music (select early so beat-sync can inform shot duration) ────────────
+    music_file: Path | None = Path(args.music) if args.music else None
+    if not music_file:
+        search_roots = []
+        if args.music_dir:
+            search_roots.append(Path(args.music_dir))
+        try:
+            import configparser
+            cp = configparser.ConfigParser()
+            cp.read(str(Path(__file__).parent.parent / "config.ini"))
+            d = cp.get("music", "dir", fallback="")
+            if d:
+                if args.ncs:
+                    ncs_dir = Path(d) / "NCS"
+                    search_roots.append(ncs_dir if ncs_dir.is_dir() else Path(d))
+                else:
+                    shorts_dir = Path(d) / "shorts"
+                    search_roots.append(shorts_dir if shorts_dir.is_dir() else Path(d))
+        except Exception:
+            pass
+        if search_roots:
+            music_file = pick_music(search_roots)
+
+    # Beat-sync: derive shot duration from music BPM before computing n_shots
+    if args.beat_sync and music_file:
+        _beat_dur = beat_shot_dur(music_file)
+        if _beat_dur is not None:
+            args.shot = _beat_dur
 
     # Account for xfade overlap: N*shot - (N-1)*xfade = duration
     # → N = (duration - xfade) / (shot - xfade). Add +4 as buffer for skipped scenes.
@@ -580,11 +637,12 @@ def main():
             hook_score, hook_scene = top_candidates[0]
             print(f"Hook: '{hook_scene}'  score={hook_score:.3f}  (top-{top_n} CLIP pool → first shot)")
 
-        # ── Per-camera random pools ───────────────────────────────────────────────
+        # ── Per-camera random pools (only in multicam mode) ──────────────────────
         cam_pools: dict[str, list[str]] = {}
-        if cam_csv.exists():
+        if args.multicam and cam_csv.exists():
             for cam, idxs in by_cam.items():
-                scene_names = [raw[i][1] for i in idxs if raw[i][1] != hook_scene]
+                scene_names = [raw[i][1] for i in idxs
+                               if raw[i][1] != hook_scene and raw[i][1] in _pool_set]
                 cam_pools[cam] = random.sample(scene_names, len(scene_names))
 
             all_cam_names = set(cam_map.values())
@@ -622,7 +680,7 @@ def main():
             picks = ", ".join(f"{c}:{pool_ptrs[c]}" for c in cam_order)
             print(f"Alternating selection: {picks} (total {len(rest)})")
         else:
-            scene_names = [s for _, s in raw if s != hook_scene]
+            scene_names = [s for _, s in raw if s != hook_scene and s in _pool_set]
             rest = [(0.0, s) for s in random.sample(scene_names, min(remaining, len(scene_names)))]
 
         candidates = ([(hook_score, hook_scene)] if hook_scene else []) + rest
@@ -633,28 +691,6 @@ def main():
     print(f"Scenes: {len(scenes)} available  |  picking top {len(candidates)}")
     print(f"Shot: {shot_dur}s  |  xfade: {xfade_dur}s  |  target: ~{len(candidates)*shot_dur:.0f}s\n")
 
-    # ── Music ─────────────────────────────────────────────────────────────────
-    music_file: Path | None = Path(args.music) if args.music else None
-    if not music_file:
-        search_roots = []
-        if args.music_dir:
-            search_roots.append(Path(args.music_dir))
-        try:
-            import configparser
-            cp = configparser.ConfigParser()
-            cp.read(str(Path(__file__).parent.parent / "config.ini"))
-            d = cp.get("music", "dir", fallback="")
-            if d:
-                if args.ncs:
-                    ncs_dir = Path(d) / "NCS"
-                    search_roots.append(ncs_dir if ncs_dir.is_dir() else Path(d))
-                else:
-                    shorts_dir = Path(d) / "shorts"
-                    search_roots.append(shorts_dir if shorts_dir.is_dir() else Path(d))
-        except Exception:
-            pass
-        if search_roots:
-            music_file = pick_music(search_roots)
     if music_file:
         music_ss = find_best_offset(music_file, args.duration)
         print(f"Music: {music_file.name}  ss={music_ss:.1f}s\n")
@@ -745,9 +781,8 @@ def main():
             print(f"\nTransitions: {', '.join(transitions)}")
 
         # ── Pass 1: video-only (xfade chain, no audio) ───────────────────────
-        base      = _output_name(work_dir)
-        version   = args.version if args.version else _next_version(work_dir, base)
-        out_path  = work_dir / f"{base}-short_{version}.mp4"
+        version   = args.version if args.version else _next_version(work_dir)
+        out_path  = work_dir / f"short-{version}.mp4"
 
         fc, vout = build_xfade_graph(len(clip_paths), shot_dur, transitions, xfade_dur)
 
@@ -757,11 +792,16 @@ def main():
 
         print("\n  Encoding video...", flush=True)
         video_only = tmp / "video_only.mp4"
+        _enc_xfade = (["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "22", "-preset", "p4",
+                       "-pix_fmt", "yuv420p", "-color_range", "tv"]
+                      if USE_NVENC else
+                      ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-color_range", "tv",
+                       "-preset", "fast", "-crf", "22"])
         cmd_v = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc,
             "-map", f"{vout}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-color_range", "tv", "-preset", "fast", "-crf", "22",
+            *_enc_xfade,
             "-an", str(video_only),
         ]
         r = subprocess.run(cmd_v, capture_output=True)

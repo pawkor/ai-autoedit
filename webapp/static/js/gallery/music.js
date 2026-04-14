@@ -49,10 +49,35 @@ function resetMusicSort() {
   renderMusicList();
 }
 
-async function _updateSummaryTrack() {
+async function _showTrackInSummary(track) {
   const sumTrack = document.getElementById('sum-track');
-  if (!sumTrack || pinnedTrack) return;
+  if (!sumTrack) return;
+  const artist = track.artist ? `${track.artist} — ` : '';
+  const name   = track.title || track.file.split('/').pop().replace(/\.[^.]+$/, '');
+  const dur    = track.duration ? ` (${fmtDur(track.duration)})` : '';
+  const label  = `${artist}${name}${dur}`;
+  if (track.acr_matched !== undefined) {
+    const st = track.acr_matched ? (track.acr_blocked ? ' ⚠ Claimed' : ' ✓ Free') : ' ✓ No match';
+    sumTrack.textContent = label + st;
+    return;
+  }
+  sumTrack.textContent = label + ' — checking…';
+  try {
+    const acrSt = await api.get('/api/acr-status');
+    if (!acrSt?.configured) { sumTrack.textContent = label; return; }
+    const r = await api.post('/api/music/acr-check', { path: track.file });
+    track.acr_matched = r.matched;
+    track.acr_blocked = r.blocked || false;
+    track.acr_info    = r.matched ? `${r.artists} — ${r.title} (${r.label}) score:${r.score}` : '';
+    const st = r.matched ? (r.blocked ? ' ⚠ Claimed' : ' ✓ Free') : ' ✓ No match';
+    sumTrack.textContent = label + st;
+  } catch(e) {
+    sumTrack.textContent = label;
+  }
+}
 
+async function _updateSummaryTrack() {
+  if (pinnedTrack) return;
   // Ensure music is loaded (user may have skipped Music tab)
   if (!musicTracks.length) {
     const dir = document.getElementById('music-dir-input')?.value?.trim();
@@ -60,35 +85,26 @@ async function _updateSummaryTrack() {
     await loadMusicTracks();
   }
   if (!musicTracks.length) return;
-
+  _rerollIdx = 0;
   const auto = _sortedTracks(musicTracks)[0];
   if (!auto) return;
+  _suggestedTrack = auto.file;
+  await _showTrackInSummary(auto);
+}
 
-  const artist = auto.artist ? `${auto.artist} — ` : '';
-  const name   = auto.title || auto.file.split('/').pop().replace(/\.[^.]+$/, '');
-  const dur    = auto.duration ? ` (${fmtDur(auto.duration)})` : '';
-  const label  = `${artist}${name}${dur}`;
-
-  // Show cached ACR result immediately if available
-  if (auto.acr_matched !== undefined) {
-    const st = auto.acr_matched ? (auto.acr_blocked ? ' ⚠ Claimed' : ' ✓ Free') : ' ✓ No match';
-    sumTrack.textContent = label + st;
-    return;
+async function rerollMusic() {
+  if (pinnedTrack) return; // respect explicit pin
+  if (!musicTracks.length) {
+    const dir = document.getElementById('music-dir-input')?.value?.trim();
+    if (!dir) return;
+    await loadMusicTracks();
   }
-
-  sumTrack.textContent = label + ' — checking…';
-  try {
-    const acrSt = await api.get('/api/acr-status');
-    if (!acrSt?.configured) { sumTrack.textContent = label; return; }
-    const r = await api.post('/api/music/acr-check', { path: auto.file });
-    auto.acr_matched = r.matched;
-    auto.acr_blocked = r.blocked || false;
-    auto.acr_info    = r.matched ? `${r.artists} — ${r.title} (${r.label}) score:${r.score}` : '';
-    const st = r.matched ? (r.blocked ? ' ⚠ Claimed' : ' ✓ Free') : ' ✓ No match';
-    sumTrack.textContent = label + st;
-  } catch(e) {
-    sumTrack.textContent = label;
-  }
+  if (!musicTracks.length) return;
+  const sorted = _sortedTracks(musicTracks);
+  _rerollIdx = (_rerollIdx + 1) % sorted.length;
+  const track = sorted[_rerollIdx];
+  _suggestedTrack = track.file;
+  await _showTrackInSummary(track);
 }
 
 function _sortedTracks(tracks) {
@@ -159,6 +175,7 @@ function renderMusicList() {
         const name = pinnedTrack.split('/').pop().replace(/\.[^.]+$/, '');
         const sumTrack = document.getElementById('sum-track');
         if (sumTrack) sumTrack.textContent = `✓ ${name}`;
+        if (t.duration) _suggestSceneParamsForMusic(t.duration);
       } else {
         pinnedTrack = null;
         const sumTrack = document.getElementById('sum-track');
@@ -376,6 +393,7 @@ function setTargetFromSelectedTrack() {
   const file = [...musicSelected][0];
   const track = musicTracks.find(t => t.file === file);
   if (!track?.duration) return;
+  _suggestSceneParamsForMusic(track.duration);
   const mins = track.duration / 60;
   const mm = Math.floor(mins), ss = Math.round((mins - mm) * 60);
   const inp = document.getElementById('gallery-target-min');
@@ -387,4 +405,34 @@ function setTargetFromSelectedTrack() {
   if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: mins });
   if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { target_minutes: mins });
   switchTab('gallery');
+}
+
+// Auto-suggest scene detection params when a music track is pinned.
+// Only updates fields when current value is restrictive (avoids clobbering intentional settings).
+function _suggestSceneParamsForMusic(trackDurSec) {
+  const maxSceneEl = document.getElementById('js-max-scene');
+  const perFileEl  = document.getElementById('js-per-file');
+  if (!maxSceneEl || !perFileEl) return;
+
+  const suggestedMaxScene = 15;
+  const suggestedPerFile  = Math.round(trackDurSec * 4);
+
+  let changed = false;
+  if (!maxSceneEl.value || Number(maxSceneEl.value) < suggestedMaxScene) {
+    maxSceneEl.value = suggestedMaxScene;
+    currentJobMaxScene = suggestedMaxScene;
+    changed = true;
+  }
+  if (!perFileEl.value || Number(perFileEl.value) < suggestedPerFile) {
+    perFileEl.value = suggestedPerFile;
+    currentJobPerFile = suggestedPerFile;
+    changed = true;
+  }
+  if (changed) {
+    if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, {
+      max_scene: currentJobMaxScene,
+      per_file:  currentJobPerFile,
+    });
+    if (typeof saveSettingsField === 'function') saveSettingsField();
+  }
 }

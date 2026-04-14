@@ -15,11 +15,36 @@ async function populateJobSettings(params) {
   sv('js-title',    params.title);
   sc('js-no-intro',        params.no_intro);
   sc('js-no-music',        params.no_music);
-  sc('js-shorts-text',     params.shorts_text);
-  sc('js-shorts-multicam', params.shorts_multicam);
-  sc('js-shorts-ncs',      params.shorts_ncs);
+  const _clipFirst = params.clip_first ?? cfg?.clip_first ?? true;
+  sc('js-clip-first', _clipFirst);
+  const _cfOpts = document.getElementById('clip-first-opts');
+  if (_cfOpts) _cfOpts.style.display = _clipFirst ? 'flex' : 'none';
+  if (_cfOpts) _cfOpts.style.flexDirection = 'column';
+  const _scoreAllCams = params.score_all_cams ?? cfg?.score_all_cams ?? _clipFirst;
+  sc('js-score-all-cams', _scoreAllCams);
+  const _proxySection = document.getElementById('js-proxy-section');
+  if (_proxySection) _proxySection.style.display = _clipFirst ? 'none' : '';
+  sv('js-clip-scan-interval', params.clip_scan_interval ?? cfg?.clip_scan_interval ?? 3);
+  sv('js-clip-scan-clip-dur', params.clip_scan_clip_dur  ?? cfg?.clip_scan_clip_dur  ?? 8);
+  sv('js-clip-scan-min-gap',  params.clip_scan_min_gap   ?? cfg?.clip_scan_min_gap   ?? 30);
+  sc('js-shorts-text',      params.shorts_text);
+  sc('js-shorts-multicam',  params.shorts_multicam);
+  sc('js-shorts-ncs',       params.shorts_ncs);
+  sc('js-shorts-beat-sync', params.shorts_beat_sync);
   const cropEl = document.getElementById('js-shorts-crop-offsets');
   if (cropEl) cropEl.value = params.shorts_crop_offsets || '';
+  const mdSel = document.getElementById('js-shorts-music-dir');
+  if (mdSel) {
+    const dirsData = await api.get('/api/music-subdirs');
+    mdSel.innerHTML = '<option value="">auto</option>';
+    (dirsData?.subdirs || []).forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = (dirsData.root ? dirsData.root + '/' + d : d);
+      opt.textContent = d;
+      mdSel.appendChild(opt);
+    });
+    if (params.shorts_music_dir) mdSel.value = params.shorts_music_dir;
+  }
   if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
   musicSelected = new Set();
 
@@ -74,10 +99,17 @@ function readJobSettings() {
   const ti = gv('js-title');     if (ti) p.title = ti;
   p.no_intro        = gc('js-no-intro');
   p.no_music        = gc('js-no-music');
-  p.shorts_text     = gc('js-shorts-text');
-  p.shorts_multicam    = gc('js-shorts-multicam');
-  p.shorts_ncs         = gc('js-shorts-ncs');
+  p.clip_first           = gc('js-clip-first');
+  p.score_all_cams       = gc('js-score-all-cams');
+  p.clip_scan_interval   = parseFloat(gv('js-clip-scan-interval') || 3);
+  p.clip_scan_clip_dur   = parseFloat(gv('js-clip-scan-clip-dur')  || 8);
+  p.clip_scan_min_gap    = parseFloat(gv('js-clip-scan-min-gap')   || 30);
+  p.shorts_text      = gc('js-shorts-text');
+  p.shorts_multicam  = gc('js-shorts-multicam');
+  p.shorts_ncs       = gc('js-shorts-ncs');
+  p.shorts_beat_sync = gc('js-shorts-beat-sync');
   p.shorts_crop_offsets = document.getElementById('js-shorts-crop-offsets')?.value?.trim() || '';
+  p.shorts_music_dir    = document.getElementById('js-shorts-music-dir')?.value || '';
   const md = document.getElementById('music-dir-input').value.trim();
   if (md) p.music_dir = md;
   if (musicSelected.size) p.music_files = [...musicSelected];

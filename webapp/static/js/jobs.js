@@ -71,19 +71,21 @@ async function saveJobPrompts() {
 
 // ── Open job ──────────────────────────────────────────────────────────────────
 async function openJob(jobId) {
-  if (jobWs) { jobWs.close(); jobWs=null; }
+  _closeJobWs();
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
   if (_proxyPollTimer) { clearInterval(_proxyPollTimer); _proxyPollTimer=null; }
   currentJobId = jobId;
   jobPhase = null;
   analyzeResult = null;
   pinnedTrack = null;
+  _suggestedTrack = null; _rerollIdx = 0;
   _shortsCount = 1;
   framesData = [];
   manualOverrides = {};
   _autoFillOverrides.clear();
   _galleryDirty = true;
   _galleryThreshold = null;
+  _pendingTargetMin = null;
   currentJobMaxScene = null;
   currentJobPerFile  = null;
   currentJobMinTake  = 0.5;
@@ -135,11 +137,11 @@ async function openJob(jobId) {
   await populateJobSettings(job.params);
   updatePhaseUI();
 
-  // Tab selection on open
+  // Tab selection on open — gallery is the default center view.
   if (job.status === 'running' || job.status === 'queued') {
     switchTab('log');
   } else {
-    switchTab('settings');
+    switchTab('gallery');
   }
 
   if (job.status === 'running') {
@@ -179,20 +181,23 @@ async function openJob(jobId) {
   connectJobWs(jobId, job.started_at);
 
   if (job.status === 'done' || job.status === 'failed' || jobPhase === 'analyzed') {
-    // If this job has a target duration, mark search as pending NOW — before loadFrames
-    // even fires — so that switchTab('gallery') shows the progress bar immediately.
-    if (parseFloat(job.params.target_minutes) > 0) {
-      _targetSearchActive = true;
-      _setGallerySearchStatus(0, 12);
-    }
-    loadFrames(jobId);
-    loadAnalyzeResult(jobId);
+    // Binary search is deferred until the gallery tab is opened.
+    // _pendingTargetMin is consumed by switchTab('gallery') → autoTargetThreshold.
+    const tm = parseFloat(job.params.target_minutes);
+    if (tm > 0) _pendingTargetMin = tm;
   }
   if (job.status === 'done' && jobPhase === 'done') {
     loadResults(jobId);
   }
   refreshJobList();
-  startProxy();
+  resumeProxyIfRunning();
+}
+
+function _closeJobWs() {
+  if (!jobWs) return;
+  jobWs.onclose = null;  // prevent auto-reconnect from firing on intentional close
+  jobWs.close();
+  jobWs = null;
 }
 
 function connectJobWs(jobId, startedAt) {
@@ -227,7 +232,7 @@ function connectJobWs(jobId, startedAt) {
       }
       if (jobPhase === 'shorts' && _shortsCount === 1) {
         // Single-short mode: derive progress from make_shorts.py clip log lines "[X/Y]"
-        const m = msg.line.match(/^\s*\[(\d+)\/(\d+)\]/);
+        const m = msg.line.match(/^\s*\[\s*(\d+)\/(\d+)\]/);
         if (m) {
           const pct = Math.round(parseInt(m[1]) / parseInt(m[2]) * 100);
           const bar = document.getElementById('shorts-progress-bar');
@@ -298,6 +303,8 @@ function connectJobWs(jobId, startedAt) {
           } else {
             const btnR = document.getElementById('btn-render');
             if (btnR) { btnR.disabled = false; btnR.textContent = '▶ Render Highlight'; }
+            const btnMD = document.getElementById('btn-render-md');
+            if (btnMD) { btnMD.disabled = false; btnMD.textContent = '♪ Music-driven'; }
             const lbl = document.getElementById('render-status-label');
             if (lbl) lbl.textContent = msg.status === 'done' ? '✓ Done' : '✗ Failed';
             const etaEl = document.getElementById('render-eta');
@@ -312,6 +319,15 @@ function connectJobWs(jobId, startedAt) {
         }
         refreshJobList();
       }
+    }
+  };
+  jobWs.onclose = () => {
+    jobWs = null;
+    // Reconnect if job is still active
+    if (currentJobId) {
+      setTimeout(() => {
+        if (currentJobId && !jobWs) connectJobWs(currentJobId, startedAt);
+      }, 2000);
     }
   };
 }
@@ -336,16 +352,13 @@ function updatePhaseUI() {
     document.getElementById('render-progress-wrap').style.display = '';
   }
 
-  // Tab badges
-  const badges = {
-    settings: '○', gallery: '○', music: '○', summary: '○', log: '', results: '○',
-  };
-  if (analyzed || jobPhase === 'analyzing') badges.settings = '✓';
+  // Tab badges — TAB_NAMES = ['gallery', 'music', 'results', 'log']
+  const badges = { gallery: '○', music: '○', results: '○', log: '' };
   if (jobPhase === 'analyzing') badges.gallery = '●';
   if (analyzed) badges.gallery = '✓';
   if (pinnedTrack) badges.music = '✓';
-  if (rendering) badges.summary = '●';
-  if (jobPhase === 'done') { badges.summary = '✓'; badges.results = '✓'; }
+  if (jobPhase === 'done') badges.results = '✓';
+  if (btnRender) btnRender.setAttribute('data-rendering', rendering ? '1' : '');
 
   TAB_NAMES.forEach((name, i) => {
     const el = document.querySelectorAll('.tab')[i];
@@ -418,10 +431,13 @@ async function startRenderShort() {
     wrap.style.display = 'none';
     return;
   }
-  // Only reconnect WS if main render is NOT currently active
+  btn.disabled = false;
+  btn.textContent = '▶ Render Short';
+  switchTab('log');
+  // Reconnect WS if not already connected, or if main render is not active
   const job = await api.get(`/api/jobs/${currentJobId}`);
-  if (job?.status !== 'running' && job?.status !== 'queued') {
-    if (jobWs) { jobWs.close(); jobWs = null; }
+  if (!jobWs || (job?.status !== 'running' && job?.status !== 'queued')) {
+    _closeJobWs();
     document.getElementById('log-panel').innerHTML = '';
     connectJobWs(currentJobId, Date.now() / 1000);
   }
@@ -435,7 +451,7 @@ async function startRender() {
   _btnRender.disabled = true;
   _btnRender.textContent = 'Rendering...';
   const resp = await api.post(`/api/jobs/${currentJobId}/render`, {
-    selected_track: pinnedTrack || null,
+    selected_track: pinnedTrack || _suggestedTrack || null,
     music_files: [...musicSelected],
     threshold: _galleryThreshold,
     max_scene: currentJobMaxScene || null,
@@ -448,7 +464,7 @@ async function startRender() {
     return;
   }
   // WS was closed by server after analyze — reconnect to stream render log
-  if (jobWs) { jobWs.close(); jobWs = null; }
+  _closeJobWs();
   document.getElementById('log-panel').innerHTML = '';
   _renderTotalSec = null;
   _renderStepNum = 0;
@@ -460,6 +476,30 @@ async function startRender() {
   connectJobWs(currentJobId, Date.now() / 1000);
 }
 
+
+async function startMusicDrivenRender() {
+  if (!currentJobId) return;
+  const btn = document.getElementById('btn-render-md');
+  btn.disabled = true;
+  btn.textContent = '♪ Working…';
+  document.getElementById('render-progress-wrap').style.display = '';
+  document.getElementById('render-status-label').textContent = 'Music-driven render…';
+  const resp = await api.post(`/api/jobs/${currentJobId}/render-music-driven`, {
+    music_file: pinnedTrack || _suggestedTrack || null,
+  });
+  if (!resp?.id) {
+    alert('Music-driven render failed to start: ' + JSON.stringify(resp));
+    btn.disabled = false;
+    btn.textContent = '♪ Music-driven';
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = '♪ Music-driven';
+  _closeJobWs();
+  document.getElementById('log-panel').innerHTML = '';
+  switchTab('log');
+  connectJobWs(currentJobId, Date.now() / 1000);
+}
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 const PROGRESS_RE = /^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|/;
@@ -652,12 +692,13 @@ async function removeJob(jobId) {
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const TAB_NAMES = ['settings', 'gallery', 'music', 'summary', 'results', 'log'];
+const TAB_NAMES = ['gallery', 'music', 'results', 'log'];
 
 function stopVideo() {
   const v = document.getElementById('video-player');
-  v.pause(); v.removeAttribute('src'); v.load();
-  document.getElementById('video-wrap').style.display = 'none';
+  if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  const vw = document.getElementById('video-wrap');
+  if (vw) vw.style.display = 'none';
   document.querySelectorAll('.rf').forEach(c=>c.classList.remove('playing'));
 }
 

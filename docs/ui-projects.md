@@ -16,6 +16,8 @@ The **a..z / z..a** button sorts the project list alphabetically ascending or de
 
 ## Nowy projekt / New project
 
+![Nowy projekt](img/AI-autoedit-new-project.png)
+
 ![Przeglądarka katalogów](img/AI-autoedit-new-workdir.png)
 
 Kliknięcie przycisku **+ New project** otwiera przeglądarkę katalogów. Nawigacja: pojedyncze kliknięcie zaznacza katalog, podwójne kliknięcie wchodzi do środka. Katalogi z plikami MP4 oznaczone są plakietką **MP4**, a te z istniejącym cache — plakietką **cached**.

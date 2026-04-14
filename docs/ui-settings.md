@@ -16,7 +16,7 @@ Working directory with MP4 files (read-only — set when the project is created)
 
 **Konfiguracja kamer / Camera configuration**
 
-![Ustawienia — multicam](img/AI-autoedit-settings-multi-cam.png)
+![Ustawienia](img/AI-autoedit-settings.png)
 
 Lista podkatalogów kamer. Cam A = źródło audio; pozostałe kamery są wyciszane w mikście. Przycisk **+ Add camera** dodaje kolejny wiersz. Przycisk 📁 przy każdej kamerze otwiera przeglądarkę plików dla tego podkatalogu.
 
@@ -48,32 +48,51 @@ Proxies are stored in `_autoframe/proxy/` and are not included in output files. 
 
 ### Scene detection *(requires Re-analyze)*
 
-Parametry PySceneDetect — wpływają na etap detekcji cięć. Zmiana wymaga Re-analyze żeby przeliczyć sceny od nowa.
+Przycisk **⚙ Advanced** otwiera modal z parametrami detekcji.
 
-PySceneDetect parameters — affect the cut detection stage. Changes require Re-analyze to reprocess scenes.
+The **⚙ Advanced** button opens a modal with detection parameters.
 
 | Parametr | Domyślnie | Opis / Description |
 |----------|-----------|---------------------|
-| Detect threshold | `20` | Czułość detektora. Wyższy = mniej cięć. Dla leśnego materiału zalecane 24–28. / Detector sensitivity. Higher = fewer cuts. For forest/lighting-heavy footage try 24–28. |
+| Detect threshold | `20` (auto) | Czułość detektora. Auto-kalibrowany przed każdym runs. / Detector sensitivity. Auto-calibrated before each run. |
 | Min scene len | `8` | Minimalna długość sceny w sekundach. / Minimum scene duration in seconds. |
+
+**CLIP-first mode (experimental)** — pomija PySceneDetect; skanuje klatki co N sekund i extraktuje klipy wokół CLIP score peaks. Lepsza selekcja dla długich ciągłych nagrań. Wymagany re-analyze po zmianie.
+
+**CLIP-first mode (experimental)** — skips PySceneDetect; scans frames every N seconds and extracts clips around CLIP score peaks. Better for long continuous shots. Re-analyze required after change.
+
+| Parametr CLIP-first | Domyślnie | Opis |
+|--------------------|-----------|------|
+| Interval (s) | `3` | Sekundy między próbkowanymi klatkami |
+| Clip dur (s) | `8` | Długość wycinanego klipu |
+| Min gap (s) | `30` | Min. odstęp między klipami |
+| Score all cameras | `on` (auto) | Scoruje klatki ze wszystkich kamer → `scene_scores_allcam.csv`. Wymagane dla music-driven multicam. Automatycznie włączane przy zaznaczeniu CLIP-first. |
+
+**⚠ Re-analyze badge** — obok przycisku Analyze pojawia się ostrzeżenie gdy ustawienia wykrywania nie zgadzają się z istniejącymi scenami (np. CLIP-first zaznaczony ale sceny są `-scene-NNN`).
+
+The **⚠ Re-analyze badge** appears next to the Analyze button when detection settings don't match existing scenes (e.g. CLIP-first checked but scenes are `-scene-NNN`).
+
+**Traditional mode** — checkbox w Advanced modal odkrywa: `▶ Render Highlight`, suwak Target dur., pola Max scene / Per file. Domyślnie ukryte — nie potrzebne w trybie music-driven.
+
+**Traditional mode** — checkbox in the Advanced modal reveals: `▶ Render Highlight` button, Target dur. slider, Max scene / Per file fields. Hidden by default — not needed in music-driven mode.
 
 ---
 
-### Scene selection
+### Scene selection *(Traditional mode only)*
 
 | Parametr | Opis / Description |
 |----------|--------------------|
 | Max scene sec | Maks. czas wycinany z jednej sceny (środek klipu). / Max seconds taken per scene (centred). |
-| Max per file sec | Maks. łączny czas z jednego pliku. Nadmiarowe sceny oznaczone jako „limit" w Gallery. / Max total seconds from one source file. Excess scenes shown as "limit" in Gallery. |
-| Target min | Docelowy czas highlight w minutach — używany przez automatyczne wyszukiwanie progu w Gallery i przycisk ⟳ Fill. / Target highlight duration in minutes — used by the Gallery auto threshold search and the ⟳ Fill button. |
+| Max per file sec | Maks. łączny czas z jednego pliku. / Max total seconds from one source file. |
+| Target min | Docelowy czas highlight — używany przez auto threshold search i ⟳ Fill. / Target highlight duration — used by auto threshold search and ⟳ Fill. |
 
-Przycisk **⟳ Fill** oblicza Max scene sec i Max per file sec automatycznie na podstawie liczby plików źródłowych i docelowego czasu.
+Przycisk **⟳ Fill** oblicza Max scene sec i Max per file sec automatycznie.
 
-The **⟳ Fill** button auto-calculates Max scene sec and Max per file sec from the source file count and target duration.
+The **⟳ Fill** button auto-calculates Max scene sec and Max per file sec.
 
-Threshold CLIP ustawiany jest na żywo przez suwak w zakładce Gallery.
+Threshold CLIP ustawiany jest automatycznie przez wyszukiwanie binarne (Target dur.) w zakładce Select scenes.
 
-The CLIP threshold is set live via the Gallery slider — not in Settings.
+The CLIP threshold is set automatically by the binary search (Target dur.) in the Select scenes tab.
 
 ---
 

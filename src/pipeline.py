@@ -119,15 +119,251 @@ def _output_name(work_dir: Path) -> str:
 # ── Versioning helper ─────────────────────────────────────────────────────────
 
 def _next_version(path: Path) -> Path:
-    """Return path with _vN suffix, e.g. highlight_final_music_v2.mp4."""
+    """Return path with -vNN suffix, e.g. highlight-v01.mp4."""
     parent, ext = path.parent, path.suffix
-    base = re.sub(r'_v\d+$', '', path.stem)
+    base = re.sub(r'-v\d+$', '', path.stem)
     nums = [
         int(m.group(1))
-        for f in parent.glob(f"{base}_v*{ext}")
-        if (m := re.match(rf'^{re.escape(base)}_v(\d+)$', f.stem))
+        for f in parent.glob(f"{base}-v*{ext}")
+        if (m := re.match(rf'^{re.escape(base)}-v(\d+)$', f.stem))
     ]
-    return parent / f"{base}_v{max(nums, default=0) + 1}{ext}"
+    return parent / f"{base}-v{max(nums, default=0) + 1:02d}{ext}"
+
+
+# ── Post-processing (intro/outro + rename + preview) ─────────────────────────
+
+async def apply_postprocess(
+    work_dir:  Path,
+    highlight: Path,
+    params:    dict,
+) -> AsyncIterator[str]:
+    """
+    Apply intro/outro, rename to output name, generate preview.
+    Yields log lines. Called after music_driven.py completes.
+    highlight: path to the rendered video (music already mixed in).
+    """
+    cp       = _load_cfg(work_dir)
+    auto_dir = work_dir / _s(cp, "paths", "work_subdir", "_autoframe")
+
+    ffmpeg  = os.path.expanduser(_s(cp, "paths", "ffmpeg",  "ffmpeg"))
+    ffprobe = os.path.expanduser(_s(cp, "paths", "ffprobe", "ffprobe"))
+    font    = os.path.expanduser(_s(cp, "intro_outro", "font",
+                                    "~/fonts/Caveat-Bold.ttf"))
+
+    resolution   = _s(cp, "video", "resolution",  "3840:2160")
+    framerate    = _s(cp, "video", "framerate",   "60")
+    nvenc_cq     = _s(cp, "video", "nvenc_cq",    "18")
+    nvenc_preset = _s(cp, "video", "nvenc_preset", "p5")
+    x264_crf     = _s(cp, "video", "x264_crf",    "15")
+    x264_preset  = _s(cp, "video", "x264_preset", "fast")
+
+    intro_dur   = _s(cp, "intro_outro", "duration",          "3")
+    fade_dur    = float(_s(cp, "intro_outro", "fade_duration", "1"))
+    outro_text  = _s(cp, "intro_outro", "outro_text",        "Editing powered by AI")
+    fsize_title = _s(cp, "intro_outro", "font_size_title",   "120")
+    fsize_sub   = _s(cp, "intro_outro", "font_size_subtitle","96")
+    fsize_outro = _s(cp, "intro_outro", "font_size_outro",   "60")
+
+    # Detect NVENC
+    enc_proc = await asyncio.create_subprocess_exec(
+        ffmpeg, "-encoders",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    enc_out, _ = await enc_proc.communicate()
+    if b"h264_nvenc" in enc_out:
+        vid_codec   = "h264_nvenc"
+        vid_quality = ["-rc", "vbr", "-cq", nvenc_cq, "-b:v", "0", "-preset", nvenc_preset]
+        hwaccel     = ["-hwaccel", "cuda"]
+    else:
+        vid_codec   = "libx264"
+        vid_quality = ["-crf", x264_crf, "-preset", x264_preset]
+        hwaccel     = []
+
+    no_intro = bool(params.get("no_intro", False))
+    title    = str(params.get("title") or _output_name(work_dir))
+    hl_dur   = await _probe_duration(highlight, ffprobe) or 0.0
+    final: Path | None = None
+
+    if not no_intro:
+        yield ""
+        yield "Adding intro/outro..."
+
+        # Best frame from scores CSV
+        _frames_dir = auto_dir / "frames"
+        best_frame  = None
+        for _csv in [auto_dir / "scene_scores.csv", auto_dir / "scene_scores_allcam.csv"]:
+            if _csv.exists():
+                try:
+                    _df = pd.read_csv(_csv)
+                    _best = _df.iloc[0]["scene"]
+                    best_frame = next(
+                        (p for p in [
+                            _frames_dir / f"{_best}_f1.jpg",
+                            _frames_dir / f"{_best}_f0.jpg",
+                            _frames_dir / f"{_best}.jpg",
+                        ] if p.exists()),
+                        None
+                    )
+                    if best_frame:
+                        break
+                except Exception:
+                    pass
+        if best_frame is None:
+            _all = sorted(_frames_dir.glob("*.jpg"))
+            best_frame = _all[0] if _all else None
+
+        if best_frame is None:
+            yield "  ⚠ No frame for intro card — skipping intro/outro"
+        else:
+            # Try to extract a full-res frame from the original clip (autocut/) instead
+            # of using the low-res 640px gallery thumbnail.
+            _best_scene = None
+            for _csv in [auto_dir / "scene_scores.csv", auto_dir / "scene_scores_allcam.csv"]:
+                if _csv.exists():
+                    try:
+                        _best_scene = pd.read_csv(_csv).iloc[0]["scene"]
+                        break
+                    except Exception:
+                        pass
+            if _best_scene:
+                _clip_file = auto_dir / "autocut" / f"{_best_scene}.mp4"
+                if _clip_file.exists():
+                    _hq_frame = auto_dir / "intro_hq_frame.jpg"
+                    _probe = await asyncio.create_subprocess_exec(
+                        ffprobe, "-v", "quiet", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", str(_clip_file),
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    _pdur, _ = await _probe.communicate()
+                    _cdur = float(_pdur.decode().strip() or "0")
+                    if _cdur > 0:
+                        _fproc = await asyncio.create_subprocess_exec(
+                            ffmpeg, "-ss", f"{_cdur * 0.5:.3f}", "-i", str(_clip_file),
+                            "-vframes", "1", "-q:v", "2", str(_hq_frame), "-y", "-loglevel", "quiet",
+                            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                        )
+                        await _fproc.wait()
+                        if _hq_frame.exists():
+                            best_frame = _hq_frame
+                            yield "  intro: using full-res frame from source clip"
+
+            # Use configured resolution (music-driven clips are normalised to it)
+            w, h = resolution.split(":")
+
+            title_parts = title.split("\n")
+            line1 = title_parts[0] if title_parts else ""
+            line2 = " ".join(title_parts[1:]) if len(title_parts) > 1 else ""
+            fade_out_st = float(intro_dur) - fade_dur
+
+            intro_mp4 = auto_dir / "intro.mp4"
+            outro_mp4 = auto_dir / "outro.mp4"
+            hl_faded  = auto_dir / "highlight_faded.mp4"
+            final     = auto_dir / "highlight_final.mp4"
+
+            yield "  intro/outro [1/3] intro card..."
+            vf_intro = (
+                f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+                f"drawtext=text='{line1}':fontfile={font}:fontsize={fsize_title}:"
+                f"fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2-80:"
+                f"shadowcolor=black:shadowx=4:shadowy=4,"
+                f"drawtext=text='{line2}':fontfile={font}:fontsize={fsize_sub}:"
+                f"fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2+60:"
+                f"shadowcolor=black:shadowx=4:shadowy=4,"
+                f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st:.3f}:d={fade_dur}"
+            )
+            await _run([
+                ffmpeg, "-loop", "1", "-i", str(best_frame),
+                "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+                "-t", intro_dur, "-vf", vf_intro,
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-r", framerate,
+                "-c:a", "aac", "-ar", "48000", "-ac", "2",
+                str(intro_mp4), "-y", "-loglevel", "quiet",
+            ])
+
+            yield "  intro/outro [2/3] fading highlight..."
+            fade_out_hl = hl_dur - fade_dur
+            await _run([
+                ffmpeg, *hwaccel, "-i", str(highlight),
+                "-vf", f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_hl:.3f}:d={fade_dur}",
+                "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-c:a", "copy",
+                str(hl_faded), "-y", "-loglevel", "quiet",
+            ])
+
+            yield "  intro/outro [3/3] outro + merge..."
+            vf_outro = (
+                f"drawtext=text='{outro_text}':fontfile={font}:fontsize={fsize_outro}:"
+                f"fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:"
+                f"shadowcolor=gray:shadowx=2:shadowy=2,"
+                f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st:.3f}:d={fade_dur}"
+            )
+            await _run([
+                ffmpeg, "-f", "lavfi",
+                "-i", f"color=c=black:s={w}x{h}:d={intro_dur}:r={framerate}",
+                "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+                "-vf", vf_outro, "-map", "0:v", "-map", "1:a",
+                "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-r", framerate,
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-t", intro_dur,
+                str(outro_mp4), "-y", "-loglevel", "quiet",
+            ])
+
+            concat_list = auto_dir / "final_concat.txt"
+            concat_list.write_text(
+                f"file '{intro_mp4}'\nfile '{hl_faded}'\nfile '{outro_mp4}'\n"
+            )
+            await _run([
+                ffmpeg, "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                "-c", "copy", "-movflags", "+faststart",
+                str(final), "-y", "-loglevel", "quiet",
+            ])
+            highlight.unlink(missing_ok=True)
+            hl_faded.unlink(missing_ok=True)
+            intro_mp4.unlink(missing_ok=True)
+            outro_mp4.unlink(missing_ok=True)
+            concat_list.unlink(missing_ok=True)
+
+            final_dur = await _probe_duration(final, ffprobe) or 0
+            yield f"  Final: {int(final_dur//60)}:{int(final_dur%60):02d} ({final_dur:.1f}s)"
+
+    # Rename to output name (work_dir/YYYY-MM-Place-DD-vNN.mp4)
+    src = final or highlight
+    if src and src.exists():
+        out_name = _output_name(work_dir)
+        out_path = _next_version(work_dir / f"{out_name}.mp4")
+        src.rename(out_path)
+        yield f"  → {out_path.name}"
+
+        # Preview
+        yield ""
+        yield "Generating preview..."
+        _prev_out = out_path.with_name(out_path.stem + "_preview.mp4")
+        if vid_codec == "h264_nvenc":
+            _prev_cmd = [
+                ffmpeg, *hwaccel, "-i", str(out_path),
+                "-vf", "scale=-2:1080",
+                "-c:v", "h264_nvenc", "-b:v", "15M", "-maxrate", "20M", "-bufsize", "30M",
+                "-preset", "p4", "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(_prev_out), "-y",
+            ]
+        else:
+            _prev_cmd = [
+                ffmpeg, "-i", str(out_path),
+                "-vf", "scale=-2:1080",
+                "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(_prev_out), "-y",
+            ]
+        _ret, _ = await _run(_prev_cmd)
+        if _prev_out.exists():
+            yield f"  ✓ {_prev_out.name}"
+        else:
+            yield f"  ⚠ Preview failed (code {_ret})"
+    else:
+        yield "  ⚠ No output file to rename"
+
+    yield ""
+    yield "✓ DONE"
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -176,7 +412,8 @@ async def estimate(params: dict, work_dir: Path) -> dict:
     cam_a       = _raw_cams[0] if _raw_cams else ""
     work_subdir = _s(cp, "paths", "work_subdir", "_autoframe")
     auto_dir    = work_dir / work_subdir
-    scores_csv  = auto_dir / "scene_scores.csv"
+    allcam_csv  = auto_dir / "scene_scores_allcam.csv"
+    scores_csv  = allcam_csv if allcam_csv.exists() else auto_dir / "scene_scores.csv"
 
     if not scores_csv.exists():
         return {}
@@ -214,6 +451,10 @@ async def estimate(params: dict, work_dir: Path) -> dict:
     out, _ = await proc.communicate()
     lines = out.decode("utf-8", errors="replace").splitlines()
 
+    if proc.returncode != 0:
+        import logging as _log
+        _log.warning("estimate() select_scenes.py exited %d:\n%s", proc.returncode, "\n".join(lines[-20:]))
+
     scenes, dur, main = None, None, None
     for ln in lines:
         m = re.search(r'^Selected:\s*(\d+)', ln)
@@ -224,6 +465,12 @@ async def estimate(params: dict, work_dir: Path) -> dict:
         if m: main = int(m.group(1))
 
     cam_ratio = round(scenes / main, 4) if (scenes and main and main > 0) else 1.0
+
+    if not dur:
+        import logging as _log
+        _log.warning("estimate() returned 0 duration (threshold=%.4f). Output:\n%s",
+                     threshold, "\n".join(lines[-30:]))
+
     result = {
         "scenes":       scenes or 0,
         "duration_sec": round(dur, 1) if dur is not None else 0,
@@ -269,10 +516,11 @@ async def find_threshold_iter(params: dict, work_dir: Path, target_sec: float):
             yield {"done": True, "error": "No scores CSV — run analysis first"}
             return
         dur = r.get("duration_sec", 0)
-        diff = abs(dur - target_sec)
-        if diff < best_diff:
-            best_diff = diff
-            best = r
+        if dur > 0:
+            diff = abs(dur - target_sec)
+            if diff < best_diff:
+                best_diff = diff
+                best = r
         yield {"iteration": i + 1, "total": MAX_ITER, "threshold": mid,
                "duration_sec": dur, "done": False}
         if dur > target_sec:
@@ -322,6 +570,7 @@ async def create_proxy(params: dict, work_dir: Path):
 
     total        = len(source_files)
     finished     = 0
+    failed_files: list[str] = []
     cam_finished = {cam: 0 for cam in cam_files}
     cam_totals   = {cam: len(fs) for cam, fs in cam_files.items()}
 
@@ -329,51 +578,72 @@ async def create_proxy(params: dict, work_dir: Path):
         return {cam: {"total": cam_totals[cam], "finished": cam_finished[cam]}
                 for cam in cam_files}
 
-    # Per-camera queues for parallel processing
+    # Detect NVENC availability — prefer GPU for proxy encoding
+    _use_nvenc = False
+    _nvenc_check = await asyncio.create_subprocess_exec(
+        ffmpeg, "-hide_banner", "-encoders",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    _enc_out, _ = await _nvenc_check.communicate()
+    if b"h264_nvenc" in _enc_out:
+        _use_nvenc = True
+
+    # Limit concurrent encodes: GPU=4 (NVENC sessions), CPU=half cores (cap 8)
+    _max_parallel = min(12, max(1, (os.cpu_count() or 2) // 2))
+    _enc_sem = asyncio.Semaphore(_max_parallel)
+
     queue: asyncio.Queue = asyncio.Queue()
     current_files: dict = {cam: "" for cam in cam_files}
 
-    async def _run_cam(cam: str, files: list):
+    async def _encode_one(cam: str, sf: Path):
         nonlocal finished
-        for sf in files:
-            proxy     = _proxy_path(sf, work_dir, auto_dir, cameras)
-            proxy_tmp = proxy.with_suffix(".mp4.tmp")
+        proxy     = _proxy_path(sf, work_dir, auto_dir, cameras)
+        proxy_tmp = proxy.with_suffix(".mp4.tmp")
 
-            if proxy.exists():
-                finished += 1
-                cam_finished[cam] += 1
-                await queue.put({"cam": cam, "file": sf.name})
-                continue
-
-            if proxy_tmp.exists():
-                await queue.put({"cam": cam, "file": sf.name, "skipped": True})
-                continue
-
-            proxy.parent.mkdir(parents=True, exist_ok=True)
+        if proxy.exists():
+            finished += 1
+            cam_finished[cam] += 1
             await queue.put({"cam": cam, "file": sf.name})
+            return
 
-            proc = await asyncio.create_subprocess_exec(
-                ffmpeg, "-y", "-i", str(sf),
+        if proxy_tmp.exists():
+            await queue.put({"cam": cam, "file": sf.name, "skipped": True})
+            return
+
+        proxy.parent.mkdir(parents=True, exist_ok=True)
+        await queue.put({"cam": cam, "file": sf.name})
+
+        async with _enc_sem:
+            # Proxy is 480p — CPU libx264 ultrafast is faster than NVENC here
+            # (NVENC bottlenecked by CPU decode/scale, PCI-E transfer overhead not worth it)
+            enc_args = [
+                "-y", "-i", str(sf),
                 "-vf", "scale=-2:480,fps=20",
                 "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
-                "-fps_mode", "cfr", "-an",
-                "-f", "mp4",
-                str(proxy_tmp),
+                "-fps_mode", "cfr", "-an", "-f", "mp4",
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                ffmpeg, *enc_args, str(proxy_tmp),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
             _, stderr_bytes = await proc.communicate()
-            if proc.returncode == 0 and proxy_tmp.exists():
-                proxy_tmp.rename(proxy)
-                finished += 1
-                cam_finished[cam] += 1
-            else:
-                proxy_tmp.unlink(missing_ok=True)
-                err_msg = stderr_bytes.decode("utf-8", errors="replace").strip().splitlines()
-                err_tail = " | ".join(err_msg[-3:]) if err_msg else f"rc={proc.returncode}"
-                await queue.put({"cam": cam, "file": sf.name,
-                                 "error": f"ffmpeg failed for {sf.name}: {err_tail}"})
 
+        if proc.returncode == 0 and proxy_tmp.exists():
+            proxy_tmp.rename(proxy)
+            finished += 1
+            cam_finished[cam] += 1
+        else:
+            proxy_tmp.unlink(missing_ok=True)
+            err_msg = stderr_bytes.decode("utf-8", errors="replace").strip().splitlines()
+            err_tail = " | ".join(err_msg[-3:]) if err_msg else f"rc={proc.returncode}"
+            failed_files.append(sf.name)
+            await queue.put({"cam": cam, "file": sf.name,
+                             "error": f"ffmpeg failed for {sf.name}: {err_tail}"})
+
+    async def _run_cam(cam: str, files: list):
+        tasks = [asyncio.create_task(_encode_one(cam, sf)) for sf in files]
+        await asyncio.gather(*tasks)
         await queue.put({"cam": cam, "done": True})
 
     cam_tasks = [asyncio.create_task(_run_cam(cam, files))
@@ -400,7 +670,8 @@ async def create_proxy(params: dict, work_dir: Path):
         await asyncio.gather(*cam_tasks, return_exceptions=True)
         raise
 
-    yield {"done": True, "total": total, "finished": finished, "cams": _cams_st()}
+    yield {"done": True, "total": total, "finished": finished, "cams": _cams_st(),
+           **({"failed_files": failed_files} if failed_files else {})}
 
 
 async def run(params: dict, work_dir: Path,
@@ -420,6 +691,7 @@ async def run(params: dict, work_dir: Path,
     min_gap_r   = float(params.get("min_gap_sec") or _f(cp, "scene_selection", "min_gap_sec",     0))
     no_intro    = bool(params.get("no_intro",  False))
     no_music    = bool(params.get("no_music",  False))
+    clip_first  = bool(params.get("clip_first", True))
     # cameras: ordered list, first = audio cam; falls back to legacy cam_a/cam_b
     _raw_cams = params.get("cameras") or []
     if isinstance(_raw_cams, str):
@@ -541,10 +813,75 @@ async def run(params: dict, work_dir: Path,
                 fh.write(f"{sf.stem},{matched}\n")
         yield f"  {len(cameras)}-cam: {' / '.join(cameras)}"
 
+    # ── [2/6]–[5/6] Scene extraction + CLIP scoring ──────────────────────────
+    if clip_first:
+        # ── CLIP-first mode: dense scan → peaks → clip extraction ─────────────
+        yield ""
+        yield "[2/6] CLIP-first scan (interval={:.0f}s, clip={:.0f}s, gap={:.0f}s)...".format(
+            float(params.get("clip_scan_interval", 3)),
+            float(params.get("clip_scan_clip_dur", 8)),
+            float(params.get("clip_scan_min_gap",  30)),
+        )
+        # Clear stale clips from previous runs (both scenedetect and old clip-first)
+        _stale_clips = (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
+                        list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+        if _stale_clips:
+            for _sf in _stale_clips:
+                _sf.unlink()
+            yield f"  Cleared {len(_stale_clips)} old clip(s)"
+        _safe_env_cs = {k: v for k, v in os.environ.items()
+                        if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
+        _is_dual_cs = bool(cameras and len(cameras) > 1)
+        scan_env = {
+            **_safe_env_cs,
+            "WORK_DIR":              str(work_dir),
+            "AUTO_DIR":              str(auto_dir),
+            "CAMERAS":               ",".join(cameras),
+            "FFMPEG":                ffmpeg,
+            "FFPROBE":               ffprobe,
+            "OUTPUT_CSV":            str(auto_dir / "scene_scores.csv"),
+            "OUTPUT_CSV_ALLCAM":     str(auto_dir / "scene_scores_allcam.csv"),
+            "CAM_SOURCES":           str(auto_dir / "camera_sources.csv"),
+            "AUDIO_CAM":             cam_a,
+            "CLIP_SCAN_INTERVAL_SEC":str(params.get("clip_scan_interval", 3)),
+            "CLIP_SCAN_CLIP_DUR_SEC":str(params.get("clip_scan_clip_dur",  8)),
+            "CLIP_SCAN_MIN_GAP_SEC": str(params.get("clip_scan_min_gap",  30)),
+            **({"CLIP_BATCH_SIZE":  str(params["batch_size"])}  if params.get("batch_size")  else {}),
+            **({"CLIP_NUM_WORKERS": str(params["clip_workers"])} if params.get("clip_workers") else {}),
+        }
+        scan_proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(SCRIPT_DIR / "clip_scan.py"),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(work_dir),
+            env=scan_env,
+        )
+        async for raw in scan_proc.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if line:
+                yield f"  {line}"
+        await scan_proc.wait()
+        scores_csv = auto_dir / "scene_scores.csv"
+        if not scores_csv.exists():
+            raise RuntimeError("CLIP scan failed — no scene_scores.csv produced.")
+        scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
+        yield f"  [3/6]–[5/6] skipped (CLIP-first mode)"
+        yield f"  Clips: {len(scene_files)}  Scores: {scores_csv.name}"
+        _cam_src_csv = auto_dir / "camera_sources.csv"
+        import hashlib as _hashlib
+        _cur_hash = _hashlib.sha256(
+            (params.get("positive", "") + "\n---\n" + params.get("negative", "")).encode()
+        ).hexdigest()
+        (auto_dir / "scores_prompts.hash").write_text(_cur_hash)
+
     # ── [2/6] Scene detection (parallel) ─────────────────────────────────────
-    yield ""
-    total_detect = len(source_files)
-    yield f"[2/6] Scene detection ({total_detect} files)..."
+    if clip_first:
+        yield ""
+        yield "[2/6]–[5/6] skipped (CLIP-first mode)"
+    if not clip_first:
+        yield ""
+        total_detect = len(source_files)
+        yield f"[2/6] Scene detection ({total_detect} files)..."
 
     # Invalidate CSV cache when detection params change.
     # Normalise threshold to "22" not "22.0" so int/float variants compare equal.
@@ -560,7 +897,7 @@ async def run(params: dict, work_dir: Path,
     _csv_dir = auto_dir / "csv"
     _csv_dir.mkdir(parents=True, exist_ok=True)
     _stored_sig = _detect_params_file.read_text().strip() if _detect_params_file.exists() else None
-    if _norm_detect_sig(_stored_sig or "") != _norm_detect_sig(_detect_params_sig):
+    if not clip_first and _norm_detect_sig(_stored_sig or "") != _norm_detect_sig(_detect_params_sig):
         stale_csv     = list(_csv_dir.glob("*-Scenes.csv"))
         stale_clips   = list((auto_dir / "autocut").glob("*.mp4"))
         stale_frames  = list((auto_dir / "frames").glob("*.jpg"))
@@ -590,14 +927,15 @@ async def run(params: dict, work_dir: Path,
             return 0
 
     to_detect = []
-    for sf in source_files:
-        csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
-        if csv.exists():
-            count = _count_csv_scenes(csv)
-            yield f"  ✓ {sf.name} ({count} scenes, cached)"
-        else:
-            to_detect.append(sf)
-
+    if not clip_first:
+        for sf in source_files:
+            csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
+            if csv.exists():
+                count = _count_csv_scenes(csv)
+                yield f"  ✓ {sf.name} ({count} scenes, cached)"
+            else:
+                to_detect.append(sf)
+    # clip_first: to_detect stays empty — clip_scan already extracted clips
     if to_detect:
         # ── Auto-calibrate detect threshold on one representative file ────────
         _sample = max(to_detect, key=lambda f: f.stat().st_size)
@@ -686,11 +1024,12 @@ async def run(params: dict, work_dir: Path,
             yield await completed.get()
         await asyncio.gather(*tasks)
 
-    _detect_params_file.write_text(_detect_params_sig)
+    if not clip_first:
+        _detect_params_file.write_text(_detect_params_sig)
 
     # ── Scene detection stats + threshold hint ────────────────────────────────
     _all_csv = list((auto_dir / "csv").glob("*-Scenes.csv"))
-    if _all_csv:
+    if _all_csv and not clip_first:
         import csv as _csv_stats
         _durations = []
         for _csv_path in _all_csv:
@@ -725,7 +1064,8 @@ async def run(params: dict, work_dir: Path,
     yield ""
     total_split = len(source_files)
     split_workers = min(total_split, int(params.get("max_detect_workers") or os.cpu_count() or 8))
-    yield f"[3/6] Splitting scenes... (workers={split_workers})"
+    if not clip_first:
+        yield f"[3/6] Splitting scenes... (workers={split_workers})"
 
     split_sem       = asyncio.Semaphore(split_workers)
     split_queue: asyncio.Queue = asyncio.Queue()
@@ -758,13 +1098,15 @@ async def run(params: dict, work_dir: Path,
         split_finished += 1
         await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({done} scenes)"})
 
-    split_tasks = [asyncio.create_task(_split_one(sf)) for sf in source_files]
-    for _ in range(total_split):
-        msg = await split_queue.get()
-        yield f"  [{split_finished}/{total_split}] {msg['msg']}"
-    await asyncio.gather(*split_tasks)
+    if not clip_first:
+        split_tasks = [asyncio.create_task(_split_one(sf)) for sf in source_files]
+        for _ in range(total_split):
+            msg = await split_queue.get()
+            yield f"  [{split_finished}/{total_split}] {msg['msg']}"
+        await asyncio.gather(*split_tasks)
 
-    scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
+    if not clip_first:
+        scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
     yield f"  Total: {len(scene_files)} scenes"
     if not scene_files:
         raise RuntimeError("No scenes produced. Check source files and scenedetect output.")
@@ -862,8 +1204,13 @@ async def run(params: dict, work_dir: Path,
             scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
 
     # ── [4/6] Frame extraction (parallel, batched) ───────────────────────────
+    # Ensure _safe_env is defined for post-scoring code regardless of mode
+    _safe_env = {k: v for k, v in os.environ.items()
+                 if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
     yield ""
     yield "[4/6] Extracting key frames..."
+    if clip_first:
+        yield "  Skipped (CLIP-first mode — peak frames extracted by clip_scan)"
 
     # Filter to main-cam scenes only (back cam is not scored, no point extracting frames)
     _cam_src_csv  = auto_dir / "camera_sources.csv"
@@ -911,9 +1258,10 @@ async def run(params: dict, work_dir: Path,
             )
             await proc.wait()
 
-    batch_size = os.cpu_count() or 4
-    for i in range(0, len(scene_files_main), batch_size):
-        await asyncio.gather(*[_extract_frame(sf) for sf in scene_files_main[i:i + batch_size]])
+    if not clip_first:
+        batch_size = os.cpu_count() or 4
+        for i in range(0, len(scene_files_main), batch_size):
+            await asyncio.gather(*[_extract_frame(sf) for sf in scene_files_main[i:i + batch_size]])
 
     _all_jpg = list((auto_dir / "frames").glob("*.jpg"))
     frame_count = len({re.sub(r'_f\d+$', '', p.stem) for p in _all_jpg})
@@ -930,12 +1278,20 @@ async def run(params: dict, work_dir: Path,
     _safe_env = {k: v for k, v in os.environ.items()
                  if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
 
-    import hashlib as _hashlib
+    import hashlib as _hashlib, configparser as _hcfg
+    _hconfig = _hcfg.ConfigParser()
+    _hconfig.read(SCRIPT_DIR / "config.ini")
+    _model_tag = (_hconfig.get("clip_scoring", "model",      fallback="ViT-L-14") + "/" +
+                  _hconfig.get("clip_scoring", "pretrained", fallback="openai"))
     _cur_hash = _hashlib.sha256(
-        (params.get("positive", "") + "\n---\n" + params.get("negative", "")).encode()
+        (params.get("positive", "") + "\n---\n" + params.get("negative", "") +
+         "\n---\n" + _model_tag).encode()
     ).hexdigest()
 
-    if scores_csv.exists():
+    if clip_first:
+        _csv_count = len(pd.read_csv(scores_csv)) if scores_csv.exists() else 0
+        yield f"  Cached ({_csv_count} scenes, from CLIP-first scan)"
+    if not clip_first and scores_csv.exists():
         try:
             _check_df = pd.read_csv(scores_csv)
             _nan_count = int(_check_df["score"].isna().sum())
@@ -965,8 +1321,9 @@ async def run(params: dict, work_dir: Path,
         except Exception:
             scores_csv.unlink()
             yield "  Corrupt scores CSV — rescoring..."
-    if not scores_csv.exists():
+    if not clip_first and not scores_csv.exists():
         _is_dual = bool(cameras and len(cameras) > 1)
+        _score_all = _is_dual or bool(params.get("score_all_cams"))
         clip_env = {
             **_safe_env,
             "FRAMES_DIR":       str(auto_dir / "frames") + "/",
@@ -975,7 +1332,7 @@ async def run(params: dict, work_dir: Path,
             "CAM_SOURCES":      str(auto_dir / "camera_sources.csv"),
             "AUDIO_CAM":        cam_a,
             **({"SCORE_ALL_CAMS":    "1",
-                "OUTPUT_CSV_ALLCAM": str(auto_dir / "scene_scores_allcam.csv")} if _is_dual else {}),
+                "OUTPUT_CSV_ALLCAM": str(auto_dir / "scene_scores_allcam.csv")} if _score_all else {}),
             **({"CLIP_BATCH_SIZE":   str(params["batch_size"])}   if params.get("batch_size")   else {}),
             **({"CLIP_NUM_WORKERS":  str(params["clip_workers"])}  if params.get("clip_workers")  else {}),
         }
@@ -1004,7 +1361,8 @@ async def run(params: dict, work_dir: Path,
             raise
         except Exception:
             pass
-        prompts_hash_file.write_text(_cur_hash)
+        if not clip_first:
+            prompts_hash_file.write_text(_cur_hash)
 
     # ── Auto-threshold from top-10 (first analysis only, no user threshold set)
     if analyze_only and not params.get("threshold"):
@@ -1100,6 +1458,9 @@ async def run(params: dict, work_dir: Path,
         "DUPLICATES_FILE":   str(auto_dir / "scene_duplicates.json"),
         **({"MIN_GAP_SEC": str(min_gap_r)} if min_gap_r > 0 else {}),
         **({"CAM_OFFSETS": json.dumps(_cam_offsets_render)} if _cam_offsets_render else {}),
+        "TARGET_RESOLUTION": resolution,
+        "TARGET_FRAMERATE":  framerate,
+        "USE_NVENC": "1" if hwaccel else "0",
     }
     sel_proc = await asyncio.create_subprocess_exec(
         sys.executable, str(SCRIPT_DIR / "select_scenes.py"),
@@ -1310,7 +1671,7 @@ async def run(params: dict, work_dir: Path,
                 vid_dur      = await _probe_video_duration(video_to_mix, ffprobe) or 0
                 yield f"  Track (pinned): {_st_path.stem}"
                 yield f"[DBG] music: {_st_path}  fade: {music_fade}s  vol: orig={orig_vol} music={music_vol}"
-                output_music = _next_version(work_dir / f"{_output_name(work_dir)}.mp4")
+                output_music = _next_version(work_dir / "highlight.mp4")
                 fade_start = vid_dur - music_fade
                 await _run([
                     ffmpeg,
@@ -1408,7 +1769,7 @@ async def run(params: dict, work_dir: Path,
                         yield "  Could not select track, skipping music"
                     else:
                         yield f"  Track: {Path(best_track['file']).stem}"
-                        output_music = _next_version(work_dir / f"{_output_name(work_dir)}.mp4")
+                        output_music = _next_version(work_dir / "highlight.mp4")
                         fade_start = vid_dur - music_fade
                         await _run([
                             ffmpeg,
@@ -1434,9 +1795,8 @@ async def run(params: dict, work_dir: Path,
     # ── Preview ───────────────────────────────────────────────────────────────
     yield ""
     yield "Generating preview..."
-    out_name = _output_name(work_dir)
     _prev_candidates = sorted(
-        [p for p in work_dir.glob(f"{out_name}_v*.mp4") if "_preview" not in p.stem],
+        [p for p in work_dir.glob("highlight-v*.mp4") if "_preview" not in p.stem],
         key=lambda p: int(m.group(1)) if (m := re.search(r'_v(\d+)', p.stem)) else 0,
     )
     if _prev_candidates:

@@ -40,7 +40,7 @@ Zakładka **Music**:
 - Zaznacz checkboxy przy wybranych ścieżkach
 - Zaznaczone ścieżki trafiają do pipeline przy kolejnym renderze
 
-Filtr czasu trwania: pokazywane są tylko ścieżki o czasie trwania zbliżonym do szacowanego czasu highlight (±5s). Jeśli żadna ścieżka nie pasuje — rozszerz bibliotekę lub zmień threshold w Gallery.
+Filtr czasu trwania: pokazywane są tylko ścieżki o czasie trwania zbliżonym do szacowanego czasu highlight (±5s). Jeśli żadna ścieżka nie pasuje — rozszerz bibliotekę lub zmień threshold w Select scenes.
 
 ### Weryfikacja Content ID (ACRCloud)
 
@@ -121,7 +121,7 @@ Index stored in `index.json` in the music directory. Fields: BPM, energy (0–1)
 - Check boxes next to selected tracks
 - Checked tracks are used in the next render
 
-Duration filter: only tracks within ±5s of the estimated highlight duration are shown. If no tracks match — expand the library or adjust the Gallery threshold.
+Duration filter: only tracks within ±5s of the estimated highlight duration are shown. If no tracks match — expand the library or adjust the Select scenes threshold.
 
 ### Track selection logic
 

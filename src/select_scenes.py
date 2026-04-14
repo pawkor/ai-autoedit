@@ -16,6 +16,7 @@ THRESHOLD        = float(sys.argv[1]) if len(sys.argv) > 1 else _cfg.getfloat("s
 MAX_SCENE_SEC    = float(sys.argv[2]) if len(sys.argv) > 2 else _cfg.getfloat("scene_selection", "max_scene_sec",    fallback=10)
 MAX_PER_FILE_SEC = float(sys.argv[3]) if len(sys.argv) > 3 else _cfg.getfloat("scene_selection", "max_per_file_sec", fallback=45)
 MIN_TAKE_SEC     = _cfg.getfloat("scene_selection", "min_take_sec", fallback=0.5)
+BACK_CAM_MAX_SEC = _cfg.getfloat("scene_selection", "back_cam_max_sec", fallback=10.0)
 WORKERS          = _cfg.getint("scene_selection",   "workers",      fallback=min(os.cpu_count() or 1, 12))
 X264_CRF         = str(_cfg.getint("video", "x264_crf",    fallback=15))
 X264_PRESET      = _cfg.get("video",        "x264_preset", fallback="fast")
@@ -45,6 +46,9 @@ try:
 except Exception:
     pass
 DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
+TARGET_RESOLUTION = os.environ.get("TARGET_RESOLUTION", "")  # e.g. "3840:2160"
+TARGET_FRAMERATE  = os.environ.get("TARGET_FRAMERATE",  "")  # e.g. "60"
+USE_NVENC         = os.environ.get("USE_NVENC", "0") == "1"
 
 import re as _re
 import json as _json
@@ -75,7 +79,7 @@ if force_include or force_exclude:
 os.makedirs(TRIMMED_DIR, exist_ok=True)
 
 df = pd.read_csv(SCORES_CSV)
-df['source'] = df['scene'].str.replace(r'-scene-\d+$', '', regex=True)
+df['source'] = df['scene'].str.replace(r'-(scene|clip)-\d+$', '', regex=True)
 cam_map = {}
 if CAM_SOURCES and os.path.exists(CAM_SOURCES):
     cdf = pd.read_csv(CAM_SOURCES)
@@ -161,7 +165,18 @@ def get_duration(scene_file):
 # ── Pre-fetch durations in parallel ──────────────────────────────────────────
 candidates = df[df['score'] >= THRESHOLD].copy()
 candidates['file'] = SCENES_DIR + candidates['scene'] + '.mp4'
-candidates = candidates[candidates['file'].apply(os.path.exists)]
+# In DRY_RUN with a warm cache, accept scenes whose duration is cached even if the
+# autocut file has been cleaned (avoids returning duration=0 when cache is valid).
+if DRY_RUN and _dur_cache:
+    candidates = candidates[
+        candidates.apply(lambda r: os.path.exists(r['file']) or (Path(r['file']).name in _dur_cache), axis=1)
+    ]
+else:
+    candidates = candidates[candidates['file'].apply(os.path.exists)]
+
+if DRY_RUN:
+    _exist = candidates['file'].apply(os.path.exists).sum()
+    print(f"Candidates: {len(candidates)} (score≥{THRESHOLD:.4f}), files_exist={_exist}, cache={len(_dur_cache)}, scenes_dir={SCENES_DIR!r}")
 
 with ThreadPoolExecutor(max_workers=WORKERS) as ex:
     futures = {ex.submit(get_duration, row['file']): row['scene']
@@ -256,6 +271,13 @@ if CSV_DIR and os.path.isdir(CSV_DIR):
                             from datetime import datetime
                             dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
                             return dt.timestamp()
+                    except Exception:
+                        pass
+                    # Fallback: use file mtime when creation_time is absent
+                    try:
+                        mtime = p.stat().st_mtime
+                        print(f"  [mtime fallback] {p.name}: {mtime:.0f}")
+                        return mtime
                     except Exception:
                         pass
         return None
@@ -370,7 +392,7 @@ if dual_cam:
         dur = duration_map.get(sc)
         if not dur:
             continue
-        take = min(dur, MAX_SCENE_SEC)
+        take = min(dur, MAX_SCENE_SEC, BACK_CAM_MAX_SEC)
         if take < MIN_TAKE_SEC:
             continue
         fp = f"{SCENES_DIR}{sc}.mp4"
@@ -384,46 +406,81 @@ if dual_cam:
     back_entries.sort(key=lambda e: (e["ts"] or 0))
 
     # ── Pair each main-cam scene with closest back-cam scene ─────────────────
-    used_back: set[str] = set()
-    paired: list[tuple] = []   # (main_tuple, back_tuple | None)
-    no_match = 0
+    other_str = "/".join(other_cams)
+    back_has_ts = any(e["ts"] is not None for e in back_entries)
 
-    for ms in main_sel:
-        main_ts = ts_map.get(ms[0])
-        # Target: moment right after the helmet clip ends — back cam shows what
-        # happens next, not the same instant (ms[3] = take = how much we cut).
-        target_ts = (main_ts + ms[3]) if main_ts is not None else None
-        best, best_dist = None, float("inf")
-        for be in back_entries:
-            if be["tuple"][0] in used_back:
-                continue
-            if target_ts is None or be["ts"] is None:
-                continue
-            # Distance is 0 if target_ts falls inside the back scene's time range,
-            # otherwise the gap to the nearer edge (start or end).
-            be_end = be["ts"] + be["dur"]
-            if target_ts < be["ts"]:
-                dist = be["ts"] - target_ts
-            elif target_ts > be_end:
-                dist = target_ts - be_end
+    if not back_has_ts and back_entries:
+        # Fallback: no creation_time on back-cam (e.g. drone) — randomly interleave
+        import random as _random
+        _pool = list(back_entries)
+        _random.shuffle(_pool)
+        _bi = iter(_pool)
+        _next_back = next(_bi, None)
+        paired: list[tuple] = []
+        for ms in main_sel:
+            if _next_back is not None:
+                paired.append((ms, _next_back["tuple"]))
+                used_back: set[str] = set()
+                used_back.add(_next_back["tuple"][0])
+                _next_back = next(_bi, None)
             else:
-                dist = 0.0
-            if dist <= TIMESTAMP_MATCH_SEC and dist < best_dist:
-                best_dist = dist
-                best = be
-        if best:
-            paired.append((ms, best["tuple"]))
-            used_back.add(best["tuple"][0])
-        else:
-            paired.append((ms, None))
-            no_match += 1
+                paired.append((ms, None))
+        sampled = sum(1 for _, bs in paired if bs is not None)
+        print(f"  No timestamps for {other_str} — random fallback: {sampled} scene(s) sampled")
+    else:
+        used_back: set[str] = set()
+        paired: list[tuple] = []   # (main_tuple, back_tuple | None)
+        no_match = 0
 
-    paired_count = len(paired) - no_match
-    other_str    = "/".join(other_cams)
-    print(f"  Timestamp match (→{other_str}): {paired_count}/{len(paired)} paired "
-          f"(±{TIMESTAMP_MATCH_SEC:.0f}s)")
-    if no_match:
-        print(f"  {no_match} main-cam scene(s) had no back-cam match within ±{TIMESTAMP_MATCH_SEC:.0f}s")
+        for ms in main_sel:
+            main_ts = ts_map.get(ms[0])
+            # Target: moment right after the helmet clip ends — back cam shows what
+            # happens next, not the same instant (ms[3] = take = how much we cut).
+            target_ts = (main_ts + ms[3]) if main_ts is not None else None
+            best, best_dist = None, float("inf")
+            for be in back_entries:
+                if be["tuple"][0] in used_back:
+                    continue
+                if target_ts is None or be["ts"] is None:
+                    continue
+                # Distance is 0 if target_ts falls inside the back scene's time range,
+                # otherwise the gap to the nearer edge (start or end).
+                be_end = be["ts"] + be["dur"]
+                if target_ts < be["ts"]:
+                    dist = be["ts"] - target_ts
+                elif target_ts > be_end:
+                    dist = target_ts - be_end
+                else:
+                    dist = 0.0
+                if dist <= TIMESTAMP_MATCH_SEC and dist < best_dist:
+                    best_dist = dist
+                    best = be
+            if best:
+                paired.append((ms, best["tuple"]))
+                used_back.add(best["tuple"][0])
+            else:
+                paired.append((ms, None))
+                no_match += 1
+
+        paired_count = len(paired) - no_match
+        print(f"  Timestamp match (→{other_str}): {paired_count}/{len(paired)} paired "
+              f"(±{TIMESTAMP_MATCH_SEC:.0f}s)")
+        if no_match:
+            print(f"  {no_match} main-cam scene(s) had no back-cam match within ±{TIMESTAMP_MATCH_SEC:.0f}s")
+
+        # Timestamps present but all mismatched (e.g. camera clock off by >30s) →
+        # fall back to random interleaving so back-cam footage is still used.
+        if paired_count == 0 and back_entries:
+            import random as _random
+            _pool = list(back_entries)
+            _random.shuffle(_pool)
+            _bi = iter(_pool)
+            paired = []
+            for ms in main_sel:
+                _nb = next(_bi, None)
+                paired.append((ms, _nb["tuple"] if _nb else None))
+            sampled = sum(1 for _, bs in paired if bs is not None)
+            print(f"  Timestamp match failed — random fallback: {sampled} back-cam scene(s) sampled")
 
     # ── Ensure back-cam scenes appear in chronological order ─────────────────
     # VFR timebase inflation causes ts_map values to drift, so timestamp-based
@@ -463,6 +520,27 @@ else:
 _prep_counter = 0
 _prep_lock = threading.Lock()
 _prep_total = 0
+_nvenc_sem = threading.Semaphore(3)  # max concurrent NVENC sessions (consumer GPU limit)
+
+
+def _probe_video_format(path: str) -> tuple[int, int, float] | None:
+    """Return (width, height, fps) of a video file, or None on failure."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height,r_frame_rate",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10,
+        )
+        parts = r.stdout.strip().split(",")
+        if len(parts) >= 3:
+            w, h = int(parts[0]), int(parts[1])
+            num, den = parts[2].split("/")
+            fps = float(num) / float(den)
+            return w, h, fps
+    except Exception:
+        pass
+    return None
 
 
 def prepare_clip(scene, scene_file, duration, take, camera):
@@ -472,9 +550,20 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     out = f"{TRIMMED_DIR}{scene}{suffix}.mp4"
 
     if os.path.exists(out):
-        if get_duration(out) is not None:
-            return out
-        os.remove(out)  # corrupt (e.g. killed mid-encode) — re-encode
+        # Strict validity check: ffprobe must report no errors AND return a duration.
+        # get_duration() with -v quiet can return a value for corrupt files (no moov atom).
+        _chk = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", out],
+            capture_output=True, text=True,
+        )
+        if _chk.returncode == 0 and not _chk.stderr.strip():
+            try:
+                float(_chk.stdout.strip())
+                return out
+            except (ValueError, TypeError):
+                pass
+        os.remove(out)  # corrupt (e.g. killed mid-encode or missing moov atom) — re-encode
 
     global _prep_counter
     with _prep_lock:
@@ -483,20 +572,72 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     op = "trim" if needs_trim else "enc"
     print(f"  [{n}/{_prep_total}] {scene} ({op})", flush=True)
 
+    # Detect if clip needs resolution/fps normalization
+    vf_parts = []
+    r_arg = []
+    if TARGET_RESOLUTION and TARGET_FRAMERATE:
+        fmt = _probe_video_format(scene_file)
+        if fmt is not None:
+            src_w, src_h, src_fps = fmt
+            try:
+                tgt_w, tgt_h = (int(x) for x in TARGET_RESOLUTION.split(":"))
+                tgt_fps = float(TARGET_FRAMERATE)
+            except Exception:
+                tgt_w = tgt_h = tgt_fps = None
+            if tgt_w and tgt_h and (src_w != tgt_w or src_h != tgt_h):
+                vf_parts.append(
+                    f"scale={tgt_w}:{tgt_h}:flags=lanczos"
+                    f":force_original_aspect_ratio=decrease,"
+                    f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2:color=black"
+                )
+            if tgt_fps and abs(src_fps - tgt_fps) > 0.1:
+                r_arg = ["-r", str(int(tgt_fps) if tgt_fps == int(tgt_fps) else tgt_fps)]
+
     cmd = ["ffmpeg"]
+    use_nvenc_here = USE_NVENC and not vf_parts
+    if use_nvenc_here:
+        cmd += ["-hwaccel", "cuda"]
     if needs_trim:
         start = duration / 2 - take / 2
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", scene_file]
     if needs_trim:
         cmd += ["-t", f"{take:.3f}"]
-    cmd += ["-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
-            "-bf", "0",
-            "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
-            "-vsync", "cfr"]
+    if use_nvenc_here:
+        cmd += ["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", X264_CRF,
+                "-preset", "p4", "-bf", "0", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                "-vsync", "cfr"]
+    else:
+        cmd += ["-c:v", "libx264", "-crf", X264_CRF, "-preset", X264_PRESET,
+                "-bf", "0",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                "-vsync", "cfr"]
+    if vf_parts:
+        cmd += ["-vf", ",".join(vf_parts)]
+    cmd += r_arg
 
-    cmd += ["-avoid_negative_ts", "make_zero", out, "-y", "-loglevel", "quiet"]
-    subprocess.run(cmd)
+    cmd += ["-avoid_negative_ts", "make_zero", out, "-y", "-loglevel", "error"]
+    if use_nvenc_here:
+        with _nvenc_sem:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+    else:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not os.path.exists(out):
+        err = result.stderr.strip().splitlines()
+        print(f"  [ERROR] {scene} encode failed (rc={result.returncode}): {' | '.join(err[-3:]) if err else 'no output'}", flush=True)
+        if os.path.exists(out):
+            os.remove(out)
+        return None
+    # Validate output (catch silent moov-less writes)
+    _val = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out],
+        capture_output=True, text=True,
+    )
+    if _val.returncode != 0 or _val.stderr.strip():
+        print(f"  [ERROR] {scene} output invalid after encode: {_val.stderr.strip()[:120]}", flush=True)
+        os.remove(out)
+        return None
     return out
 
 
@@ -525,9 +666,15 @@ with ThreadPoolExecutor(max_workers=WORKERS) as ex:
     clips = [f.result() for f in clip_futures]
 
 # ── Write concat list ─────────────────────────────────────────────────────────
+failed_clips = sum(1 for c in clips if c is None)
+if failed_clips:
+    print(f"  [WARN] {failed_clips} clip(s) failed to encode — skipped from output", flush=True)
 with open(OUTPUT_LIST, "w") as f:
     for clip in clips:
-        f.write(f"file '{clip}'\n")
-for scene, _, duration, take, score, camera in selected:
+        if clip is not None:
+            f.write(f"file '{clip}'\n")
+for (scene, _, duration, take, score, camera), clip in zip(selected, clips):
+    if clip is None:
+        continue
     cam_tag = f"[{camera}] " if dual_cam else ""
     print(f"  {score:.3f}  {take:.0f}s  {cam_tag}{scene}")

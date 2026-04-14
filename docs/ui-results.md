@@ -52,6 +52,8 @@ The red **×** next to each file deletes it from disk after confirmation (messag
 
 ## Upload na YouTube / YouTube upload
 
+![Modal uploadu YouTube](img/AI-autoedit-results-yt-upload.png)
+
 Przycisk **▲ YT** przy każdym pliku otwiera modal uploadu.
 
 The **▲ YT** button next to each file opens the upload modal.

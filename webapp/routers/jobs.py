@@ -78,6 +78,11 @@ _JOB_CONFIG_MAP = {
     "shorts_multicam":     ("shorts",  "multicam"),
     "shorts_ncs":          ("shorts",  "ncs_music"),
     "shorts_crop_offsets": ("shorts",  "crop_x_offsets"),
+    "shorts_music_dir":    ("shorts",  "music_dir"),
+    "clip_first":          ("clip_scan", "enabled"),
+    "clip_scan_interval":  ("clip_scan", "interval_sec"),
+    "clip_scan_clip_dur":  ("clip_scan", "clip_dur_sec"),
+    "clip_scan_min_gap":   ("clip_scan", "min_gap_sec"),
 }
 
 
@@ -95,12 +100,13 @@ def read_job_config(work_dir: Path) -> dict:
         for cp in (local_cp, global_cp):
             try:
                 raw = cp.get(section, key)
-                if field in ("no_intro", "no_music"):
+                if field in ("no_intro", "no_music", "clip_first"):
                     result[field] = raw.strip().lower() in ("true", "1", "yes")
                 elif field == "sd_min_scene":
                     v = float(raw.rstrip('s').strip())
                     result[field] = f"{int(v) if v == int(v) else v}s"
-                elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold"):
+                elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold",
+                               "clip_scan_interval", "clip_scan_clip_dur", "clip_scan_min_gap"):
                     result[field] = float(raw.rstrip('s').strip())
                 elif field == "cameras":
                     result[field] = [c.strip() for c in raw.split(",") if c.strip()]
@@ -195,7 +201,7 @@ def save_job_config(work_dir: Path, params: dict):
         update_config_ini(work_dir / "config.ini", updates)
 
     cam_offsets = params.get("cam_offsets")
-    if cam_offsets and isinstance(cam_offsets, dict):
+    if cam_offsets is not None and isinstance(cam_offsets, dict):
         offsets_update = {"cam_offsets": {k: str(int(v)) for k, v in cam_offsets.items() if v is not None}}
         update_config_ini(work_dir / "config.ini", offsets_update)
 
@@ -284,8 +290,12 @@ class JobParams(BaseModel):
     description:  Optional[str] = None
     positive:     Optional[str] = None
     negative:     Optional[str] = None
-    sd_threshold:  Optional[float] = None
-    sd_min_scene:  Optional[str]   = None
+    sd_threshold:      Optional[float] = None
+    sd_min_scene:      Optional[str]   = None
+    clip_first:        bool             = True
+    clip_scan_interval: Optional[float] = None
+    clip_scan_clip_dur: Optional[float] = None
+    clip_scan_min_gap:  Optional[float] = None
 
 
 class RenderParams(BaseModel):
@@ -384,10 +394,13 @@ async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> b
     prefix = f"[{idx}/{total}] " if total > 1 else ""
     try:
         cmd = [sys.executable, str(SCRIPT_DIR / "make_shorts.py"), job.params["work_dir"]]
-        if job.params.get("shorts_text"):    cmd.append("--text")
-        if job.params.get("shorts_multicam"): cmd.append("--multicam")
-        if job.params.get("shorts_ncs"):     cmd.append("--ncs")
-        if job.params.get("shorts_best"):    cmd.append("--best")
+        if job.params.get("shorts_text"):      cmd.append("--text")
+        if job.params.get("shorts_multicam"):  cmd.append("--multicam")
+        if job.params.get("shorts_ncs"):       cmd.append("--ncs")
+        if job.params.get("shorts_best"):      cmd.append("--best")
+        if job.params.get("shorts_beat_sync"): cmd.append("--beat-sync")
+        _smd = job.params.get("shorts_music_dir", "").strip()
+        if _smd:                             cmd += ["--music-dir", _smd]
         if version:                          cmd += ["--version", version]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -435,11 +448,10 @@ async def _run_shorts(job: Job, count: int = 1, parallel: bool = False):
         ok = False
         try:
             work_dir = Path(job.params["work_dir"])
-            base     = _pipeline._output_name(work_dir)
             existing_nums = [
                 int(m.group(1))
-                for p in work_dir.glob(f"{base}-short_v*.mp4")
-                if (m := re.search(r"-short_v(\d+)\.mp4$", p.name))
+                for p in work_dir.glob("short-v*.mp4")
+                if (m := re.search(r"^short-v(\d+)\.mp4$", p.name))
             ]
             next_num  = max(existing_nums, default=0) + 1
             versions  = [f"v{next_num + i:02d}" for i in range(count)]
@@ -959,6 +971,127 @@ async def render_short(job_id: str, data: dict = Body(default={})):
     return {"id": job_id, "phase": "shorts" if not main_active else job.phase, "count": count}
 
 
+@router.post("/api/jobs/{job_id}/render-music-driven")
+async def render_music_driven(job_id: str, data: dict = Body(default={})):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is already running or queued")
+
+    # Resolve music file: explicit → pinned track → auto-pick from music_dir
+    music_path_str = data.get("music_file") or job.selected_track or ""
+    if not music_path_str:
+        music_dir = job.params.get("music_dir", "")
+        if not music_dir:
+            try:
+                _cfg = configparser.ConfigParser()
+                _cfg.read(SCRIPT_DIR / ".." / "config.ini")
+                music_dir = _cfg.get("music", "dir", fallback="")
+            except Exception:
+                pass
+        if music_dir:
+            music_path_str = music_dir  # pass dir; music_driven.py will pick_music
+
+    job.log.append("")
+    job.log.append("── Music-driven render ───────────────────")
+    job.status   = "queued"
+    job.phase    = "music-driven"
+    job.ended_at = None
+    job.save()
+
+    async def _run():
+        async with job_semaphore:
+            job.status     = "running"
+            job.started_at = time.time()
+            job.save()
+            await job.broadcast({"type": "status", "status": "running", "phase": "music-driven"})
+            try:
+                cmd = [sys.executable, str(SCRIPT_DIR / "music_driven.py"),
+                       job.params["work_dir"]]
+                if music_path_str:
+                    if Path(music_path_str).is_file():
+                        cmd += ["--music", music_path_str]
+                    else:
+                        cmd += ["--music-dir", music_path_str]
+                top_pct = float(job.params.get("md_top_percent", 0.40))
+                cmd += ["--top-percent", str(top_pct)]
+
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    cwd=str(SCRIPT_DIR),
+                )
+                job.process = proc
+                async for raw in proc.stdout:
+                    line = raw.decode("utf-8", errors="replace").rstrip()
+                    if line:
+                        job.log.append(line)
+                        await job.broadcast({"type": "log", "line": line})
+                await proc.wait()
+                ok = proc.returncode == 0
+
+                # Intro/outro + rename + preview
+                if ok:
+                    import pipeline as _pipeline
+                    _work_dir   = Path(job.params["work_dir"])
+                    _auto_dir   = _work_dir / "_autoframe"
+                    _hl         = _auto_dir / "highlight_music_driven.mp4"
+                    if _hl.exists():
+                        job.phase = "postprocess"
+                        await job.broadcast({"type": "status", "status": "running", "phase": "postprocess"})
+                        async for _line in _pipeline.apply_postprocess(_work_dir, _hl, job.params):
+                            job.log.append(_line)
+                            await job.broadcast({"type": "log", "line": _line})
+                    else:
+                        job.log.append("⚠ highlight_music_driven.mp4 not found — skipping postprocess")
+                        await job.broadcast({"type": "log", "line": "⚠ highlight_music_driven.mp4 not found"})
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                job.log.append(f"ERROR: {exc}")
+                await job.broadcast({"type": "log", "line": f"ERROR: {exc}"})
+                ok = False
+
+            job.status   = "done" if ok else "failed"
+            job.phase    = "done" if ok else "failed"
+            job.ended_at = time.time()
+            job.save()
+            await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
+
+    job._task = asyncio.create_task(_run())
+    return {"id": job_id, "phase": "music-driven"}
+
+
+@router.post("/api/jobs/{job_id}/generate-metadata")
+async def generate_metadata(job_id: str):
+    """Run CLIP zero-shot + chapter generation for the job's selected scenes."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    work_dir = job.params.get("work_dir", "")
+    if not work_dir:
+        raise HTTPException(400, "No work_dir")
+
+    cfg = configparser.ConfigParser()
+    cfg.read(SCRIPT_DIR / ".." / "config.ini")
+    ffprobe = cfg.get("paths", "ffprobe", fallback="ffprobe")
+
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(SCRIPT_DIR))
+        from metadata_gen import generate as _gen_metadata
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _gen_metadata(Path(work_dir), ffprobe=ffprobe),
+        )
+        return result
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
 @router.get("/api/queue")
 async def get_queue():
     running, queued = [], []
@@ -1072,6 +1205,127 @@ async def put_overrides(job_id: str, data: dict):
     return {"ok": True}
 
 
+@router.post("/api/jobs/{job_id}/detect-cam-offsets")
+async def detect_cam_offsets(job_id: str, data: dict = Body(default={})):
+    """Run ffprobe on the first video file per camera and return time offsets."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+
+    work_dir = Path(data.get("work_dir") or job.params.get("work_dir", ""))
+    cameras  = data.get("cameras") or job.params.get("cameras") or []
+    if not cameras or not work_dir:
+        raise HTTPException(400, "work_dir and cameras required")
+
+    VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".ts"}
+    _gcfg = configparser.ConfigParser()
+    _gcfg.read(str(APP_DIR / "config.ini"))
+    ffprobe = _gcfg.get("paths", "ffprobe", fallback="ffprobe")
+
+    async def _creation_time(cam: str) -> float | None:
+        cam_dir = work_dir / cam
+        if not cam_dir.is_dir():
+            return None
+        files = sorted(
+            (f for f in cam_dir.iterdir() if f.suffix.lower() in VIDEO_EXT),
+            key=lambda f: f.name,
+        )
+        if not files:
+            return None
+        first = files[0]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ffprobe, "-v", "quiet", "-print_format", "json",
+                "-show_entries", "format_tags=creation_time",
+                str(first),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await proc.communicate()
+            info = json.loads(out)
+            ct_str = info.get("format", {}).get("tags", {}).get("creation_time", "")
+            if not ct_str:
+                return None
+            from datetime import datetime, timezone
+            ct = datetime.fromisoformat(ct_str.replace("Z", "+00:00"))
+            return ct.timestamp()
+        except Exception:
+            return None
+
+    times: dict[str, float | None] = {}
+    for cam in cameras:
+        times[cam] = await _creation_time(cam)
+
+    # Reference = first camera that has a valid timestamp
+    ref_cam = next((c for c in cameras if times.get(c) is not None), None)
+    if ref_cam is None:
+        raise HTTPException(422, "Could not read creation_time from any camera")
+
+    ref_ts = times[ref_cam]
+    offsets: dict[str, int] = {}
+    missing: list[str] = []
+    for cam in cameras:
+        ts = times.get(cam)
+        if ts is None:
+            missing.append(cam)
+            continue
+        # offset to add to cam's timestamps to align with reference
+        offsets[cam] = round(ref_ts - ts)
+
+    return {"offsets": offsets, "reference": ref_cam, "missing": missing}
+
+
+@router.delete("/api/jobs/{job_id}/camera-files")
+async def purge_camera_files(job_id: str, data: dict = Body(default={})):
+    """Delete all _autoframe/ derived files for a removed camera subfolder."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+
+    camera = (data.get("camera") or "").strip()
+    work_dir = Path(data.get("work_dir") or job.params.get("work_dir", ""))
+    if not camera or not work_dir:
+        raise HTTPException(400, "camera and work_dir required")
+
+    VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".ts"}
+    cam_dir = work_dir / camera
+    if not cam_dir.is_dir():
+        return {"deleted": 0, "stems": []}
+
+    stems = [p.stem for p in cam_dir.iterdir() if p.suffix.lower() in VIDEO_EXT]
+    auto_dir = job.auto_dir()
+    deleted = 0
+
+    for stem in stems:
+        for f in (auto_dir / "frames").glob(f"{stem}-scene-*"):
+            f.unlink(missing_ok=True); deleted += 1
+        for f in (auto_dir / "autocut").glob(f"{stem}-scene-*.mp4"):
+            f.unlink(missing_ok=True); deleted += 1
+        for f in (auto_dir / "csv").glob(f"{stem}-Scenes.csv"):
+            f.unlink(missing_ok=True); deleted += 1
+        for f in (auto_dir / "trimmed").glob(f"{stem}-*"):
+            f.unlink(missing_ok=True); deleted += 1
+
+    # Filter scene_scores_allcam.csv
+    for csv_name in ("scene_scores_allcam.csv", "scene_scores.csv"):
+        scores_csv = auto_dir / csv_name
+        if not scores_csv.exists():
+            continue
+        lines = scores_csv.read_text().splitlines()
+        kept = [lines[0]] + [l for l in lines[1:] if not any(l.startswith(s + "-") for s in stems)]
+        if len(kept) < len(lines):
+            scores_csv.write_text("\n".join(kept) + "\n")
+
+    # Remove from camera_sources.csv
+    cam_sources = auto_dir / "camera_sources.csv"
+    if cam_sources.exists():
+        lines = cam_sources.read_text().splitlines()
+        kept = [l for l in lines if not any(f"/{camera}/" in l or l.split(",")[0].strip() == camera for _ in [1])]
+        if len(kept) < len(lines):
+            cam_sources.write_text("\n".join(kept) + "\n")
+
+    return {"deleted": deleted, "stems": stems}
+
+
 @router.get("/api/jobs/{job_id}/frames")
 async def job_frames(job_id: str):
     job = jobs.get(job_id)
@@ -1116,7 +1370,7 @@ async def job_frames(job_id: str):
     if cam_sources_csv.exists():
         cdf = pd.read_csv(cam_sources_csv)
         cam_map = dict(zip(cdf["source"], cdf["camera"]))
-        df["_source"] = df["scene"].str.replace(r"-scene-\d+$", "", regex=True)
+        df["_source"] = df["scene"].str.replace(r"-(scene|clip)-\d+$", "", regex=True)
         df["_camera"] = df["_source"].map(cam_map).fillna("default")
         if df["_camera"].nunique() > 1:
             for _, idx in df.groupby("_camera").groups.items():
@@ -1196,6 +1450,8 @@ async def job_frames(job_id: str):
             except Exception:
                 pass
 
+    scored_scenes = set(df["scene"].tolist())
+
     frames = [
         {
             "scene":      row["scene"],
@@ -1215,6 +1471,8 @@ async def job_frames(job_id: str):
         }
         for _, row in df.iterrows()
     ]
+
+
     return {"frames": frames, "back_cam": {"avg_take_sec": avg_back_cam_take_sec}}
 
 
@@ -1260,9 +1518,8 @@ async def job_result(job_id: str):
         return int(m.group(1)) if m else 0
 
     auto_dir = work_dir / "_autoframe"
-    out_name = _pipeline._output_name(work_dir)
     seen: set[str] = set()
-    for pat in (f"{out_name}_v*.mp4", f"{out_name}-short_v*.mp4"):
+    for pat in ("highlight-v*.mp4", "short-v*.mp4"):
         for p in sorted(work_dir.glob(pat), key=_ver, reverse=True):
             if "_preview" in p.stem:
                 continue

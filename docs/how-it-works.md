@@ -46,11 +46,25 @@ Wyniki trafiają do `_autoframe/scene_scores.csv`.
 
 Sceny filtrowane i wybierane osobno dla każdego pliku źródłowego:
 
-- Tylko sceny powyżej `threshold` (ustawiany w Gallery).
+- Tylko sceny powyżej `threshold` (ustawiany w Select scenes).
 - Każdy plik ma limit `max_per_file_sec`.
 - Każda scena przycinana do `max_scene_sec`, wyśrodkowana na środku klipu.
 - Klipy krótsze niż `min_take_sec` po przycięciu odrzucane.
-- Manualne overrides z Gallery (force-include / force-exclude) mają pierwszeństwo.
+- Manualne overrides z Select scenes (force-include / force-exclude) mają pierwszeństwo.
+
+### CLIP-first mode
+
+Alternatywa dla PySceneDetect — nie szuka cięć, tylko dobrego materiału. Skanuje klatki co N sekund (domyślnie 3s), oblicza score CLIP dla każdej klatki, wykrywa lokalne maxima (peaki) i wycina klip (domyślnie 8s) wokół każdego piku. Minimalna przerwa między klipami (domyślnie 30s) zapobiega nakładaniu.
+
+Wyniki: pliki `-clip-NNN` w `autocut/` zamiast `-scene-NNN`. `select_scenes.py` i `music_driven.py` obsługują oba formaty.
+
+Kiedy używać: długie ciągłe nagrania bez cięć (np. kamera tylna bez rozdziałów). PySceneDetect nie wykrywa cięć → jedna ogromna "scena". CLIP-first znajdzie dobre momenty wewnątrz.
+
+An alternative to PySceneDetect — searches for good content rather than cuts. Scans frames every N seconds, computes CLIP scores, detects local maxima (peaks), and extracts a clip around each peak. Minimum gap between clips prevents overlap.
+
+Output: `-clip-NNN` files in `autocut/` instead of `-scene-NNN`. Both formats are handled by `select_scenes.py` and `music_driven.py`.
+
+When to use: long continuous footage without cuts (e.g. rear camera without chapters). PySceneDetect finds no cuts → one huge "scene". CLIP-first finds good moments inside.
 
 ### Dual-camera (multicam)
 
@@ -62,7 +76,9 @@ Gdy skonfigurowane są dwie kamery (np. kask + tył motocykla):
 - Wybrane pary przeplatane: `helmet[1] → back[1] → helmet[2] → back[2] → …`
 - Kamera B jest wyciszana; audio pochodzi wyłącznie z kamery A.
 
-Szacowany czas w Gallery uwzględnia `cam_ratio` (stosunek łącznych scen do scen z głównej kamery) — estymacja jest dokładna nawet przed renderem dzięki background dry-run API.
+Gdy `score_all_cams=true` (automatyczne przy CLIP-first): wszystkie kamery scorowane przez CLIP → `scene_scores_allcam.csv`. Music-driven używa allcam CSV gdy istnieje.
+
+Szacowany czas w Select scenes uwzględnia `cam_ratio` (stosunek łącznych scen do scen z głównej kamery) — estymacja jest dokładna nawet przed renderem dzięki background dry-run API.
 
 ### Enkodowanie
 
@@ -74,7 +90,24 @@ Wybrane sceny przycinane i re-encodowane do wspólnego formatu (libx264, aac 48k
 
 Tło intro: klatka z najwyższym score CLIP. Nad nią dwie linie fontem Caveat Bold: rok + nazwa trasy (auto z nazwy katalogu roboczego). Outro: czarna plansza z konfigurowalnym tekstem. Fade in/out. Montaż przez stream copy do `_autoframe/highlight_final.mp4`.
 
-### Dobór i miks muzyki
+### Music-driven render
+
+Tryb domyślny. Zamiast sekwencji timeline dobiera klipy pod strukturę muzyczną: podział na segmenty (intro/verse/chorus/outro), synchronizacja z beatami.
+
+The default render mode. Instead of a timeline sequence, clips are matched to the music structure: segment split (intro/verse/chorus/outro), beat synchronisation.
+
+```
+src/music_driven.py
+  load_audio()       → librosa beat/segment analysis
+  match_clips()      → fill each segment with highest-scoring available clips
+  render()           → ffmpeg concat + music mix
+```
+
+Różnorodność źródeł: `recent_sources` deque (maxlen = max(4, num_sources×2)) zapobiega skupieniu klipów z jednego pliku. Każda scena użyta max raz (`used` set).
+
+Source diversity: `recent_sources` deque prevents clustering clips from the same source file. Each scene used at most once.
+
+### Dobór i miks muzyki (Traditional mode)
 
 Biblioteka muzyczna analizowana raz i cache'owana w `index.json` (BPM, energia, gatunek). Średni score CLIP mapowany na docelową energię muzyki:
 
@@ -92,17 +125,19 @@ Prompty edytowalne w zakładce **Settings** lub w `config.ini`. Przycisk **Gener
 
 ```
 projekt/
-├── highlight_final_music_v1.mp4   ← główny wynik
-├── highlight_final_music_v2.mp4   ← kolejna muzyka
+├── 2025-04-Grecja-04.26-md_v1.mp4         ← music-driven wynik
+├── 2025-04-Grecja-04.26-md_v2.mp4         ← kolejna muzyka / kolejny render
+├── 2025-04-Grecja-04.26_v1.mp4            ← traditional render (gdy używany)
 └── _autoframe/
-    ├── highlight.mp4              ← surowy highlight bez intro
-    ├── highlight_final.mp4        ← z intro/outro, bez muzyki
-    ├── autocut/                   ← pocięte sceny
-    ├── frames/                    ← klatki środkowe (JPEG 640px)
-    ├── scene_scores.csv           ← wyniki CLIP
-    ├── selected_scenes.txt        ← lista do ffmpeg concat
-    ├── manual_overrides.json      ← ręczne oznaczenia z Gallery
-    └── analyze_result.json        ← cache wyników analizy (threshold, cam_ratio…)
+    ├── highlight.mp4                       ← surowy highlight bez intro
+    ├── highlight_final.mp4                 ← z intro/outro, bez muzyki
+    ├── autocut/                            ← pocięte sceny (-scene-NNN lub -clip-NNN)
+    ├── frames/                             ← klatki (_f0/_f1/_f2 = 25/50/75%, JPEG 640px)
+    ├── scene_scores.csv                    ← wyniki CLIP (główna kamera)
+    ├── scene_scores_allcam.csv             ← wyniki CLIP (wszystkie kamery, gdy score_all_cams)
+    ├── selected_scenes.txt                 ← lista do ffmpeg concat
+    ├── manual_overrides.json               ← ręczne oznaczenia z Select scenes
+    └── analyze_result.json                 ← cache wyników analizy (threshold, cam_ratio…)
 ```
 
 ---
@@ -149,11 +184,17 @@ final_score = pos_score - neg_score × neg_weight
 
 Scenes filtered and selected per source file:
 
-- Only scenes above `threshold` (set in Gallery).
+- Only scenes above `threshold` (set in Select scenes).
 - Each file has a `max_per_file_sec` cap.
 - Each scene trimmed to `max_scene_sec`, centred on the midpoint.
 - Clips shorter than `min_take_sec` after trimming are discarded.
-- Manual overrides from Gallery (force-include / force-exclude) take precedence.
+- Manual overrides from Select scenes (force-include / force-exclude) take precedence.
+
+### CLIP-first mode
+
+Scans frames every N seconds, scores each with CLIP, finds local score peaks, extracts a clip around each peak. No scene cuts needed. Output files: `-clip-NNN` in `autocut/` (vs `-scene-NNN` from PySceneDetect). Both formats handled transparently downstream.
+
+Use when: long continuous footage without camera cuts. PySceneDetect would produce one giant scene; CLIP-first finds the good moments inside.
 
 ### Dual-camera (multicam)
 
@@ -165,7 +206,9 @@ When two cameras are configured (e.g. helmet + rear):
 - Selected pairs interleaved: `helmet[1] → back[1] → helmet[2] → back[2] → …`
 - Camera B is muted; audio comes from Camera A only.
 
-Gallery duration estimate accounts for `cam_ratio` (total scenes / main-cam scenes) — accurate even before render via background dry-run API.
+When `score_all_cams=true` (auto-enabled with CLIP-first): all cameras are CLIP-scored → `scene_scores_allcam.csv`. Music-driven uses the allcam CSV when present.
+
+Select scenes duration estimate accounts for `cam_ratio` (total scenes / main-cam scenes) — accurate even before render via background dry-run API.
 
 ### Encoding
 
@@ -177,7 +220,19 @@ Selected scenes are trimmed and re-encoded to a common format (libx264, aac 48kH
 
 Best-scoring frame as background, two-line Caveat Bold title (year + trip name from directory), configurable outro card, fade in/out, assembled via stream copy.
 
-### Music selection
+### Music-driven render (default mode)
+
+Clips are matched to the music structure rather than assembled in timeline order.
+
+```
+load_audio()    → librosa beat tracking + segment detection
+match_clips()   → fill each segment with highest-scoring available clips
+render()        → ffmpeg concat + music mix + intro/outro
+```
+
+Source diversity: a rolling `recent_sources` window prevents visual repetition from the same source file. Each clip used at most once. Output: `*-md_v1.mp4`, subsequent runs `md_v2`, `md_v3…`
+
+### Music selection (Traditional mode)
 
 Library analysed once and cached in `index.json` (BPM, energy, genre). Average CLIP score mapped to energy target:
 
@@ -191,15 +246,17 @@ High-scoring footage → energetic music. Filtered by duration (track ≈ highli
 
 ```
 project/
-├── highlight_final_music_v1.mp4   ← main output
-├── highlight_final_music_v2.mp4   ← next music run
+├── 2025-04-Grecja-04.26-md_v1.mp4        ← music-driven output
+├── 2025-04-Grecja-04.26-md_v2.mp4        ← next music-driven run
+├── 2025-04-Grecja-04.26_v1.mp4           ← traditional render (when used)
 └── _autoframe/
-    ├── highlight.mp4              ← raw highlight without intro
-    ├── highlight_final.mp4        ← with intro/outro, no music
-    ├── autocut/                   ← split scenes
-    ├── frames/                    ← midpoint frames (JPEG 640px)
-    ├── scene_scores.csv           ← CLIP scores
-    ├── selected_scenes.txt        ← ffmpeg concat list
-    ├── manual_overrides.json      ← Gallery overrides
-    └── analyze_result.json        ← analysis cache (threshold, cam_ratio…)
+    ├── highlight.mp4                      ← raw highlight without intro
+    ├── highlight_final.mp4                ← with intro/outro, no music
+    ├── autocut/                           ← split scenes (-scene-NNN or -clip-NNN)
+    ├── frames/                            ← key frames (_f0/_f1/_f2 = 25/50/75%, JPEG)
+    ├── scene_scores.csv                   ← CLIP scores (main camera)
+    ├── scene_scores_allcam.csv            ← CLIP scores (all cameras, when score_all_cams)
+    ├── selected_scenes.txt                ← ffmpeg concat list
+    ├── manual_overrides.json              ← Select scenes overrides
+    └── analyze_result.json               ← analysis cache (threshold, cam_ratio…)
 ```

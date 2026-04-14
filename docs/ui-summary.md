@@ -38,7 +38,31 @@ Shows the selected music track or a notice if no music is selected. **→ Change
 
 ---
 
-## ▶ Render Highlight
+## ♪ Music-driven (domyślny tryb / default mode)
+
+Generuje highlight zsynchronizowany ze strukturą muzyczną — uderzenia, segmenty, energia. Nie wymaga ustawiania threshold ani Max scene / Per file.
+
+Generates a highlight synchronised to the music structure — beats, segments, energy. No threshold or Max scene / Per file settings needed.
+
+- Wybierz utwór w zakładce Music (lub zostaw auto-select) → **♪ Music-driven**
+- Klipy dobierane z pełnej puli scen (`scene_scores_allcam.csv` gdy istnieje — wszystkie kamery)
+- Każda scena użyta maksymalnie raz (`used` set); source diversity przez rolling window
+- Wynik: `*-md_v1.mp4`, kolejne rundy `md_v2`, `md_v3…` — poprzednie nie są nadpisywane
+- Guzik wraca po potwierdzeniu startu — można kolejkować kolejne rendery
+
+Select a track in the Music tab (or leave auto-select) → **♪ Music-driven**.
+- Clips drawn from the full scene pool (`scene_scores_allcam.csv` when present — all cameras)
+- Each scene used at most once; source diversity enforced via rolling window
+- Output: `*-md_v1.mp4`, subsequent runs `md_v2`, `md_v3…` — previous versions not overwritten
+- Button re-enables after confirmed start — multiple renders can be queued
+
+---
+
+## ▶ Render Highlight *(Traditional mode)*
+
+Dostępny po włączeniu **Traditional mode** w Advanced modal (⚙ Advanced → Traditional mode).
+
+Available after enabling **Traditional mode** in the Advanced modal (⚙ Advanced → Traditional mode).
 
 Uruchamia finalne enkodowanie z bieżącym threshold i overrides. Pod przyciskiem pojawia się pasek postępu z ETA aktualizowany w czasie rzeczywistym.
 

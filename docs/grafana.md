@@ -28,7 +28,7 @@ Port 80 is intentionally exposed only for `/metrics` — nginx blocks everything
 | `autoedit_gpu_memory_used_mb` | gauge | GPU VRAM used (MB) |
 | `autoedit_gpu_temp_celsius` | gauge | GPU temperature (°C) |
 
-> Metric names visible in the screenshot under `docs/grafana/`.
+![Grafana dashboard](img/AI-autoedit - Dashboards - Grafana.png)
 
 ## Grafana dashboard
 

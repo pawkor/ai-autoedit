@@ -155,9 +155,9 @@ Checkboxes next to tracks mark them for use in the pipeline. Selection persists 
 
 ### → Target dur.
 
-Gdy zaznaczona jest dokładnie jedna ścieżka, pojawia się przycisk **→ Target dur.** Kliknięcie ustawia Target dur. w Gallery na czas trwania wybranego utworu i automatycznie uruchamia wyszukiwanie progu — wynik to film dopasowany do długości wybranego utworu. Widok przełącza się na zakładkę Gallery.
+Gdy zaznaczona jest dokładnie jedna ścieżka, pojawia się przycisk **→ Target dur.** Kliknięcie ustawia Target dur. w Select scenes na czas trwania wybranego utworu i automatycznie uruchamia wyszukiwanie progu — wynik to film dopasowany do długości wybranego utworu. Widok przełącza się na zakładkę Select scenes.
 
-When exactly one track is selected, the **→ Target dur.** button appears. Clicking it sets Gallery's Target dur. to the selected track's duration and immediately runs the threshold search — producing a film matched to that track's length. The view switches to the Gallery tab.
+When exactly one track is selected, the **→ Target dur.** button appears. Clicking it sets Select scenes's Target dur. to the selected track's duration and immediately runs the threshold search — producing a film matched to that track's length. The view switches to the Select scenes tab.
 
 ---
 

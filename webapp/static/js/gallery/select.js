@@ -37,7 +37,7 @@ function _computePerFileCuts() {
 function _passesPreBalance(f) {
   const ov = manualOverrides[f.scene];
   if (ov === 'include' || ov === 'exclude') return false;
-  if (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value)) return false;
+  if (f.score != null && (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value))) return false;
   return !_perFileCuts.has(f.scene);
 }
 
@@ -163,7 +163,7 @@ function isIncluded(f) {
   if (_balancedScenes !== null) {
     if (!_balancedScenes.has(f.scene)) return false;
   } else {
-    if (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value)) return false;
+    if (f.score != null && (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value))) return false;
     if (_perFileCuts.has(f.scene)) return false;
   }
   return !_gapExcluded.has(f.scene);
@@ -184,7 +184,7 @@ function toggleFrame(scene) {
   if (!f) return;
   const threshold = parseFloat(document.getElementById('threshold-val').value);
   const ov = manualOverrides[scene];
-  const byThreshold = f.score >= threshold;
+  const byThreshold = f.score != null && f.score >= threshold;
   if (ov === undefined) {
     manualOverrides[scene] = byThreshold ? 'exclude' : 'include';
   } else {
@@ -201,9 +201,10 @@ function toggleFrame(scene) {
     const limited = !newOv && !included && aboveThreshold;
     card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + (newOv ? ' manual' : '');
     const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
-    card.title = newOv ? `Score: ${f.score.toFixed(3)} (manual — click to reset)`
-      : limited ? `Score: ${f.score.toFixed(3)} (cut by ${limitReason} — click to force include)`
-      : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+    const _sc = f.score != null ? f.score.toFixed(3) : '—';
+    card.title = newOv ? `Score: ${_sc} (manual — click to reset)`
+      : limited ? `Score: ${_sc} (cut by ${limitReason} — click to force include)`
+      : `Score: ${_sc} (click to toggle)`;
   }
   _syncThresholdDisplay();
   calculateGalleryStats();
@@ -258,9 +259,10 @@ function renderGallery() {
     card.style.cursor = 'pointer';
     card.dataset.scene = f.scene;
     const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
-    card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)`
-      : limited ? `Score: ${f.score.toFixed(3)} (cut by ${limitReason} — click to force include)`
-      : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+    const _scoreStr = f.score != null ? f.score.toFixed(3) : '—';
+    card.title = ov ? `Score: ${_scoreStr} (manual — click to reset)`
+      : limited ? `Score: ${_scoreStr} (cut by ${limitReason} — click to force include)`
+      : `Score: ${_scoreStr} (click to toggle)`;
     card.onclick = ()=>toggleFrame(f.scene);
     const sceneNum = (f.scene.match(/-scene-(\d+)$/) || [])[1] || '';
     const sceneLabel = (() => {
@@ -275,7 +277,7 @@ function renderGallery() {
     const isDup = f.duplicate && !ov;
     if (isDup) {
       card.className = 'fc excluded';
-      card.title = `Score: ${f.score.toFixed(3)} (near-duplicate removed — click to force include)`;
+      card.title = `Score: ${f.score != null ? f.score.toFixed(3) : '—'} (near-duplicate removed — click to force include)`;
     }
     const limitBadge = limited ? `<span class="fc-limit-badge">limit</span>` : '';
     const dupBadge   = isDup   ? `<span class="fc-limit-badge" style="background:var(--muted)">dup</span>` : '';
@@ -283,7 +285,7 @@ function renderGallery() {
     const effDur = f.duration != null ? Math.min(f.duration, _maxSec) : null;
     const durBadge = `<span class="fc-dur">${effDur != null ? effDur.toFixed(1) + 's' : '?'}</span>`;
     card.innerHTML = `<img src="${_cachedSrc(f.frame_url)}" loading="lazy" onerror="this.style.display='none'">
-      <div class="fc-info"><span class="fc-score">${f.score.toFixed(3)}</span>${durBadge}<span class="fc-name"></span>${limitBadge}${dupBadge}</div>`;
+      <div class="fc-info"><span class="fc-score">${f.score != null ? f.score.toFixed(3) : '—'}</span>${durBadge}<span class="fc-name"></span>${limitBadge}${dupBadge}</div>`;
     card.querySelector('.fc-name').textContent = sceneLabel;
     // Hover → video clip preview
     if (f.frame_url) {
@@ -454,6 +456,12 @@ function saveSettingsField() {
   data.shorts_multicam    = gc('js-shorts-multicam') || false;
   data.shorts_ncs         = gc('js-shorts-ncs') || false;
   data.shorts_crop_offsets = document.getElementById('js-shorts-crop-offsets')?.value?.trim() || '';
+  data.shorts_music_dir   = document.getElementById('js-shorts-music-dir')?.value || '';
+  data.clip_first         = gc('js-clip-first') || false;
+  data.score_all_cams     = gc('js-score-all-cams') || false;
+  data.clip_scan_interval = parseFloat(document.getElementById('js-clip-scan-interval')?.value || 3);
+  data.clip_scan_clip_dur = parseFloat(document.getElementById('js-clip-scan-clip-dur')?.value  || 8);
+  data.clip_scan_min_gap  = parseFloat(document.getElementById('js-clip-scan-min-gap')?.value   || 30);
   const offsets = readCamOffsets('js-cam-list');
   if (offsets) data.cam_offsets = offsets;
   api.put('/api/job-config', data);
@@ -482,8 +490,8 @@ function _scheduleEstimate() {
   clearTimeout(_estimateTimer);
   _estimateTimer = setTimeout(async () => {
     const thr = _galleryThreshold;
-    const ms  = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value) || 10;
-    const pf  = currentJobPerFile  || parseFloat(document.getElementById('js-per-file')?.value)  || 45;
+    const ms  = parseFloat(document.getElementById('js-max-scene')?.value) || currentJobMaxScene || 10;
+    const pf  = parseFloat(document.getElementById('js-per-file')?.value)  || currentJobPerFile  || 45;
     const mg  = parseFloat(document.getElementById('min-gap-input')?.value) || 0;
     const estimateParams = { threshold: thr, max_scene: ms, per_file: pf };
     if (mg > 0) estimateParams.min_gap_sec = mg;
@@ -544,6 +552,22 @@ function _syncThresholdDisplay() {
   if (mEst) mEst.textContent = durStr;
   const mScenes = document.getElementById('music-est-scenes');
   if (mScenes) mScenes.textContent = scenes || '—';
+  _updateTimelineBar();
+}
+
+function _updateTimelineBar() {
+  const fill = document.getElementById('timeline-bar-fill');
+  const label = document.getElementById('timeline-bar-text');
+  if (!fill || !label) return;
+  const estDur = analyzeResult?._live_est_dur || 0;
+  const targetRaw = document.getElementById('gallery-target-min')?.value || '';
+  const targetSec = _parseTargetInput(targetRaw);
+  if (!estDur || !targetSec) { label.textContent = '—'; fill.style.width = '0%'; return; }
+  const ratio = Math.min(estDur / targetSec, 1.2);
+  const pct   = Math.min(ratio * 100, 100);
+  fill.style.width = pct + '%';
+  fill.className = ratio >= 1.05 ? 'tl-over' : ratio >= 0.9 ? 'tl-ok' : ratio >= 0.5 ? 'tl-mid' : 'tl-low';
+  label.textContent = fmtDur(estDur) + ' / ' + fmtDur(targetSec);
 }
 
 // Parse "M:SS", "M:S", or plain "M" / "M.f" into total seconds
@@ -590,9 +614,13 @@ function _durationAtThreshold(thr) {
 }
 
 async function autoTargetThreshold(targetMin) {
-  if (!framesData.length || !targetMin || targetMin <= 0 || !currentJobId) return;
-  const targetSec = targetMin * 60;
+  _updateTimelineBar();
   const warnEl = document.getElementById('target-dur-warn');
+  if (!framesData.length || !targetMin || targetMin <= 0 || !currentJobId) {
+    if (warnEl) { warnEl.textContent = ''; warnEl.style.display = 'none'; }
+    return;
+  }
+  const targetSec = targetMin * 60;
 
   // Abort any in-flight search
   if (_targetAbortController) { _targetAbortController.abort(); _targetAbortController = null; }
@@ -608,23 +636,27 @@ async function autoTargetThreshold(targetMin) {
   if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: targetMin });
   if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { target_minutes: targetMin });
 
-  // Show progress indicator in stats text
   _targetSearchActive = true;
-  _setGallerySearchStatus(0, 12);
-  if (warnEl)  { warnEl.textContent = ''; warnEl.style.display = 'none'; }
+  if (warnEl) { warnEl.textContent = ''; warnEl.style.display = 'none'; }
 
-  const ms = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value) || 10;
-  const pf = currentJobPerFile  || parseFloat(document.getElementById('js-per-file')?.value)  || 45;
+  const ms = parseFloat(document.getElementById('js-max-scene')?.value) || currentJobMaxScene || 10;
+  const pf = parseFloat(document.getElementById('js-per-file')?.value)  || currentJobPerFile  || 45;
   const mg = parseFloat(document.getElementById('min-gap-input')?.value) || 0;
 
   // Subtract intro+outro duration so the search targets clips-only, giving final video ≈ targetSec.
   const introDur = _introDurSec();
   const adjustedTargetSec = Math.max(targetSec - introDur, 1);
 
+  // Ensure per_file is large enough for the search to potentially reach the target.
+  // If per_file is too small (e.g. default 45s), the binary search can never converge —
+  // even threshold=0 would give dur < target. Use at least targetSec*4 so each source
+  // file can contribute enough footage (same formula as _suggestSceneParamsForMusic).
+  const searchPf = Math.max(pf, Math.ceil(adjustedTargetSec * 4));
+
   let res = null;
   let _searchId = null;
   try {
-    const searchBody = { target_sec: adjustedTargetSec, max_scene: ms, per_file: pf };
+    const searchBody = { target_sec: adjustedTargetSec, max_scene: ms, per_file: searchPf };
     if (mg > 0) searchBody.min_gap_sec = mg;
     const r = await fetch(`/api/jobs/${currentJobId}/find-threshold`, {
       method: 'POST',
@@ -632,7 +664,14 @@ async function autoTargetThreshold(targetMin) {
       body: JSON.stringify(searchBody),
       signal: ctrl.signal,
     });
+    if (r.status === 409) {
+      // Job is still running (e.g. postprocess) — defer until it finishes.
+      _pendingTargetMin = targetMin;
+      res = null; return;
+    }
     if (!r.ok) { res = null; return; }
+    // Request accepted — now show progress indicator.
+    _setGallerySearchStatus(0, 12);
     const startData = await r.json();
     _searchId = startData.search_id;
     if (!_searchId) { res = null; return; }
@@ -673,6 +712,7 @@ async function autoTargetThreshold(targetMin) {
     analyzeResult.estimated_main_scenes  = res.main_scenes;
     analyzeResult.cam_ratio              = res.cam_ratio;
     analyzeResult.auto_threshold         = thr;
+    _overridesChangedSinceRender = false; // fresh search accounts for all current params
 
     _applyThreshold(thr);
     if (currentJobId) {

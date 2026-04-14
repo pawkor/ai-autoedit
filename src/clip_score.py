@@ -31,8 +31,10 @@ EMBEDDINGS_FILE   = os.environ.get("EMBEDDINGS_FILE",
                         str(Path(OUTPUT_CSV).parent / "scene_embeddings.npz"))
 CAM_SOURCES = os.environ.get("CAM_SOURCES", "")
 AUDIO_CAM   = os.environ.get("AUDIO_CAM",   "")
-TOP_PERCENT = _cfg.getint("clip_scoring",   "top_percent",   fallback=25)
-NEG_WEIGHT  = _cfg.getfloat("clip_scoring", "neg_weight",    fallback=0.5)
+TOP_PERCENT     = _cfg.getint("clip_scoring",   "top_percent",   fallback=25)
+NEG_WEIGHT      = _cfg.getfloat("clip_scoring", "neg_weight",    fallback=0.5)
+CLIP_MODEL      = _cfg.get("clip_scoring",      "model",         fallback="ViT-H-14")
+CLIP_PRETRAINED = _cfg.get("clip_scoring",      "pretrained",    fallback="dfn5b")
 BATCH_SIZE  = int(os.environ.get("CLIP_BATCH_SIZE",  _cfg.get("clip_scoring", "batch_size",  fallback="64")))
 NUM_WORKERS = int(os.environ.get("CLIP_NUM_WORKERS", _cfg.get("clip_scoring", "num_workers", fallback=str(min(4, os.cpu_count() or 1)))))
 if torch.cuda.is_available():
@@ -64,10 +66,11 @@ if DEVICE == "cuda":
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 elif DEVICE == "mps":
     print("GPU: Apple Silicon (MPS)")
+print(f"Model: {CLIP_MODEL} / {CLIP_PRETRAINED}")
 print(f"Batch size: {BATCH_SIZE}")
 
-model, _, preprocess = open_clip.create_model_and_transforms('ViT-L-14', pretrained='openai')
-tokenizer = open_clip.get_tokenizer('ViT-L-14')
+model, _, preprocess = open_clip.create_model_and_transforms(CLIP_MODEL, pretrained=CLIP_PRETRAINED)
+tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
 model = model.to(DEVICE).eval()
 
 with torch.no_grad():
@@ -185,7 +188,10 @@ if not results:
     print("No frames scored — check that autocut/ has .mp4 files > 5MB.")
     sys.exit(1)
 
-# ── Aesthetic scoring (LAION improved predictor, ViT-L-14) ───────────────────
+# ── Aesthetic scoring (LAION improved predictor, requires ViT-L-14 768-dim) ──
+_AES_BACKBONE   = "ViT-L-14"
+_AES_PRETRAINED = "openai"
+
 def _aesthetic_mlp():
     import torch.nn as nn
     class _MLP(nn.Module):
@@ -203,7 +209,7 @@ def _aesthetic_mlp():
     return _MLP()
 
 def _load_aesthetic_predictor():
-    import urllib.request, torch.nn as nn
+    import urllib.request
     cache = Path.home() / ".cache" / "aesthetic_predictor" / "sac+logos+ava1-l14-linearMSE.pth"
     if not cache.exists():
         cache.parent.mkdir(parents=True, exist_ok=True)
@@ -213,7 +219,6 @@ def _load_aesthetic_predictor():
         urllib.request.urlretrieve(url, str(cache))
     m = _aesthetic_mlp()
     state = torch.load(str(cache), map_location="cpu", weights_only=True)
-    # Strip Lightning prefix if present
     if any(k.startswith("model.") for k in state):
         state = {k[6:]: v for k, v in state.items()}
     m.load_state_dict(state)
@@ -222,13 +227,39 @@ def _load_aesthetic_predictor():
 aes_scores: dict[str, float] = {}
 try:
     _aes_model = _load_aesthetic_predictor()
-    _stems = list(scene_embs.keys())
-    _emb_t = torch.tensor(
-        np.array([scene_embs[s] for s in _stems]), dtype=torch.float32
-    ).to(DEVICE)
-    _emb_t = _emb_t / _emb_t.norm(dim=-1, keepdim=True)
+    _stems = list(scene_best.keys())
+
+    if CLIP_MODEL == _AES_BACKBONE:
+        # Main model is ViT-L-14 — reuse existing 768-dim embeddings directly
+        _aes_emb_t = torch.tensor(
+            np.array([scene_embs[s] for s in _stems]), dtype=torch.float32
+        ).to(DEVICE)
+    else:
+        # Main model uses different embedding space — run a lightweight ViT-L-14 pass
+        # on the per-scene best frames only (much smaller set than all frames).
+        print(f"  Aesthetic: loading {_AES_BACKBONE} for 768-dim embeddings ({len(_stems)} scenes)...")
+        _aes_clip, _, _aes_prep = open_clip.create_model_and_transforms(
+            _AES_BACKBONE, pretrained=_AES_PRETRAINED
+        )
+        _aes_clip = _aes_clip.to(DEVICE).eval()
+        _aes_imgs = []
+        for stem in _stems:
+            img_path = Path(FRAMES_DIR) / f"{scene_best[stem]['frame']}.jpg"
+            try:
+                _aes_imgs.append(_aes_prep(Image.open(img_path).convert("RGB")))
+            except Exception:
+                _aes_imgs.append(torch.zeros(3, 224, 224))
+        _aes_emb_parts: list[torch.Tensor] = []
+        for i in range(0, len(_aes_imgs), BATCH_SIZE):
+            batch = torch.stack(_aes_imgs[i:i + BATCH_SIZE]).to(DEVICE)
+            with torch.no_grad():
+                _aes_emb_parts.append(_aes_clip.encode_image(batch).float().cpu())
+        del _aes_clip  # free VRAM before MLP pass
+        _aes_emb_t = torch.cat(_aes_emb_parts).to(DEVICE)
+
+    _aes_emb_t = _aes_emb_t / _aes_emb_t.norm(dim=-1, keepdim=True)
     with torch.no_grad():
-        _aes_raw = _aes_model(_emb_t).squeeze(-1).cpu().tolist()
+        _aes_raw = _aes_model(_aes_emb_t).squeeze(-1).cpu().tolist()
     aes_scores = dict(zip(_stems, _aes_raw))
     print(f"Aesthetic: {min(_aes_raw):.2f}–{max(_aes_raw):.2f}  mean={sum(_aes_raw)/len(_aes_raw):.2f}")
 except Exception as _e:

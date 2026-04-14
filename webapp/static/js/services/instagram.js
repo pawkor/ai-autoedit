@@ -35,10 +35,11 @@ async function igReelModalOpen(filePath, fileName, ncsAttr = null) {
 
   const cap = document.getElementById('ig-caption');
   const hashtags = '#reels #motorcycle #motovlog #ktm #adventurebike #roadtrip';
+  const repoUrl = 'https://github.com/pawkor/ai-autoedit';
   if (ncsAttr) {
-    cap.value = `Music: ${ncsAttr} (NCS Release)\n\n${hashtags}`;
+    cap.value = `Music: ${ncsAttr} (NCS Release)\n\n${hashtags}\n${repoUrl}`;
   } else {
-    cap.value = hashtags;
+    cap.value = `${hashtags}\n${repoUrl}`;
   }
 
   document.getElementById('ig-reel-modal').classList.add('open');

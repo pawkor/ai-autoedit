@@ -59,9 +59,9 @@
   /* ── App height: use dvh so browser chrome (address bar) is excluded ── */
   #app { height: 100dvh; }
 
-  /* ── Tabs: 2 rows of 3 ── */
-  #job-tabs { flex-wrap: wrap; padding: 5px 10px; gap: 4px; }
-  .tab { flex: 1 1 calc(33.33% - 4px); white-space: nowrap; text-align: center; }
+  /* ── Tabs ── */
+  #center-tabs { flex-wrap: wrap; padding: 4px 8px; gap: 3px; }
+  .tab { flex: 1 1 auto; white-space: nowrap; text-align: center; }
 
   /* ── Gallery grid: 2 columns ── */
   #frames-grid { grid-template-columns: repeat(2, 1fr); }
@@ -78,8 +78,10 @@
     height: 90vh !important;
   }
 
-  /* ── Summary panel ── */
-  #summary-panel { padding: 12px; }
+  /* ── Footer: stack on mobile ── */
+  #job-footer { flex-wrap: wrap; gap: 8px; padding: 8px; }
+  #footer-left { max-width: 100%; }
+  #inspector { display: none; }
 
   /* ── Results: full width cards, no inline player (tap = fullscreen) ── */
   #video-wrap { display: none !important; }

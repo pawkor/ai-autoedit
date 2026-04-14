@@ -10,7 +10,7 @@ The **Select scenes** tab shows the midpoint frame of each detected scene with i
 
 ## Target dur.
 
-Pole **Target dur.** (format `m:ss`, np. `6:45`) ustawia docelowy czas highlight. Po wpisaniu i naciśnięciu Enter (lub zmianie wartości) uruchamia się automatyczne szukanie progu CLIP binarnym wyszukiwaniem (12 iteracji na backendzie z DRY_RUN), tak żeby uzyskać film jak najbliższy zadanemu czasowi. Wynik — liczba scen i szacowany czas — pojawia się w liczniku nad galerią.
+Pole **Target dur.** (format `m:ss`, np. `6:45`) ustawia docelowy czas highlight. Po wpisaniu i naciśnięciu Enter (lub zmianie wartości) uruchamia się automatyczne szukanie progu CLIP binarnym wyszukiwaniem (12 iteracji na backendzie z DRY_RUN), tak żeby uzyskać film jak najbliższy zadanemu czasowi. Wynik — liczba scen i szacowany czas — pojawia się w liczniku nad Select scenes.
 
 The **Target dur.** field (format `m:ss`, e.g. `6:45`) sets the target highlight duration. On Enter or value change, an automatic binary threshold search (12 iterations, backend DRY_RUN) finds the CLIP threshold that produces a film closest to the target. The result — scene count and estimated duration — appears in the counter above the gallery.
 
@@ -20,25 +20,18 @@ If the target is unreachable (not enough footage), a `⚠ max ~m:ss` warning is 
 
 ---
 
-## Threshold
-
-Pole **Threshold** (z przyciskami ▼/▲ co 0.001) ustawia próg CLIP ręcznie. Sceny powyżej progu mają **zieloną ramkę z poświatą** (included), poniżej — cienką szarą ramkę (excluded). Ramka i poświata są wyraźne we wszystkich motywach (dark, light, gruvbox, nord, solarized). Zmiana progu ręcznie nadpisuje wynik automatycznego wyszukiwania.
-
-The **Threshold** field (with ▼/▲ buttons stepping 0.001) sets the CLIP threshold manually. Scenes above the threshold have a **green border with a glow** (included), below — thin grey border (excluded). The border and glow are clearly visible in all themes. Manual threshold change overrides the auto-search result.
-
-
 ### Szacowany czas / Duration estimate
 
-Licznik nad galerią (`N / total scenes · m:ss`) pokazuje:
+Licznik nad Select scenes (`N / total scenes · m:ss`) pokazuje:
 
 - **Po renderze** — dokładny wynik ostatniego rendera.
-- **Po zmianie threshold lub overrides** — estymację z DRY_RUN (dokładny Python, nie aproksymacja JS), aktualizowaną ~1 s po zatrzymaniu suwaka.
+- **Po zmianie overrides** — estymację z DRY_RUN (dokładny Python, nie aproksymacja JS), aktualizowaną ~1 s po zmianie.
 - **Dual-camera** — wynik uwzględnia sparowane sceny z drugiej kamery.
 
 The counter above the gallery (`N / total scenes · m:ss`) shows:
 
 - **After render** — exact result of the last render.
-- **After threshold/override change** — DRY_RUN estimate (exact Python), updated ~1 s after the slider stops.
+- **After override change** — DRY_RUN estimate (exact Python), updated ~1 s after the change.
 - **Dual-camera** — result accounts for paired back-cam scenes.
 
 ### Odznaka czasu sceny / Scene duration badge

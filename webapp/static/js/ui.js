@@ -57,6 +57,7 @@ let _refreshing=false;
 let musicTracks=[], musicSelected=new Set();
 let _acrConfigured = false;
 let jobPhase=null, analyzeResult=null, pinnedTrack=null, _sdTotal=0, _shortsCount=1;
+let _suggestedTrack=null, _rerollIdx=0;
 const _frameCache = new Map(); // original url → blob URL
 let _galleryDirty = true;
 let _musicSort = { key: null, asc: true };
@@ -65,6 +66,7 @@ let _autoFillOverrides = new Set(); // scenes force-included by autoTargetThresh
 let _thresholdSaveTimer = null;
 let _targetAbortController = null; // AbortController for find-threshold request
 let _targetSearchActive = false;   // true while binary search is running
+let _pendingTargetMin = null;      // deferred autoTargetThreshold arg (gallery not yet visible)
 
 function _setGallerySearchStatus(iter, total) {
   // Render inline progress bar + label into gallery-stats-text.
@@ -142,8 +144,10 @@ function toggleSortOrder() {
   refreshJobList();
 }
 
-const THEMES = ['dark', 'light', 'gruvbox', 'nord', 'solarized'];
+const THEMES = ['dark', 'light'];
 let currentTheme = localStorage.getItem('theme') || 'dark';
+// Coerce legacy theme names to dark
+if (!THEMES.includes(currentTheme)) currentTheme = 'dark';
 
 let _logFilter = localStorage.getItem('logFilter') || 'info';
 function setLogFilter(f) {
@@ -167,17 +171,16 @@ document.addEventListener('click', () => document.getElementById('log-filter-men
 function applyTheme(name) {
   if (!THEMES.includes(name)) name = 'dark';
   currentTheme = name;
-  THEMES.forEach(t => document.documentElement.classList.remove('theme-' + t));
-  if (name !== 'dark') document.documentElement.classList.add('theme-' + name);
+  document.documentElement.classList.toggle('theme-light', name === 'light');
   const btn = document.getElementById('sidebar-theme');
-  if (btn) btn.textContent = name;
+  if (btn) btn.textContent = name === 'dark' ? '☽' : '☀';
   const sel = document.getElementById('s-theme');
   if (sel) sel.value = name;
   localStorage.setItem('theme', name);
   _saveUiPrefs();
 }
 function toggleTheme() {
-  applyTheme(THEMES[(THEMES.indexOf(currentTheme) + 1) % THEMES.length]);
+  applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
 async function refreshJobList() {
@@ -250,29 +253,34 @@ function connectStats() {
 connectStats();
 
 function switchTab(name) {
+  // Settings and summary no longer have center tabs — redirect to gallery.
+  if (name === 'settings' || name === 'summary') name = 'gallery';
   if (name !== 'results') stopVideo();
   if (name !== 'music') _stopAudio();
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', TAB_NAMES[i] === name));
-  document.getElementById('job-settings-panel').style.display = name==='settings' ? 'flex' : 'none';
   document.getElementById('log-split').style.display          = name==='log'      ? 'flex' : 'none';
   document.getElementById('log-filter-widget').style.display  = name==='log'      ? ''     : 'none';
   document.getElementById('btn-clear-log').style.display      = name==='log'      ? ''     : 'none';
   document.getElementById('gallery-panel').classList.toggle('active', name==='gallery');
   document.getElementById('music-panel').classList.toggle('active', name==='music');
-  document.getElementById('summary-panel').classList.toggle('active', name==='summary');
   document.getElementById('results-panel').classList.toggle('active', name==='results');
   if (name==='gallery' && currentJobId) {
     if (_galleryThreshold !== null)
       document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
     _syncThresholdDisplay();
-    if (_targetSearchActive) {
-      // Binary search running — ensure progress indicator is visible.
-      _setGallerySearchStatus(0, 12);
-      if (framesData.length && _galleryDirty) renderGallery();
-    } else if (framesData.length) {
-      if (_galleryDirty) { renderGallery(); calculateGalleryStats(); }
-    } else {
+    if (!framesData.length) {
       loadFrames(currentJobId);
+    } else if (_pendingTargetMin && !_targetSearchActive) {
+      // Binary search was deferred while gallery was hidden — run it now.
+      const t = _pendingTargetMin; _pendingTargetMin = null;
+      autoTargetThreshold(t);
+    } else if (_targetSearchActive) {
+      // Binary search already running (e.g. triggered by setTargetFromSelectedTrack)
+      // — just ensure progress indicator is visible.
+      _setGallerySearchStatus(0, 12);
+      if (_galleryDirty) renderGallery();
+    } else if (_galleryDirty) {
+      renderGallery(); calculateGalleryStats();
     }
   }
   if (name==='music' && currentJobId) {
@@ -283,13 +291,14 @@ function switchTab(name) {
     else
       _doMusic();
   }
-  if (name==='summary' && currentJobId) {
+  if (name==='results' && currentJobId) loadResults(currentJobId);
+  // Footer always visible — update track display when gallery opens.
+  if (name==='gallery' && currentJobId) {
     if (!analyzeResult?.estimated_duration_sec)
       loadAnalyzeResult(currentJobId).then(() => _updateSummaryTrack());
     else
       _updateSummaryTrack();
   }
-  if (name==='results' && currentJobId) loadResults(currentJobId);
 }
 
 // ── Gallery ───────────────────────────────────────────────────────────────────
@@ -316,6 +325,7 @@ async function loadFrames(jobId) {
 
   const threshold = job?.params?.threshold;
   const targetMin = job?.params?.target_minutes ? parseFloat(job.params.target_minutes) : null;
+  const galleryNowActive = document.getElementById('gallery-panel').classList.contains('active');
   if (targetMin && targetMin > 0) {
     // Apply saved threshold immediately for instant display, then refine via binary search.
     if (threshold) {
@@ -323,7 +333,15 @@ async function loadFrames(jobId) {
       document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
       _syncThresholdDisplay(); // computes _computeGapExclusions() before first renderGallery()
     }
-    autoTargetThreshold(targetMin);
+    if (galleryNowActive) {
+      _pendingTargetMin = null; // clear any deferred request — running now
+      // Only fire if no search is running AND none has completed yet for this job.
+      // Prevents WS done/analyzed events from re-running an already-finished search.
+      if (!_targetSearchActive && !analyzeResult?.auto_threshold) autoTargetThreshold(targetMin);
+    } else {
+      // Gallery not visible — defer binary search until user opens the tab.
+      _pendingTargetMin = targetMin;
+    }
   } else if (threshold) {
     _galleryThreshold = parseFloat(threshold);
     document.getElementById('threshold-val').value = _galleryThreshold.toFixed(3);
@@ -337,6 +355,23 @@ async function loadFrames(jobId) {
   } else {
     _syncThresholdDisplay();
   }
+  _checkAnalyzeMode(job);
+}
+
+function _checkAnalyzeMode(job) {
+  const warn = document.getElementById('analyze-warn');
+  if (!warn) return;
+  const clipFirst = document.getElementById('js-clip-first')?.checked;
+  const hasClipScenes = framesData.some(f => /-(clip)-\d+/.test(f.scene));
+  const hasSceneScenes = framesData.some(f => /-(scene)-\d+/.test(f.scene));
+  let msg = '';
+  if (clipFirst && hasSceneScenes && !hasClipScenes) {
+    msg = '⚠ Re-analyze needed — CLIP-first not used';
+  } else if (!clipFirst && hasClipScenes && !hasSceneScenes) {
+    msg = '⚠ Re-analyze needed — CLIP-first was used, now disabled';
+  }
+  warn.textContent = msg;
+  warn.style.display = msg ? '' : 'none';
 }
 
 // ── Queue modal ───────────────────────────────────────────────────────────────
@@ -515,6 +550,20 @@ async function ytLoadPlaylists(selId = 'yt-playlist') {
     sel.appendChild(o);
   }
 }
+
+function _applyTraditionalMode(on) {
+  const ids = ['traditional-scene-params', 'threshold-bar', 'js-no-music-label', 'btn-render'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';
+  });
+  const cb = document.getElementById('js-traditional-mode');
+  if (cb) cb.checked = !!on;
+  localStorage.setItem('traditional_mode', on ? '1' : '0');
+}
+
+// Init traditional mode from localStorage
+_applyTraditionalMode(localStorage.getItem('traditional_mode') === '1');
 
 function formatDur(sec) {
   const s=Math.floor(sec), m=Math.floor(s/60);

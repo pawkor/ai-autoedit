@@ -7,10 +7,14 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Feature | Status | Notes |
 |---|---|---|
 | PySceneDetect scene splitting | ✅ | configurable threshold + min_scene_len |
-| CLIP scoring (ViT-L-14, GPU) | ✅ | positive/negative prompts, neg_weight |
-| Threshold-based scene selection | ✅ | per-file cap, camera balance |
+| CLIP-first mode | ✅ | skips scenedetect; frame scanning + CLIP peak extraction; `-clip-NNN` clips |
+| CLIP scoring (ViT-L-14, GPU) | ✅ | positive/negative prompts, neg_weight; multi-frame (_f0/_f1/_f2) |
+| Score all cameras (allcam CSV) | ✅ | `scene_scores_allcam.csv`; auto-enabled with CLIP-first |
+| LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |
+| Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only |
+| Music-driven render | ✅ | beat/segment sync, source diversity, multicam, full-res intro |
 | Multi-cam sync (timestamp + clock offset) | ✅ | MP4 creation_time fallback |
-| Intro / outro overlay | ✅ | configurable skip via no_intro |
+| Intro / outro overlay | ✅ | full-res frame from autocut clip (not thumbnail) |
 | Music mix with BPM/energy matching | ✅ | target duration drives track selection |
 | Output file naming (YYYY-MM-Place-DD.mp4) | ✅ | _output_name() |
 | Tiered CLIP thresholds per source file | ✅ | [tier_overrides] in config.ini |
@@ -20,6 +24,8 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Feature | Status | Notes |
 |---|---|---|
 | Settings tab (all pipeline params) | ✅ | |
+| Music-driven primary UI (Traditional mode hidden) | ✅ | ♪ Music-driven = main button; threshold/per_file behind "Traditional mode" toggle |
+| ⚠ Re-analyze badge | ✅ | warns when CLIP-first setting doesn't match existing scenes |
 | Proxy media (480p/20fps CFR for fast scene detection) | ✅ | atomic `.tmp` → `.mp4`, auto-started on project open |
 | Select scenes tab with score cards + duration badge | ✅ | |
 | Select scenes manual overrides (include/exclude) | ✅ | persist across binary search |

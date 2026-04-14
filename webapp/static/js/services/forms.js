@@ -65,16 +65,25 @@ async function fillSceneParams(prefix) {
 // ── Camera subfolder picker ───────────────────────────────────────────────────
 const _CAM_LETTERS = ['A','B','C','D','E','F','G','H'];
 
+const _subdirsCache = {};
 async function _fetchCamSubdirs(workdir) {
   if (!workdir) return [];
+  if (_subdirsCache[workdir]) return _subdirsCache[workdir];
   const data = await api.get(`/api/subdirs?dir=${encodeURIComponent(workdir)}`);
-  return data || [];
+  _subdirsCache[workdir] = data || [];
+  return _subdirsCache[workdir];
 }
 
 function _camOptions(subdirs, selected) {
   const frag = document.createDocumentFragment();
   const none = document.createElement('option'); none.value = ''; none.textContent = '— none —';
   frag.appendChild(none);
+  // Always include the saved value even if subdirs hasn't loaded yet
+  if (selected && !subdirs.includes(selected)) {
+    const o = document.createElement('option'); o.value = o.textContent = selected;
+    o.selected = true;
+    frag.appendChild(o);
+  }
   for (const d of subdirs) {
     const o = document.createElement('option'); o.value = o.textContent = d;
     if (d === selected) o.selected = true;
@@ -137,7 +146,23 @@ async function addCamRow(containerId, value, subdirs, offsetSec) {
   offInput.addEventListener('blur',   () => typeof saveSettingsField === 'function' && saveSettingsField());
   const btn = document.createElement('button'); btn.className = 'btn-sm'; btn.textContent = '−';
   btn.title = 'Remove camera'; btn.style.flexShrink = '0';
-  btn.onclick = () => { row.remove(); _relabelCams(container); };
+  btn.onclick = async () => {
+    const camName = sel.value.trim();
+    row.remove();
+    _relabelCams(container);
+    if (typeof saveSettingsField === 'function') saveSettingsField();
+    if (camName && currentJobId) {
+      const wd = document.getElementById('js-workdir')?.value?.trim();
+      if (wd) {
+        await fetch(`/api/jobs/${currentJobId}/camera-files`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ camera: camName, work_dir: wd }),
+        });
+        if (typeof loadFrames === 'function') loadFrames(currentJobId);
+      }
+    }
+  };
   row.append(lbl, sel, browse, offLabel, offInput, btn);
   container.appendChild(row);
   _relabelCams(container);
@@ -158,14 +183,47 @@ function readCamOffsets(containerId) {
   document.getElementById(containerId).querySelectorAll('.cam-row').forEach(row => {
     const cam = row.querySelector('.cam-select')?.value?.trim();
     const sec = parseInt(row.querySelector('.cam-offset')?.value || '0', 10);
-    if (cam && sec !== 0) offsets[cam] = sec;
+    if (cam) offsets[cam] = sec;
   });
-  return Object.keys(offsets).length ? offsets : null;
+  return offsets;
 }
 
 function readCamsList(containerId) {
   return [...document.getElementById(containerId).querySelectorAll('.cam-select')]
     .map(s => s.value.trim()).filter(Boolean);
+}
+
+async function detectCamOffsets() {
+  if (!currentJobId) return;
+  const btn = document.getElementById('btn-detect-offsets');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const cameras  = readCamsList('js-cam-list');
+    const work_dir = document.getElementById('js-workdir')?.value?.trim();
+    const _r = await fetch(`/api/jobs/${currentJobId}/detect-cam-offsets`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ cameras, work_dir }),
+    });
+    const _txt = await _r.text();
+    let res;
+    try { res = JSON.parse(_txt); } catch { throw new Error(`HTTP ${_r.status}: ${_txt.slice(0,200)}`); }
+    if (!_r.ok) throw new Error(`HTTP ${_r.status}: ${res?.detail || _txt.slice(0,200)}`);
+    if (!res?.offsets) throw new Error('No offsets returned');
+    // Fill each cam-row offset input
+    document.getElementById('js-cam-list').querySelectorAll('.cam-row').forEach(row => {
+      const cam = row.querySelector('.cam-select')?.value?.trim();
+      if (!cam) return;
+      const off = res.offsets[cam];
+      if (off === undefined) return;
+      const inp = row.querySelector('.cam-offset');
+      if (inp) { inp.value = String(off); inp.dispatchEvent(new Event('change')); }
+    });
+    if (res.missing?.length) alert(`No video files found for: ${res.missing.join(', ')}`);
+  } catch(e) {
+    alert('Auto-detect failed: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+  }
 }
 
 // Music dir (job Music tab)
@@ -244,6 +302,9 @@ async function openSettings() {
 // ── Advanced detect modal ─────────────────────────────────────────────────────
 function openAdvancedDetect() {
   document.getElementById('advanced-detect-modal').style.display = 'flex';
+  const cf = document.getElementById('js-clip-first');
+  const opts = document.getElementById('clip-first-opts');
+  if (cf && opts) opts.style.display = cf.checked ? 'flex' : 'none';
 }
 function closeAdvancedDetect() {
   document.getElementById('advanced-detect-modal').style.display = 'none';

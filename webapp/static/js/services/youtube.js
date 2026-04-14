@@ -331,3 +331,41 @@ function _pollYtUpload(uploadId, statusEl, btn, fileName, onClose, onUrl) {
     }
   }, 2000);
 }
+
+// ── AI Chapters ───────────────────────────────────────────────────────────────
+
+async function _generateYtChapters() {
+  if (!currentJobId) return;
+  const btn    = document.getElementById('btn-yt-chapters');
+  const status = document.getElementById('yt-gen-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Analyzing…';
+  status.textContent = 'CLIP zero-shot running…';
+  try {
+    const result = await api.post(`/api/jobs/${currentJobId}/generate-metadata`, {});
+    if (!result?.chapters) throw new Error(result?.detail || 'No chapters returned');
+
+    const desc = document.getElementById('yt-desc');
+    const footer = _YT_DEFAULT_FOOTER;
+    const existing = (desc.value || '').trim();
+
+    // Prepend AI block before existing content (or footer)
+    const aiBlock = result.description_block;
+    if (existing && !existing.startsWith('Na tym filmie')) {
+      desc.value = aiBlock + '\n\n' + existing;
+    } else {
+      desc.value = aiBlock + '\n\n' + footer;
+    }
+
+    status.textContent = `✓ ${result.chapters.length} chapters · ${result.detected.join(', ')}`;
+    status.style.color = 'var(--green)';
+    _ytMetaSave();
+  } catch (e) {
+    status.textContent = '✗ ' + e.message;
+    status.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✦ AI Chapters';
+    setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 6000);
+  }
+}

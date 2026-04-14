@@ -93,6 +93,14 @@ async function startProxy() {
   _pollProxyStatus();
 }
 
+async function resumeProxyIfRunning() {
+  if (!currentJobId) return;
+  const st = await api.get(`/api/jobs/${currentJobId}/proxy-status`);
+  if (!st) return;
+  _updateProxyUI(st);
+  if (!st.done && !st.not_started) _pollProxyStatus();
+}
+
 function _pollProxyStatus() {
   if (_proxyPollTimer) clearInterval(_proxyPollTimer);
   _proxyPollTimer = setInterval(async () => {
@@ -124,7 +132,8 @@ function _updateProxyUI(st) {
       msg = 'Error: ' + st.error; color = 'var(--red)';
       appendLog('[proxy] Error: ' + st.error);
     } else if (finished < total) {
-      msg = `Done — ${finished}/${total} (${total - finished} failed)`; color = 'var(--red)';
+      const failedNames = (st.failed_files || []).join(', ');
+      msg = `Done — ${finished}/${total} (${total - finished} failed${failedNames ? ': ' + failedNames : ''})`; color = 'var(--red)';
     } else {
       msg = `Done — ${finished}/${total} proxy files`; color = 'var(--muted)';
     }

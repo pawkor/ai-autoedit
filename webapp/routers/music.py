@@ -249,6 +249,22 @@ async def acr_status():
     return {"configured": bool(_ACR_HOST and _ACR_KEY and _ACR_SECRET)}
 
 
+@router.get("/api/music-subdirs")
+async def music_subdirs():
+    import configparser
+    from webapp.state import APP_DIR
+    cp = configparser.ConfigParser()
+    cp.read(str(APP_DIR / "config.ini"))
+    music_root_str = cp.get("music", "dir", fallback="")
+    if not music_root_str:
+        return {"root": "", "subdirs": []}
+    root = Path(music_root_str).expanduser().resolve()
+    if not root.is_dir():
+        return {"root": str(root), "subdirs": []}
+    subdirs = sorted(d.name for d in root.iterdir() if d.is_dir())
+    return {"root": str(root), "subdirs": subdirs}
+
+
 @router.get("/api/music/yt-download")
 async def yt_download_sse(url: str = Query(...)):
     """SSE: download YouTube audio via yt-dlp, stream progress, return temp file path."""
