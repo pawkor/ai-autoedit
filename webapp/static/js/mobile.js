@@ -1,17 +1,17 @@
 document.addEventListener('DOMContentLoaded', function () {
-  const sidebar   = document.getElementById('sidebar');
-  const overlay   = document.getElementById('sidebar-overlay');
-  const btnOpen   = document.getElementById('btn-hamburger-open');
-  const btnClose  = document.getElementById('btn-hamburger');
+  // ── Left sidebar (project list) ──────────────────────────────────────────
+  const sidebar        = document.getElementById('sidebar');
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
+  const btnOpen        = document.getElementById('btn-hamburger-open');
+  const btnClose       = document.getElementById('btn-hamburger');
 
   function openSidebar() {
     sidebar.classList.add('open');
-    overlay.classList.add('open');
+    sidebarOverlay.classList.add('open');
   }
-
   function closeSidebar() {
     sidebar.classList.remove('open');
-    overlay.classList.remove('open');
+    sidebarOverlay.classList.remove('open');
   }
 
   // On mobile: show sidebar by default (project list instead of welcome screen)
@@ -19,9 +19,25 @@ document.addEventListener('DOMContentLoaded', function () {
 
   btnOpen.addEventListener('click', openSidebar);
   btnClose.addEventListener('click', closeSidebar);
-  overlay.addEventListener('click', closeSidebar);
+  sidebarOverlay.addEventListener('click', closeSidebar);
 
-  // Close when user picks a job or starts a new one
   document.getElementById('job-list').addEventListener('click', closeSidebar);
   document.getElementById('btn-new').addEventListener('click', closeSidebar);
+
+  // ── Right inspector ───────────────────────────────────────────────────────
+  const inspector        = document.getElementById('inspector');
+  const inspectorOverlay = document.getElementById('inspector-overlay');
+  const btnInspOpen      = document.getElementById('btn-inspector-open');
+
+  function openInspector() {
+    inspector.classList.add('open');
+    inspectorOverlay.classList.add('open');
+  }
+  function closeInspector() {
+    inspector.classList.remove('open');
+    inspectorOverlay.classList.remove('open');
+  }
+
+  if (btnInspOpen) btnInspOpen.addEventListener('click', openInspector);
+  if (inspectorOverlay) inspectorOverlay.addEventListener('click', closeInspector);
 });

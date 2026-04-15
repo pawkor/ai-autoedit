@@ -15,6 +15,10 @@ _cfg.read([_script_dir / "config.ini", Path.cwd() / "config.ini"])
 THRESHOLD        = float(sys.argv[1]) if len(sys.argv) > 1 else _cfg.getfloat("scene_selection", "threshold",        fallback=0.148)
 MAX_SCENE_SEC    = float(sys.argv[2]) if len(sys.argv) > 2 else _cfg.getfloat("scene_selection", "max_scene_sec",    fallback=10)
 MAX_PER_FILE_SEC = float(sys.argv[3]) if len(sys.argv) > 3 else _cfg.getfloat("scene_selection", "max_per_file_sec", fallback=45)
+# GPS weight: 0 = disabled (default), >0 boosts scenes with high speed/cornering.
+# score_final = clip_score × (1 + gps_weight × gps_bonus)
+# gps_bonus ∈ [0,1]: normalised blend of max speed (70%) and max turn rate (30%).
+GPS_WEIGHT = _cfg.getfloat("scene_selection", "gps_weight", fallback=0.0)
 MIN_TAKE_SEC     = _cfg.getfloat("scene_selection", "min_take_sec", fallback=0.5)
 BACK_CAM_MAX_SEC = _cfg.getfloat("scene_selection", "back_cam_max_sec", fallback=10.0)
 WORKERS          = _cfg.getint("scene_selection",   "workers",      fallback=min(os.cpu_count() or 1, 12))
@@ -88,8 +92,21 @@ if CAM_SOURCES and os.path.exists(CAM_SOURCES):
 df['camera'] = df['source'].map(cam_map).fillna('default')
 dual_cam = len(set(cam_map.values())) > 1
 
-# Normalization only made sense when both cameras were scored — skip it now
-# (scores CSV contains main cam only; back cam is selected by timestamp, not score)
+# ── GPS score blending (additive, only when gps_weight > 0 and columns present) ─
+if GPS_WEIGHT > 0 and 'gps_speed_max' in df.columns and 'gps_turn_max' in df.columns:
+    _spd = pd.to_numeric(df['gps_speed_max'], errors='coerce').fillna(0.0)
+    _trn = pd.to_numeric(df['gps_turn_max'],  errors='coerce').fillna(0.0)
+    _spd_max = _spd.max()
+    _trn_max = _trn.max()
+    _spd_norm = (_spd / _spd_max) if _spd_max > 0 else _spd * 0
+    _trn_norm = (_trn / _trn_max) if _trn_max > 0 else _trn * 0
+    _gps_bonus = _spd_norm * 0.7 + _trn_norm * 0.3   # speed counts more than turn rate
+    _gps_annotated = (_spd > 0).sum()
+    df['score'] = df['score'] * (1.0 + GPS_WEIGHT * _gps_bonus)
+    print(f"GPS blend: weight={GPS_WEIGHT}  annotated={_gps_annotated}/{len(df)}  "
+          f"max speed={_spd_max:.0f} km/h  max turn={_trn_max:.0f} deg/s")
+elif GPS_WEIGHT > 0:
+    print("GPS blend: gps_weight set but no GPS columns in scores CSV — run analysis to extract GPS")
 
 df_all = df.copy()  # keep full df (with camera) for force-include lookups
 

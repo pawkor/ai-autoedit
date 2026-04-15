@@ -81,6 +81,21 @@ async function populateJobSettings(params) {
     if (pf != null) { document.getElementById('js-per-file').value  = pf; _sceneParamManual['js'] = false; }
   });
   if (document.getElementById('music-dir-input').value.trim()) loadMusicTracks();
+  // Camera cut pattern
+  const cpEl = document.getElementById('js-cam-pattern');
+  if (cpEl) cpEl.value = params.cam_pattern ?? cfg?.cam_pattern ?? '';
+  // GPS weight slider
+  const gpsW = params.gps_weight ?? cfg?.gps_weight ?? 0;
+  const gpsEl = document.getElementById('js-gps-weight');
+  const gpsValEl = document.getElementById('js-gps-weight-val');
+  if (gpsEl) { gpsEl.value = gpsW; }
+  if (gpsValEl) { gpsValEl.textContent = parseFloat(gpsW).toFixed(2); }
+  // Beats-per-shot widget — init from merged params+cfg
+  beatsInit({
+    beats_fast: params.beats_fast ?? cfg?.beats_fast,
+    beats_mid:  params.beats_mid  ?? cfg?.beats_mid,
+    beats_slow: params.beats_slow ?? cfg?.beats_slow,
+  });
 }
 
 function readJobSettings() {

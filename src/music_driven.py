@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import os
+import random
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -89,19 +90,25 @@ def analyze_music(music_path: Path) -> dict:
 
 # ── Cut schedule ──────────────────────────────────────────────────────────────
 
-def build_schedule(beat_times: list[float], beat_energy: list[float]) -> list[dict]:
+def build_schedule(
+    beat_times: list[float],
+    beat_energy: list[float],
+    beats_fast: int = 3,
+    beats_mid: int = 4,
+    beats_slow: int = 6,
+) -> list[dict]:
     """
     Group consecutive beats into shot slots.
-    High energy  (>0.65) → 2 beats/shot  (~fast cuts, chorus)
-    Medium energy         → 3 beats/shot
-    Low energy   (<0.35) → 4 beats/shot  (~scenic, verse)
+    High energy  (>0.65) → beats_fast beats/shot  (~chorus)
+    Medium energy         → beats_mid  beats/shot
+    Low energy   (<0.35) → beats_slow beats/shot  (~verse/scenic)
     """
     schedule: list[dict] = []
     n = len(beat_times)
     i = 0
     while i < n - 1:
         energy = beat_energy[i]
-        n_beats = 2 if energy > 0.65 else (4 if energy < 0.35 else 3)
+        n_beats = beats_fast if energy > 0.65 else (beats_slow if energy < 0.35 else beats_mid)
         end_i = min(i + n_beats, n - 1)
         dur = beat_times[end_i] - beat_times[i]
         if dur >= 0.4:
@@ -114,9 +121,11 @@ def build_schedule(beat_times: list[float], beat_energy: list[float]) -> list[di
             })
         i = end_i
 
-    fast = sum(1 for s in schedule if s["n_beats"] <= 2)
-    slow = sum(1 for s in schedule if s["n_beats"] >= 4)
-    print(f"  Schedule: {len(schedule)} slots  fast={fast}  slow={slow}  "
+    n_fast = sum(1 for s in schedule if s["n_beats"] == beats_fast)
+    n_mid  = sum(1 for s in schedule if s["n_beats"] == beats_mid)
+    n_slow = sum(1 for s in schedule if s["n_beats"] == beats_slow)
+    print(f"  Schedule: {len(schedule)} slots  "
+          f"fast={n_fast}({beats_fast}b)  mid={n_mid}({beats_mid}b)  slow={n_slow}({beats_slow}b)  "
           f"total={schedule[-1]['end']:.1f}s")
     return schedule
 
@@ -257,18 +266,43 @@ def _clip_source(scene: str) -> str:
     return _re.sub(r'-(clip|scene)-\d+$', '', scene)
 
 
+def _parse_cam_pattern(pattern: str, cameras: list[str]) -> list[str] | None:
+    """
+    Parse a camera pattern string like "aabaab" into a list of camera names.
+    Letters mapped in order of first appearance to cameras list (as provided — respects cam_a/cam_b order).
+    e.g. pattern="aabaab", cameras=["helmet","back"] → ["helmet","helmet","back","helmet","helmet","back"]
+         (a=helmet=cam_a, b=back=cam_b)
+    Returns None if pattern is empty or fewer than 2 cameras available.
+    """
+    pattern = pattern.strip().lower()
+    if not pattern or len(cameras) < 2:
+        return None
+    # Build letter→camera mapping: first unique letter = cameras[0], second = cameras[1], etc.
+    letter_order: list[str] = []
+    for ch in pattern:
+        if ch not in letter_order:
+            letter_order.append(ch)
+    letter_to_cam = {letter_order[i]: cameras[i]
+                     for i in range(min(len(letter_order), len(cameras)))}
+    resolved = [letter_to_cam.get(ch) for ch in pattern]
+    if any(r is None for r in resolved):
+        return None
+    return resolved  # type: ignore[return-value]
+
+
 def match_clips(schedule: list[dict], clips: list[dict],
-                chron_weight: float = 0.0) -> list[dict]:
+                chron_weight: float = 0.0,
+                cam_pattern: str = "",
+                cam_order: list[str] | None = None) -> list[dict]:
     """
     Assign best clip to each slot.
     Scoring per candidate (when chron_weight=0):
         CLIP_score × 0.60  +  energy_match × 0.40
     With chronological arc (chron_weight=0.20):
         CLIP_score × 0.50  +  energy_match × 0.30  +  chron_match × 0.20
-    chron_match = 1 − |music_pos − clip_time_norm|
-      music_pos = slot position in track [0, 1]
-      clip_time_norm = creation_time of source file normalised to [0, 1] over the day
-    Camera diversity: strict shot-by-shot alternation (maxlen=1 deque).
+    Camera diversity:
+        cam_pattern set → cyclic pattern (e.g. "aabaab" → back/back/helmet repeating)
+        cam_pattern empty → group-based (2-3 shots per camera, then switch)
     Source diversity: avoid repeating same source file within rolling window.
     """
     import collections
@@ -276,7 +310,13 @@ def match_clips(schedule: list[dict], clips: list[dict],
     edit: list[dict] = []
 
     num_sources  = len({_clip_source(c["scene"]) for c in clips})
-    cameras      = list({c.get("camera", "unknown") for c in clips})
+    # Use cam_order from config (cam_a first) — fall back to alphabetical
+    _cam_set = {c.get("camera", "unknown") for c in clips}
+    if cam_order:
+        cameras = [c for c in cam_order if c in _cam_set] + \
+                  sorted(c for c in _cam_set if c not in cam_order)
+    else:
+        cameras = sorted(_cam_set)
     num_cameras  = len(cameras)
     total_music_dur = schedule[-1]["end"] if schedule else 1.0
     # Only use chronological arc if clips actually have time info
@@ -290,12 +330,22 @@ def match_clips(schedule: list[dict], clips: list[dict],
     # Rolling window: at least 2 sources worth of slots, minimum 4
     _src_window = max(4, num_sources * 2)
     recent_sources: collections.deque = collections.deque(maxlen=_src_window)
-    # Camera diversity: track only last camera used → forces alternation each shot
-    recent_cameras: collections.deque = collections.deque(maxlen=1)
+
+    # Camera pattern (cyclic). Empty = no camera preference (pure score-driven).
+    _resolved_pattern = _parse_cam_pattern(cam_pattern, cameras)
+    if _resolved_pattern:
+        print(f"  Camera pattern: '{cam_pattern}' → {_resolved_pattern[:8]}… "
+              f"(repeating every {len(_resolved_pattern)} slots)")
+    else:
+        print(f"  Camera pattern: none (score-driven, {num_cameras} camera(s))")
+    _slot_idx = 0   # counts placed slots (for pattern indexing)
 
     for slot in schedule:
         dur    = slot["duration"]
         energy = slot["energy"]
+
+        _desired_cam = (_resolved_pattern[_slot_idx % len(_resolved_pattern)]
+                        if _resolved_pattern else None)
 
         def _pool(relax_dur: bool = False,
                   camera_filter: bool = True,
@@ -306,16 +356,17 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 if c["duration"] >= min_dur
                 and c["scene"] not in used
                 and (not source_filter or _clip_source(c["scene"]) not in recent_sources)
-                and (not camera_filter or num_cameras <= 1
-                     or c.get("camera", "unknown") not in recent_cameras)
+                and (not camera_filter or _desired_cam is None
+                     or c.get("camera", "unknown") == _desired_cam)
             ]
 
         pool = _pool()
         if not pool: pool = _pool(relax_dur=True)
+        if not pool: pool = _pool(source_filter=False)
+        if not pool: pool = _pool(relax_dur=True, source_filter=False)
         if not pool: pool = _pool(camera_filter=False)
         if not pool: pool = _pool(relax_dur=True, camera_filter=False)
         if not pool:
-            # Relax all diversity constraints, no reuse
             pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in used]
         if not pool:
             continue  # skip slot — no reuse ever
@@ -333,8 +384,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
         best = max(pool, key=rank)
         used.add(best["scene"])
         recent_sources.append(_clip_source(best["scene"]))
-        if num_cameras > 1:
-            recent_cameras.append(best.get("camera", "unknown"))
+        _slot_idx += 1
 
         # Motion anchor: place peak_motion at ~30% into the slot so the
         # "climax" of the action lands just after the beat hit
@@ -480,8 +530,19 @@ def assemble(
     import configparser as _cp_mod
     _cp = _cp_mod.ConfigParser()
     _cp.read([str(Path(__file__).parent.parent / "config.ini"), str(work_dir / "config.ini")])
-    _resolution = _cp.get("video", "resolution", fallback="3840:2160")
-    _framerate  = _cp.get("video", "framerate",  fallback="60")
+    _resolution  = _cp.get("video",        "resolution",  fallback="3840:2160")
+    _framerate   = _cp.get("video",        "framerate",   fallback="60")
+    _cam_pattern = _cp.get("music_driven", "cam_pattern", fallback="")
+    # Camera order from config: cam_a = 'a', cam_b = 'b' in pattern.
+    # Falls back to alphabetical if not configured.
+    _cam_a = _cp.get("job", "cam_a", fallback="")
+    _cam_b = _cp.get("job", "cam_b", fallback="")
+    _cameras_raw = _cp.get("job", "cameras", fallback="")
+    _cam_order: list[str] = []
+    if _cameras_raw:
+        _cam_order = [c.strip() for c in _cameras_raw.split(",") if c.strip()]
+    elif _cam_a:
+        _cam_order = [c for c in [_cam_a, _cam_b] if c]
 
     auto_dir    = work_dir / "_autoframe"
     autocut_dir = auto_dir / "autocut"
@@ -520,8 +581,11 @@ def assemble(
     beat_times  = [t - music_ss for t in beat_times[start_idx:]]
     beat_energy = beat_energy[start_idx:]
 
-    # 2. Build cut schedule
-    schedule = build_schedule(beat_times, beat_energy)
+    # 2. Build cut schedule (beats per shot configurable via [music_driven] in config.ini)
+    _beats_fast = int(_cp.get("music_driven", "beats_fast", fallback="3"))
+    _beats_mid  = int(_cp.get("music_driven", "beats_mid",  fallback="4"))
+    _beats_slow = int(_cp.get("music_driven", "beats_slow", fallback="6"))
+    schedule = build_schedule(beat_times, beat_energy, _beats_fast, _beats_mid, _beats_slow)
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
 
@@ -629,7 +693,8 @@ def assemble(
 
     # 4. Match clips to schedule
     _chron_weight = 0.20 if stem_to_time else 0.0
-    edit = match_clips(schedule, clips, chron_weight=_chron_weight)
+    edit = match_clips(schedule, clips, chron_weight=_chron_weight,
+                       cam_pattern=_cam_pattern, cam_order=_cam_order)
     if not edit:
         raise RuntimeError("Clip matching produced no edit")
 

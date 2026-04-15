@@ -183,6 +183,7 @@ function renderMusicList() {
       }
       updateMusicCount(shown);
       updatePhaseUI();
+      if (typeof _beatsUpdateDurations === 'function') _beatsUpdateDurations();
       if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { music_files: [...musicSelected] });
     });
     const titleWrap = document.createElement('span');

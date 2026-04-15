@@ -1365,6 +1365,28 @@ async def run(params: dict, work_dir: Path,
         if not clip_first:
             prompts_hash_file.write_text(_cur_hash)
 
+    # ── GPS annotation (optional, additive — skipped silently if no GPS data) ──
+    try:
+        from gps_index import build_gps_index, annotate_scores_csv as _gps_annotate
+        _gps_exiftool = cp.get("paths", "exiftool", fallback="exiftool")
+        _gps_index = build_gps_index(work_dir, exiftool=_gps_exiftool)
+        if _gps_index:
+            _allcam = auto_dir / "scene_scores_allcam.csv"
+            _gps_csv = _allcam if _allcam.exists() else scores_csv
+            _cam_offsets: dict[str, float] = {}
+            if cp.has_section("cam_offsets"):
+                for _k, _v in cp.items("cam_offsets"):
+                    try: _cam_offsets[_k] = float(_v)
+                    except ValueError: pass
+            _gps_ok = _gps_annotate(
+                _gps_csv, auto_dir / "autocut", _gps_index,
+                ffprobe=ffprobe, cam_offsets=_cam_offsets,
+            )
+            if _gps_ok:
+                yield "  GPS scores annotated"
+    except Exception as _gps_err:
+        yield f"  GPS annotation skipped: {_gps_err}"
+
     # ── Auto-threshold from top-10 (first analysis only, no user threshold set)
     if analyze_only and not params.get("threshold"):
         try:

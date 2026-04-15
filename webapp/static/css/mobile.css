@@ -63,8 +63,8 @@
   #center-tabs { flex-wrap: wrap; padding: 4px 8px; gap: 3px; }
   .tab { flex: 1 1 auto; white-space: nowrap; text-align: center; }
 
-  /* ── Gallery grid: 2 columns ── */
-  #frames-grid { grid-template-columns: repeat(2, 1fr); }
+  /* ── Gallery grid: fluid columns, min 150px ── */
+  #frames-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 
   /* ── All fixed-width modals → responsive ── */
   #dir-box,
@@ -81,7 +81,30 @@
   /* ── Footer: stack on mobile ── */
   #job-footer { flex-wrap: wrap; gap: 8px; padding: 8px; }
   #footer-left { max-width: 100%; }
-  #inspector { display: none; }
+  /* ── Inspector: hidden by default, slides in from right ── */
+  #inspector {
+    position: fixed;
+    top: 0;
+    right: -320px;
+    width: 300px;
+    height: 100%;
+    z-index: 50;
+    overflow-y: auto;
+    transition: right .22s ease;
+    background: var(--bg2);
+    border-left: 1px solid var(--border);
+  }
+  #inspector.open { right: 0; }
+
+  /* ── Inspector overlay ── */
+  #inspector-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    z-index: 49;
+  }
+  #inspector-overlay.open { display: block; }
 
   /* ── Results: full width cards, no inline player (tap = fullscreen) ── */
   #video-wrap { display: none !important; }
@@ -148,7 +171,37 @@
 
 }
 
-/* Desktop: both hamburger buttons always hidden, mobile-topbar hidden */
-#btn-hamburger { display: none; }
-#btn-hamburger-open { display: none; }
-#mobile-topbar { display: none; }
+  /* ── Touch targets: key action buttons ── */
+  .btn-primary,
+  #btn-music-driven,
+  #btn-render,
+  #btn-analyze { min-height: 44px; }
+
+  /* ── Inspector open button in job-header ── */
+  #btn-inspector-open {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 15px;
+    width: 30px;
+    height: 30px;
+    border-radius: 3px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+  #btn-inspector-open:hover { border-color: var(--accent); color: var(--accent); }
+
+}
+
+/* Desktop: hide mobile-only elements */
+@media (min-width: 769px) {
+  #btn-hamburger { display: none; }
+  #btn-hamburger-open { display: none; }
+  #btn-inspector-open { display: none; }
+  #mobile-topbar { display: none; }
+  #inspector-overlay { display: none; }
+}

@@ -10,11 +10,13 @@ Every day on a motorcycle produces hundreds of gigabytes of raw footage from one
 
 AI-autoedit solves this: a CLIP model scores each scene semantically — understanding what's in the frame, not just motion or brightness — and automatically assembles a highlight reel with music. Selection threshold, manual frame overrides, and music selection are all accessible through the browser without touching the terminal.
 
+Key features: music-driven render (beat-synced, multi-camera, chronological arc), GPS speed/turn scoring (Insta360), configurable beats-per-shot and camera cut pattern, client-side instant threshold search, mobile-responsive UI with inspector slide-in.
+
 ---
 
 ## Przykładowy film / Sample output
 
-[![Przykładowy highlight](https://img.youtube.com/vi/kR-plye7V2s/maxresdefault.jpg)](https://www.youtube.com/watch?v=kR-plye7V2s)
+[![Przykładowy highlight](https://img.youtube.com/vi/QWd3Q3Z_Crg/maxresdefault.jpg)](https://www.youtube.com/watch?v=QWd3Q3Z_Crg)
 
 ## Dokumentacja / Documentation
 

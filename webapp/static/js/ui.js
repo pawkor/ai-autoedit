@@ -281,6 +281,20 @@ function switchTab(name) {
       // Binary search was deferred while gallery was hidden — run it now.
       const t = _pendingTargetMin; _pendingTargetMin = null;
       autoTargetThreshold(t);
+    } else if (!_targetSearchActive && musicSelected.size > 0 && !_pendingTargetMin) {
+      // Track selected in Music tab — auto-set Target dur. on gallery open
+      // (only when no explicit target was set yet for this job)
+      const selFile = [...musicSelected][0];
+      const selTrack = musicTracks.find(t => t.file === selFile);
+      const selMins = selTrack?.duration ? selTrack.duration / 60 : null;
+      const savedMins = parseFloat(document.getElementById('gallery-target-min')?.value) || null;
+      if (selMins && !savedMins) {
+        _suggestSceneParamsForMusic(selTrack.duration);
+        const mm = Math.floor(selMins), ss = Math.round((selMins - mm) * 60);
+        const inp = document.getElementById('gallery-target-min');
+        if (inp) inp.value = `${mm}:${String(ss).padStart(2,'0')}`;
+        autoTargetThreshold(selMins);
+      }
     } else if (_targetSearchActive) {
       // Binary search already running (e.g. triggered by setTargetFromSelectedTrack)
       // — just ensure progress indicator is visible.

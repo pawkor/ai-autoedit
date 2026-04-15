@@ -83,6 +83,11 @@ _JOB_CONFIG_MAP = {
     "clip_scan_interval":  ("clip_scan", "interval_sec"),
     "clip_scan_clip_dur":  ("clip_scan", "clip_dur_sec"),
     "clip_scan_min_gap":   ("clip_scan", "min_gap_sec"),
+    "beats_fast":          ("music_driven", "beats_fast"),
+    "beats_mid":           ("music_driven", "beats_mid"),
+    "beats_slow":          ("music_driven", "beats_slow"),
+    "cam_pattern":         ("music_driven", "cam_pattern"),
+    "gps_weight":          ("scene_selection", "gps_weight"),
 }
 
 
@@ -106,7 +111,8 @@ def read_job_config(work_dir: Path) -> dict:
                     v = float(raw.rstrip('s').strip())
                     result[field] = f"{int(v) if v == int(v) else v}s"
                 elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold",
-                               "clip_scan_interval", "clip_scan_clip_dur", "clip_scan_min_gap"):
+                               "clip_scan_interval", "clip_scan_clip_dur", "clip_scan_min_gap",
+                               "beats_fast", "beats_mid", "beats_slow", "gps_weight"):
                     result[field] = float(raw.rstrip('s').strip())
                 elif field == "cameras":
                     result[field] = [c.strip() for c in raw.split(",") if c.strip()]

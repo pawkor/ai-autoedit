@@ -13,6 +13,7 @@ Pipeline zamienia surowy materiał z całego dnia w highlight reel bez ręcznego
 | 3 | Podział — każda scena jako osobny plik w `_autoframe/autocut/` (stream copy) |
 | 4 | Ekstrakcja 3 klatek per klip (_f0/_f1/_f2 = 25/50/75%) → `_autoframe/frames/` |
 | 5 | Scoring CLIP — `ViT-L-14` na GPU → `scene_scores.csv` / `scene_scores_allcam.csv` |
+| 5b | GPS annotation (opcjonalne) — exiftool extraktuje ścieżkę GPS z plików Insta360; prędkość i kąt obrotu per scena dodawane do CSV jako `gps_speed_max`, `gps_turn_max`; blendowane ze score CLIP gdy `gps_weight > 0` |
 
 Wyniki kroków 1–5 są cache'owane — ponowne uruchomienie pomija już przetworzone etapy.
 
@@ -20,9 +21,9 @@ Wyniki kroków 1–5 są cache'owane — ponowne uruchomienie pomija już przetw
 
 | Krok | Opis |
 |------|------|
-| 6 | Analiza muzyki — librosa: beaty, energia → harmonogram cięć zsynchronizowany z rytmem |
+| 6 | Analiza muzyki — librosa: beaty, energia → harmonogram cięć zsynchronizowany z rytmem; długość slotu = beats_fast/mid/slow beatów per segment |
 | 7 | Analiza ruchu klipów — OpenCV frame diff dla top-N klipów wg CLIP score |
-| 8 | Dopasowanie klipów do slotów — rank: CLIP×0.50 + ruch×0.30 + łuk chronologiczny×0.20; naprzemienne kamery |
+| 8 | Dopasowanie klipów do slotów — rank: CLIP×0.50 + ruch×0.30 + łuk chronologiczny×0.20; naprzemienne kamery wg wzorca `cam_pattern` |
 | 9 | Trimming + enkodowanie każdego klipu (NVENC) → concat → miks muzyczny |
 | 10 | Intro (klatka z najwyższym score CLIP, pełna rozdzielczość) + outro + fade |
 | 11 | Wynik: `YYYY-MM-Miejsce-DD-md_v1.mp4` — kolejne rundy `md_v2`, `md_v3…` |
@@ -111,15 +112,21 @@ src/music_driven.py
 
 Różnorodność źródeł: `recent_sources` deque (maxlen = max(4, num_sources×2)) zapobiega skupieniu klipów z jednego pliku. Każda scena użyta max raz (`used` set).
 
-Różnorodność kamer: `recent_cameras` deque (maxlen=1) wymusza naprzemienną zmianę kamery przy każdym cięciu — back cam nigdy nie pojawia się dwa razy z rzędu gdy dostępne są klipy z drugiej kamery.
+Różnorodność kamer: wzorzec `cam_pattern` (np. `aabaab`) definiuje kolejność kamer — litery `a`/`b` odpowiadają Cam A / Cam B z Settings. Puste = score-driven alternation (najlepszy dostępny klip per slot, bez wymuszania kolejności). Gdy wzorzec jest aktywny, _desired_camera_ per slot pochodzi z wzorca cyklicznego.
+
+Camera diversity: the `cam_pattern` field (e.g. `aabaab`) defines camera order — letters `a`/`b` map to Cam A / Cam B from Settings. Empty = score-driven alternation (best available clip per slot). When a pattern is active, the desired camera for each slot cycles through the pattern string.
 
 Łuk chronologiczny: gdy pliki źródłowe mają `creation_time` w metadanych, czas każdego klipu normalizowany jest do [0, 1] w skali dnia. Rank funkcja dostaje dodatkowy składnik `chron_match × 0.20` — klipy z rana trafiają na początku muzyki, wieczorne pod koniec (zachody słońca w finale).
 
-Source diversity: `recent_sources` deque prevents clustering clips from the same source file. Each scene used at most once.
-
-Camera diversity: `recent_cameras` deque (maxlen=1) enforces shot-by-shot camera alternation — back cam never appears twice in a row when clips from other cameras are available.
-
 Chronological arc: when source files have `creation_time` metadata, each clip's timestamp is normalised to [0, 1] over the recording day. The rank function gains a `chron_match × 0.20` term — morning clips land at the start of the track, evening clips (sunsets) towards the fade-out.
+
+GPS boost: gdy `gps_weight > 0` i sceny mają kolumny GPS, score CLIP jest modyfikowany już na etapie kroku 5b. Music-driven używa zmodyfikowanego score — sceny z szybką jazdą / ostrymi zakrętami mają wyższy priorytet przy dopasowaniu do slotów.
+
+GPS boost: when `gps_weight > 0` and scenes have GPS columns, CLIP score is modified in step 5b. Music-driven uses the boosted score — fast-riding / sharp-cornering scenes get higher slot priority.
+
+Beaty per ujęcie / Beats per shot: harmonogram cięć budowany przez `build_schedule()` z trzema tierami: fast (`beats_fast` beatów/slot, domyślnie 3), mid (`beats_mid`, domyślnie 4), slow (`beats_slow`, domyślnie 6). Tier przypisywany per muzyczny segment na podstawie energii. Przy 99 BPM: fast ≈ 1.8s/slot, mid ≈ 2.4s/slot, slow ≈ 3.6s/slot.
+
+Beats per shot: the cut schedule is built by `build_schedule()` with three tiers: fast (`beats_fast` beats/slot, default 3), mid (`beats_mid`, default 4), slow (`beats_slow`, default 6). Tier assigned per music segment by energy level. At 99 BPM: fast ≈ 1.8s/slot, mid ≈ 2.4s/slot, slow ≈ 3.6s/slot.
 
 ### Dobór i miks muzyki (Traditional mode)
 
@@ -151,7 +158,8 @@ projekt/
     ├── scene_scores_allcam.csv             ← wyniki CLIP (wszystkie kamery, gdy score_all_cams)
     ├── selected_scenes.txt                 ← lista do ffmpeg concat
     ├── manual_overrides.json               ← ręczne oznaczenia z Select scenes
-    └── analyze_result.json                 ← cache wyników analizy (threshold, cam_ratio…)
+    ├── analyze_result.json                 ← cache wyników analizy (threshold, cam_ratio…)
+    └── gps_index.json                      ← cache GPS (speed/turn per scena, gdy gps_weight > 0)
 ```
 
 ---
@@ -169,6 +177,7 @@ The pipeline turns a full day of raw footage into a highlight reel without manua
 | 3 | Split — each scene as a separate file in `_autoframe/autocut/` (stream copy) |
 | 4 | Key frame extraction — 3 frames per clip (_f0/_f1/_f2 = 25/50/75%) → `_autoframe/frames/` |
 | 5 | CLIP scoring — `ViT-L-14` on GPU → `scene_scores.csv` / `scene_scores_allcam.csv` |
+| 5b | GPS annotation (optional) — exiftool extracts GPS track from Insta360 MP4s; per-scene speed + turn rate added to CSV; blended into CLIP score when `gps_weight > 0` |
 
 Steps 1–5 results are cached — rerunning skips already-processed stages.
 
@@ -176,9 +185,9 @@ Steps 1–5 results are cached — rerunning skips already-processed stages.
 
 | Step | Description |
 |------|-------------|
-| 6 | Music analysis — librosa: beats + energy envelope → cut schedule synced to rhythm |
+| 6 | Music analysis — librosa: beats + energy envelope → cut schedule synced to rhythm; slot length = beats_fast/mid/slow beats per segment |
 | 7 | Motion analysis — OpenCV frame diff for top-N clips by CLIP score |
-| 8 | Clip matching — rank: CLIP×0.50 + motion×0.30 + chronological arc×0.20; per-shot camera alternation |
+| 8 | Clip matching — rank: CLIP×0.50 + motion×0.30 + chronological arc×0.20; camera order from `cam_pattern` |
 | 9 | Trim + encode each clip (NVENC) → concat → music mix |
 | 10 | Intro (top CLIP-scored frame, full resolution) + outro + fade |
 | 11 | Output: `YYYY-MM-Place-DD-md_v1.mp4` — subsequent runs `md_v2`, `md_v3…` |
@@ -294,5 +303,6 @@ project/
     ├── scene_scores_allcam.csv            ← CLIP scores (all cameras, when score_all_cams)
     ├── selected_scenes.txt                ← ffmpeg concat list
     ├── manual_overrides.json              ← Select scenes overrides
-    └── analyze_result.json               ← analysis cache (threshold, cam_ratio…)
+    ├── analyze_result.json               ← analysis cache (threshold, cam_ratio…)
+    └── gps_index.json                    ← GPS cache (speed/turn per scene, when gps_weight > 0)
 ```

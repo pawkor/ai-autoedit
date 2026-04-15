@@ -468,6 +468,10 @@ function saveSettingsField() {
   data.shorts_music_dir   = document.getElementById('js-shorts-music-dir')?.value || '';
   data.clip_first         = gc('js-clip-first') || false;
   data.score_all_cams     = gc('js-score-all-cams') || false;
+  const gpsW = parseFloat(document.getElementById('js-gps-weight')?.value || 0);
+  data.gps_weight = gpsW;
+  const camPat = document.getElementById('js-cam-pattern')?.value?.trim() || '';
+  if (camPat) data.cam_pattern = camPat; else data.cam_pattern = '';
   data.clip_scan_interval = parseFloat(document.getElementById('js-clip-scan-interval')?.value || 3);
   data.clip_scan_clip_dur = parseFloat(document.getElementById('js-clip-scan-clip-dur')?.value  || 8);
   data.clip_scan_min_gap  = parseFloat(document.getElementById('js-clip-scan-min-gap')?.value   || 30);
@@ -623,19 +627,14 @@ function _durationAtThreshold(thr) {
   return dur;
 }
 
-async function autoTargetThreshold(targetMin) {
+function autoTargetThreshold(targetMin) {
   _updateTimelineBar();
   const warnEl = document.getElementById('target-dur-warn');
-  if (!framesData.length || !targetMin || targetMin <= 0 || !currentJobId) {
+  if (!framesData.length || !targetMin || targetMin <= 0) {
     if (warnEl) { warnEl.textContent = ''; warnEl.style.display = 'none'; }
     return;
   }
   const targetSec = targetMin * 60;
-
-  // Abort any in-flight search
-  if (_targetAbortController) { _targetAbortController.abort(); _targetAbortController = null; }
-  const ctrl = new AbortController();
-  _targetAbortController = ctrl;
 
   // Clear any overrides we auto-added in a previous fill run
   for (const scene of _autoFillOverrides) delete manualOverrides[scene];
@@ -646,98 +645,53 @@ async function autoTargetThreshold(targetMin) {
   if (wd) api.put('/api/job-config', { work_dir: wd, target_minutes: targetMin });
   if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { target_minutes: targetMin });
 
-  _targetSearchActive = true;
-  if (warnEl) { warnEl.textContent = ''; warnEl.style.display = 'none'; }
-
-  const ms = parseFloat(document.getElementById('js-max-scene')?.value) || currentJobMaxScene || 10;
-  const pf = parseFloat(document.getElementById('js-per-file')?.value)  || currentJobPerFile  || 45;
-  const mg = parseFloat(document.getElementById('min-gap-input')?.value) || 0;
-
-  // Subtract intro+outro duration so the search targets clips-only, giving final video ≈ targetSec.
+  // Subtract intro+outro so the search targets clips-only, final video ≈ targetSec.
   const introDur = _introDurSec();
   const adjustedTargetSec = Math.max(targetSec - introDur, 1);
 
-  // Ensure per_file is large enough for the search to potentially reach the target.
-  // If per_file is too small (e.g. default 45s), the binary search can never converge —
-  // even threshold=0 would give dur < target. Use at least targetSec*4 so each source
-  // file can contribute enough footage (same formula as _suggestSceneParamsForMusic).
-  const searchPf = Math.max(pf, Math.ceil(adjustedTargetSec * 4));
+  // Client-side binary search using _durationAtThreshold() — instant, no subprocess.
+  // Accuracy: matches Python within a few seconds (cam_ratio approximation).
+  // For multicam the result may be off by up to ~5s — acceptable per design.
+  const MAX_ITER = 20;
+  let lo = 0.0, hi = 1.0;
+  let bestThr = null, bestDur = 0, bestDiff = Infinity;
 
-  let res = null;
-  let _searchId = null;
-  try {
-    const searchBody = { target_sec: adjustedTargetSec, max_scene: ms, per_file: searchPf };
-    if (mg > 0) searchBody.min_gap_sec = mg;
-    const r = await fetch(`/api/jobs/${currentJobId}/find-threshold`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(searchBody),
-      signal: ctrl.signal,
-    });
-    if (r.status === 409) {
-      // Job is still running (e.g. postprocess) — defer until it finishes.
-      _pendingTargetMin = targetMin;
-      res = null; return;
+  for (let i = 0; i < MAX_ITER; i++) {
+    const mid = (lo + hi) / 2;
+    const dur = _durationAtThreshold(mid);
+    const diff = Math.abs(dur - adjustedTargetSec);
+    if (dur > 0 && diff < bestDiff) {
+      bestDiff = diff;
+      bestThr  = mid;
+      bestDur  = dur;
     }
-    if (!r.ok) { res = null; return; }
-    // Request accepted — now show progress indicator.
-    _setGallerySearchStatus(0, 12);
-    const startData = await r.json();
-    _searchId = startData.search_id;
-    if (!_searchId) { res = null; return; }
-
-    // Poll until done
-    while (true) {
-      if (ctrl.signal.aborted) break;
-      await new Promise(ok => setTimeout(ok, 400));
-      if (ctrl.signal.aborted) break;
-      const pr = await fetch(`/api/threshold-search/${_searchId}`, { signal: ctrl.signal });
-      if (!pr.ok) break;
-      const msg = await pr.json();
-      if (!msg.done) {
-        _setGallerySearchStatus(msg.iteration || 0, msg.total || 12);
-      } else {
-        res = (msg.error || msg.cancelled) ? null : msg;
-        break;
-      }
-    }
-  } catch (e) {
-    if (e.name === 'AbortError') return; // superseded by newer request — exit silently
-  } finally {
-    _targetSearchActive = false;
-    if (_searchId) fetch(`/api/threshold-search/${_searchId}`, { method: 'DELETE' }).catch(() => {});
-    if (_targetAbortController === ctrl) _targetAbortController = null;
-    _setGallerySearchStatus(null, 0);
+    if (dur > adjustedTargetSec) lo = mid;
+    else                          hi = mid;
+    if (hi - lo < 0.0001) break;
   }
 
   let warnMsg = '';
 
-  if (res?.threshold != null) {
-    const thr = Math.round(res.threshold * 1000) / 1000;
+  if (bestThr !== null) {
+    const thr = Math.round(bestThr * 1000) / 1000;
     document.getElementById('threshold-val').value = thr.toFixed(3);
 
     if (!analyzeResult) analyzeResult = {};
-    analyzeResult.estimated_scenes       = res.scenes;
-    analyzeResult.estimated_duration_sec = res.duration_sec;
-    analyzeResult.estimated_main_scenes  = res.main_scenes;
-    analyzeResult.cam_ratio              = res.cam_ratio;
     analyzeResult.auto_threshold         = thr;
-    _overridesChangedSinceRender = false; // fresh search accounts for all current params
+    analyzeResult.estimated_duration_sec = bestDur;
+    _overridesChangedSinceRender = false;
 
     _applyThreshold(thr);
     if (currentJobId) {
       api.patch(`/api/jobs/${currentJobId}/params`, { threshold: thr });
-      const wd2 = document.getElementById('js-workdir')?.value.trim();
-      if (wd2) api.put('/api/job-config', { work_dir: wd2, threshold: thr });
+      if (wd) api.put('/api/job-config', { work_dir: wd, threshold: thr });
     }
 
-    if (res.duration_sec + introDur < targetSec - 10) {
-      const gotTotal = res.duration_sec + introDur;
-      const gotMin = Math.floor(gotTotal / 60), gotS = Math.round(gotTotal % 60);
-      warnMsg = `⚠ max ~${gotMin}:${String(gotS).padStart(2,'0')}`;
+    const totalWithIntro = bestDur + introDur;
+    if (totalWithIntro < targetSec - 10) {
+      const m = Math.floor(totalWithIntro / 60), s = Math.round(totalWithIntro % 60);
+      warnMsg = `⚠ max ~${m}:${String(s).padStart(2,'0')}`;
     }
-  } else if (res !== null) {
-    warnMsg = '⚠ search failed';
   }
 
   if (warnEl) {
@@ -790,4 +744,76 @@ function onThresholdEdit() {
   v = Math.max(0, Math.min(1, v));
   inp.value = v.toFixed(3);
   _applyThreshold(v);
+}
+
+// ── Beats-per-shot controls (music-driven render) ─────────────────────────────
+// Single ▼/▲ pair shifts all three tiers together, preserving relative gaps.
+const _beatsValues = { fast: 3, mid: 4, slow: 6 };
+
+/**
+ * Initialise beats widget from job config (called from populateJobSettings).
+ * @param {object} cfg  job config dict (may be partial)
+ */
+function beatsInit(cfg) {
+  if (cfg.beats_fast != null) _beatsValues.fast = Math.round(cfg.beats_fast);
+  if (cfg.beats_mid  != null) _beatsValues.mid  = Math.round(cfg.beats_mid);
+  if (cfg.beats_slow != null) _beatsValues.slow = Math.round(cfg.beats_slow);
+  _beatsRender();
+}
+
+/**
+ * Shift all three tiers by delta (+1 or -1), preserving gaps between them.
+ * Clamped so fast ≥ 1 and slow ≤ 20.
+ */
+function _beatsStep(delta) {
+  const nf = _beatsValues.fast + delta;
+  const ns = _beatsValues.slow + delta;
+  if (nf < 1 || ns > 20) return;
+  _beatsValues.fast += delta;
+  _beatsValues.mid  += delta;
+  _beatsValues.slow += delta;
+  _beatsRender();
+  _beatsSave();
+}
+
+/** Refresh value display and duration labels. */
+function _beatsRender() {
+  const vEl = document.getElementById('beats-vals');
+  if (vEl) vEl.textContent = `${_beatsValues.fast} · ${_beatsValues.mid} · ${_beatsValues.slow}`;
+  _beatsUpdateDurations();
+}
+
+/**
+ * Compute shot duration for each tier using selected track BPM.
+ * Duration = n_beats × (60 / BPM). No BPM → hide duration span.
+ */
+function _beatsUpdateDurations() {
+  let bpm = null;
+  if (typeof musicTracks !== 'undefined' && typeof musicSelected !== 'undefined' && musicSelected.size > 0) {
+    const selFile = [...musicSelected][0];
+    const track = musicTracks.find(t => t.file === selFile);
+    if (track?.bpm) bpm = track.bpm;
+  }
+  const durEl = document.getElementById('beats-durs');
+  if (!durEl) return;
+  if (bpm) {
+    const fmt = n => (n * 60 / bpm).toFixed(1) + 's';
+    durEl.textContent = `~${fmt(_beatsValues.fast)} / ~${fmt(_beatsValues.mid)} / ~${fmt(_beatsValues.slow)}`;
+    durEl.title = `Shot durations at ${Math.round(bpm)} BPM: fast / mid / slow`;
+  } else {
+    durEl.textContent = '';
+    durEl.title = 'Select a music track to see shot durations';
+  }
+}
+
+/** Persist current beats values to job config.ini. */
+function _beatsSave() {
+  const workDir = document.getElementById('js-workdir')?.value.trim();
+  if (!workDir) return;
+  api.put('/api/job-config', {
+    work_dir:   workDir,
+    beats_fast: _beatsValues.fast,
+    beats_mid:  _beatsValues.mid,
+    beats_slow: _beatsValues.slow,
+  });
 }

@@ -90,9 +90,47 @@ Przycisk **⟳ Fill** oblicza Max scene sec i Max per file sec automatycznie.
 
 The **⟳ Fill** button auto-calculates Max scene sec and Max per file sec.
 
-Threshold CLIP ustawiany jest automatycznie przez wyszukiwanie binarne (Target dur.) w zakładce Select scenes.
+Threshold CLIP ustawiany jest automatycznie przez wyszukiwanie binarne (Target dur.) w zakładce Select scenes — obliczenia po stronie klienta, bez opóźnienia sieciowego.
 
-The CLIP threshold is set automatically by the binary search (Target dur.) in the Select scenes tab.
+The CLIP threshold is set automatically by the binary search (Target dur.) in the Select scenes tab — computed client-side, instant.
+
+---
+
+### GPS scoring
+
+Pole **GPS weight** (suwak 0–1, domyślnie 0) aktywuje wzmocnienie score scen przez dane GPS z kamer Insta360. Gdy plik MP4 zawiera ścieżkę GPS (1 Hz), pipeline extraktuje prędkość (km/h) i kąt obrotu (°/s) dla każdej sceny. Score CLIP modyfikowany przed filtrem threshold:
+
+```
+score *= (1 + gps_weight × (speed_norm×0.7 + turn_norm×0.3))
+```
+
+Sceny z szybką jazdą na zakrętach zyskują wyższy priorytet. Wymaga narzędzia `exiftool` w kontenerze i plików z zapisanym GPS (Insta360 X3/X4 i podobne).
+
+The **GPS weight** slider (0–1, default 0) enables GPS-based score boosting for Insta360 cameras. When the MP4 contains a GPS track (1 Hz), the pipeline extracts per-scene speed (km/h) and turn rate (°/s). CLIP score modified before threshold filter:
+
+```
+score *= (1 + gps_weight × (speed_norm×0.7 + turn_norm×0.3))
+```
+
+Scenes with fast cornering get higher priority. Requires `exiftool` in the container and GPS-enabled cameras (Insta360 X3/X4 or similar).
+
+---
+
+### Camera cut pattern *(Music-driven)*
+
+Pole **Camera pattern** (np. `ab`, `aabaab`, `aabb`) steruje kolejnością kamer w music-driven render. Litery `a` i `b` odpowiadają Cam A i Cam B z sekcji Camera configuration powyżej. Puste = automatyczne przeplatanie na podstawie score (a/b wybierane per slot najlepszym dostępnym klipem).
+
+Przykłady:
+- `ab` — naprzemiennie 1:1
+- `aabaab` — dwa ujęcia Cam A, jedno Cam B, powtarzane
+- `aabb` — pary po dwa
+
+The **Camera pattern** field (e.g. `ab`, `aabaab`, `aabb`) controls camera order in music-driven render. Letters `a` and `b` correspond to Cam A and Cam B from the Camera configuration section above. Empty = automatic score-driven alternation (best available clip per slot, no forced camera order).
+
+Examples:
+- `ab` — strict 1:1 alternation
+- `aabaab` — two Cam A shots then one Cam B, repeating
+- `aabb` — pairs of two
 
 ---
 

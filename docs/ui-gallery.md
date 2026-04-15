@@ -10,9 +10,9 @@ The **Select scenes** tab shows the midpoint frame of each detected scene with i
 
 ## Target dur.
 
-Pole **Target dur.** (format `m:ss`, np. `6:45`) ustawia docelowy czas highlight. Po wpisaniu i naciśnięciu Enter (lub zmianie wartości) uruchamia się automatyczne szukanie progu CLIP binarnym wyszukiwaniem (12 iteracji na backendzie z DRY_RUN), tak żeby uzyskać film jak najbliższy zadanemu czasowi. Wynik — liczba scen i szacowany czas — pojawia się w liczniku nad Select scenes.
+Pole **Target dur.** (format `m:ss`, np. `6:45`) ustawia docelowy czas highlight. Po wpisaniu i naciśnięciu Enter uruchamia się automatyczne szukanie progu CLIP — wyszukiwanie binarne po stronie klienta (20 iteracji, konwergencja `hi−lo < 0.0001`), natychmiastowe. Wynik — liczba scen i szacowany czas — pojawia się w liczniku nad Select scenes.
 
-The **Target dur.** field (format `m:ss`, e.g. `6:45`) sets the target highlight duration. On Enter or value change, an automatic binary threshold search (12 iterations, backend DRY_RUN) finds the CLIP threshold that produces a film closest to the target. The result — scene count and estimated duration — appears in the counter above the gallery.
+The **Target dur.** field (format `m:ss`, e.g. `6:45`) sets the target highlight duration. On Enter, an automatic CLIP threshold binary search runs client-side (20 iterations, `hi−lo < 0.0001` convergence), instant — no server round-trip. The result — scene count and estimated duration — appears in the counter above the gallery.
 
 Jeśli zadany czas jest nieosiągalny (za mało materiału), wyświetlane jest ostrzeżenie `⚠ max ~m:ss`.
 
@@ -87,6 +87,26 @@ The **Min gap** field (seconds, no spinners) sets the minimum gap between auto-s
 Zmiana wartości natychmiast przelicza galerię bez reload.
 
 Changing the value immediately recalculates the gallery without reload.
+
+---
+
+## Beats per shot (Music-driven)
+
+Widżet **▼ N·N·N ▲** (np. `3·4·6`) steruje liczbą beatów na ujęcie dla każdego z trzech tierów tempa w music-driven render:
+
+- **fast** (szybkie fragmenty — chorus, peak energy) — domyślnie 3 beaty/ujęcie
+- **mid** (środkowe fragmenty) — domyślnie 4 beaty/ujęcie
+- **slow** (wolne fragmenty — intro, outro) — domyślnie 6 beatów/ujęcie
+
+Przyciski **▼ / ▲** zmieniają wszystkie trzy wartości razem (−1 / +1), zachowując proporcje. Zmiana natychmiast aktualizuje szacowane długości ujęć (przy aktualnym BPM wybranego utworu). Wartości zapisywane do `[music_driven]` w `config.ini` projektu.
+
+The **▼ N·N·N ▲** widget (e.g. `3·4·6`) controls beats-per-shot for the three tempo tiers in music-driven render:
+
+- **fast** (chorus / peak energy segments) — default 3 beats/shot
+- **mid** (middle segments) — default 4 beats/shot
+- **slow** (intro/outro segments) — default 6 beats/shot
+
+**▼ / ▲** shift all three values together (−1/+1), preserving relative spacing. Changing the value immediately updates the per-tier duration preview (at the current track's BPM). Saved to `[music_driven]` in the project `config.ini`.
 
 ---
 

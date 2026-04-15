@@ -11,8 +11,9 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | CLIP scoring (ViT-L-14, GPU) | ✅ | positive/negative prompts, neg_weight; multi-frame (_f0/_f1/_f2) |
 | Score all cameras (allcam CSV) | ✅ | `scene_scores_allcam.csv`; auto-enabled with CLIP-first |
 | LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |
-| Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only |
-| Music-driven render | ✅ | beat/segment sync, source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro |
+| Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only; instant client-side binary search |
+| GPS speed/turn scoring | ✅ | exiftool GPS extraction, Haversine speed+bearing, `gps_weight` blends into CLIP score |
+| Music-driven render | ✅ | beat/segment sync, source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern |
 | Multi-cam sync (timestamp + clock offset) | ✅ | MP4 creation_time fallback |
 | Intro / outro overlay | ✅ | full-res frame from autocut clip (not thumbnail) |
 | Music mix with BPM/energy matching | ✅ | target duration drives track selection |
@@ -121,7 +122,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 
 | Feature | Demand | Status | Notes |
 |---|---|---|---|
-| Mobile / tablet responsive UI | Medium | ✅ | sidebar drawer, hamburger, 2-row tabs, dvh |
+| Mobile / tablet responsive UI | Medium | ✅ | sidebar drawer, hamburger, 2-row tabs, dvh, inspector slide-in (⚙), touch targets 44px, gallery auto-fill grid |
 | Dark/light auto-follow OS preference | Low | 💡 | prefers-color-scheme media query |
 | Export to Premiere / DaVinci project | Low | 💡 | EDL or XML with scene timecodes |
 | Face-detection blur for bystanders | Low | 💡 | privacy feature, GDPR relevant |

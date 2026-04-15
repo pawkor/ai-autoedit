@@ -40,9 +40,10 @@
 <div id="main">
 
   <div id="mobile-topbar">
-    <button id="btn-hamburger-open" title="Menu">☰</button>
+    <button id="btn-hamburger-open" title="Open project list">☰</button>
     <span>AI-autoedit</span>
   </div>
+  <div id="inspector-overlay"></div>
 
   <div id="welcome" class="view active">
     <div class="wt"><h2>AI-autoedit</h2><p data-i18n="misc.welcome_sub">AI highlight reel pipeline</p>
@@ -56,6 +57,7 @@
       <span class="dot s-pending" id="jh-dot"></span>
       <span id="jh-path"></span>
       <span class="jh-flex"></span>
+      <button id="btn-inspector-open" title="Settings / Inspector">⚙</button>
       <div id="hw-monitor" style="display:none">
         <div id="hw-cols">
           <div class="hw-col">
@@ -136,6 +138,21 @@
           <div id="gallery-status" style="margin-top:2px">
             <span id="gallery-stats-text">—</span>
             <button class="btn-sm" style="padding:1px 6px;font-size:14px;line-height:1" title="Clear manual overrides and re-run target search" onclick="resetThreshold()">↺</button>
+            <!-- Beats-per-shot: single ▼/▲ shifts all three tiers together -->
+            <span style="display:flex;align-items:center;gap:5px;margin-left:8px">
+              <span style="font-size:11px;color:var(--muted);white-space:nowrap"
+                title="Beats per shot for Music-driven render (fast · mid · slow energy sections).&#10;▼/▲ shifts all three together.&#10;Fewer beats = faster cuts. Duration shown at selected track BPM.">Beats/shot:</span>
+              <button class="btn-sm" style="padding:0 5px;font-size:11px;line-height:1.7"
+                title="Fewer beats per shot → faster cuts across all energy levels"
+                onclick="_beatsStep(-1)">▼</button>
+              <span id="beats-vals" style="font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap"
+                title="Beats per shot: fast · mid · slow energy sections">3 · 4 · 6</span>
+              <button class="btn-sm" style="padding:0 5px;font-size:11px;line-height:1.7"
+                title="More beats per shot → slower, more cinematic cuts across all energy levels"
+                onclick="_beatsStep(1)">▲</button>
+              <span id="beats-durs" style="font-size:11px;color:var(--accent);white-space:nowrap"
+                title="Estimated shot durations (fast / mid / slow) at selected track BPM"></span>
+            </span>
             <div id="sd-progress-wrap" style="display:none;flex:1;min-width:0;align-items:center;gap:6px">
               <span style="font-size:11px;color:var(--muted);white-space:nowrap">Scene detect</span>
               <div style="flex:1;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;min-width:40px">
@@ -288,6 +305,14 @@
             <button class="btn-sm" onclick="addCamRow('js-cam-list')">+ Add</button>
             <button class="btn-sm" id="btn-detect-offsets" onclick="detectCamOffsets()" title="Auto-detect time offsets from creation_time metadata">↻ Detect offsets</button>
           </div>
+          <div style="margin-top:8px">
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px"
+              title="Camera cut pattern for Music-driven render.&#10;Letters map alphabetically to cameras (a=first, b=second…).&#10;Pattern repeats cyclically for the whole track.&#10;Examples: ab = strict alternation, aabaab = two-one rhythm, aabb = pairs.&#10;Leave empty for automatic group-based switching (2-3 shots per camera).">Cam pattern (music-driven)</label>
+            <input type="text" id="js-cam-pattern" placeholder="e.g. ab, aabaab, aabb  (empty = score only)"
+              style="width:100%;font-family:var(--mono);font-size:12px;letter-spacing:0.05em"
+              title="Camera cut pattern: a = Cam A (first in list above), b = Cam B, etc.&#10;'ab' = strict A-B-A-B  |  'aabaab' = AA-B-AA-B  |  'aabb' = pairs.&#10;Empty = score-driven (no camera preference)."
+              onchange="saveSettingsField()">
+          </div>
         </div>
       </details>
 
@@ -317,6 +342,18 @@
               <span id="js-src-info" style="font-size:10px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
               <button class="btn-sm" onclick="fillSceneParams('js')" title="Calculate from file count and target minutes">⟳ Fill</button>
             </div>
+          </div>
+          <div id="gps-weight-row" style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <label style="font-size:11px;color:var(--muted);white-space:nowrap"
+              title="GPS score weight. Boosts scenes with high speed and cornering.&#10;0 = disabled (GPS data ignored).&#10;0.3 = fast corner gets +30% score bonus.&#10;Requires GPS-equipped camera (e.g. Insta360 + remote).&#10;Run Analyze to extract GPS data first.">GPS boost</label>
+            <input type="range" id="js-gps-weight" min="0" max="1" step="0.05" value="0"
+              style="flex:1;accent-color:var(--accent)"
+              title="GPS score weight: 0 = off, 1 = max boost for fast/cornering scenes"
+              oninput="document.getElementById('js-gps-weight-val').textContent=parseFloat(this.value).toFixed(2);saveSettingsField()"
+              onchange="saveSettingsField()">
+            <span id="js-gps-weight-val"
+              style="font-family:var(--mono);font-size:11px;min-width:28px;text-align:right"
+              title="Current GPS weight value">0.00</span>
           </div>
         </div>
       </details>
