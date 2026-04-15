@@ -108,6 +108,17 @@
         </div>
       </div>
       <button id="btn-clear-log" style="display:none" onclick="if(currentJobId){api.del('/api/jobs/'+currentJobId+'/log').then(()=>{document.getElementById('log-panel').innerHTML=''})}" title="Clear log">✕</button>
+      <button id="job-progress-btn" onclick="openQueueModal()" style="display:none" title="Job progress — click to view queue">
+        <svg viewBox="0 0 36 36" width="22" height="22">
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--border)" stroke-width="4"/>
+          <circle id="progress-ring" cx="18" cy="18" r="15.9" fill="none"
+                  stroke="var(--accent)" stroke-width="4"
+                  stroke-dasharray="0 100" stroke-linecap="round"
+                  transform="rotate(-90 18 18)"/>
+        </svg>
+        <span id="progress-ring-label"></span>
+        <span id="progress-ring-pct">0%</span>
+      </button>
     </div>
     <div id="tab-content">
 
@@ -441,7 +452,8 @@
     <div id="job-footer">
       <div id="footer-left">
         <div id="footer-track-row">
-          <span id="sum-track" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" data-i18n="misc.no_pin">No track pinned — will auto-select.</span>
+          <span id="sum-track" style="font-size:11px;color:var(--muted);flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word" data-i18n="misc.no_pin">No track pinned — will auto-select.</span>
+          <button onclick="_toggleFooterPreview()" id="btn-footer-play" title="Play / Stop preview" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:12px;padding:0 3px;line-height:1;flex-shrink:0">▶</button>
           <button onclick="rerollMusic()" title="Pick a different track" id="btn-reroll-music" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 4px;line-height:1;flex-shrink:0">↻</button>
         </div>
         <div id="footer-stats-row">

@@ -194,10 +194,16 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .step { padding:2px 8px; border-radius:2px; font-size:9px; background:transparent; border:1px solid rgba(255,255,255,0.06); color:var(--muted); transition:all .2s; font-family:var(--font); letter-spacing:.06em; text-transform:uppercase; }
 .step.active { border-color:var(--accent); color:var(--accent); background:rgba(99,102,241,.08); }
 .step.done   { border-color:rgba(99,102,241,.3); color:#4b5563; }
-#center-tabs { padding:0 10px; border-bottom:1px solid var(--border); display:flex; gap:0; flex-shrink:0; align-items:stretch; background:var(--bg2); height:36px; }
-.tab { padding:0 12px; cursor:pointer; font-size:11px; color:var(--muted); background:transparent; border:none; border-bottom:2px solid transparent; text-align:center; line-height:36px; transition:color .15s, border-color .15s; font-family:var(--font-ui); letter-spacing:.03em; }
-.tab:hover { color:var(--text); }
-.tab.active { color:#fff; border-bottom-color:var(--accent); }
+#center-tabs { padding:6px 10px 0; border-bottom:1px solid var(--border); display:flex; gap:3px; flex-shrink:0; align-items:flex-end; background:var(--bg); height:42px; }
+.tab { padding:0 14px; cursor:pointer; font-size:11px; color:var(--muted); background:var(--bg2); border:1px solid var(--border); border-bottom:none; border-radius:4px 4px 0 0; text-align:center; height:32px; line-height:32px; transition:color .15s, background .15s, border-color .15s; font-family:var(--font-ui); letter-spacing:.03em; }
+.tab:hover { color:var(--text); background:var(--bg3); }
+.tab.active { color:var(--text); background:var(--bg2); border-color:var(--border); border-top:2px solid var(--accent); border-bottom:1px solid var(--bg2); margin-bottom:-1px; }
+#job-progress-btn { margin-left:auto; display:flex; align-items:center; gap:5px; padding:0 4px 0 8px; background:none; border:none; cursor:pointer; }
+#job-progress-btn #progress-ring { transition:stroke-dasharray .35s ease; }
+#job-progress-btn:hover #progress-ring { stroke:var(--text); }
+#progress-ring-label { font-size:10px; color:var(--muted); white-space:nowrap; }
+#progress-ring-pct { font-size:10px; font-weight:700; color:var(--accent); min-width:3ch; }
+.qm-pct { font-size:10px; color:var(--accent); font-weight:600; margin-left:4px; }
 .tab[data-badge]::after { content:attr(data-badge); margin-left:3px; font-size:9px; vertical-align:top; }
 .tab[data-badge="✓"]::after { color:var(--green); }
 .tab[data-badge="●"]::after { color:var(--yellow); }
@@ -237,7 +243,7 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 #job-footer { flex-shrink:0; display:none; align-items:center; gap:12px; padding:8px 14px; background:var(--bg2); border-top:1px solid var(--border); min-height:52px; }
 #job-view.active #job-footer { display:flex; }
 #footer-left { flex:1; min-width:120px; max-width:240px; display:flex; flex-direction:column; gap:3px; overflow:hidden; }
-#footer-track-row { display:flex; align-items:center; gap:4px; min-width:0; }
+#footer-track-row { display:flex; align-items:flex-start; gap:4px; min-width:0; min-height:32px; }
 #footer-stats-row { font-size:10px; color:var(--muted); white-space:nowrap; }
 #footer-progress { flex:1; min-width:120px; max-width:280px; display:flex; flex-direction:column; gap:4px; justify-content:center; }
 #footer-actions { display:flex; align-items:center; gap:6px; flex-shrink:0; }

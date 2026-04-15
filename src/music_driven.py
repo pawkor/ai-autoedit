@@ -414,6 +414,9 @@ def match_clips(schedule: list[dict], clips: list[dict],
             cam_counts[cam] = cam_counts.get(cam, 0) + 1
     cam_str = "  ".join(f"{k}={v}" for k, v in sorted(cam_counts.items()))
     print(f"  Matched: {len(edit)} slots  {covered:.1f}s  unique={unique}  [{cam_str}]")
+    # Log selected scenes for exclusion debugging
+    scene_list = [e["scene"] for e in edit]
+    print(f"  Scenes: {scene_list[:8]}{'…' if len(scene_list) > 8 else ''}")
     return edit
 
 
@@ -554,14 +557,39 @@ def assemble(
     if not scores_csv.exists():
         raise FileNotFoundError("scene_scores.csv not found — run Analyze first")
 
-    # Load CLIP scores
+    # Load manual exclusions from gallery UI
+    _overrides_path = auto_dir / "manual_overrides.json"
+    _manual_excluded: set[str] = set()
+    if _overrides_path.exists():
+        try:
+            import json as _json
+            _ov = _json.loads(_overrides_path.read_text())
+            _manual_excluded = {k for k, v in _ov.items() if v == "exclude"}
+            if _manual_excluded:
+                sample = sorted(_manual_excluded)[:5]
+                print(f"  Manual exclusions: {len(_manual_excluded)} scene(s) skipped: {sample}")
+        except Exception:
+            pass
+
+    # Load CLIP scores; hard-exclude scenes where negative prompt dominates
     scene_scores: dict[str, float] = {}
+    _neg_excluded = 0
     with open(scores_csv) as f:
         for row in csv.DictReader(f):
             try:
-                scene_scores[row["scene"]] = float(row["score"])
+                scene = row["scene"]
+                if scene in _manual_excluded:
+                    continue
+                final = float(row["score"])
+                # Hard-exclude: score < 0 means neg*weight > pos — clearly matches negative prompts
+                if final < 0:
+                    _neg_excluded += 1
+                    continue
+                scene_scores[scene] = float(row["score"])
             except (KeyError, ValueError):
                 pass
+    if _neg_excluded:
+        print(f"  Neg-score excluded: {_neg_excluded} scene(s) (neg > pos)")
     if not scene_scores:
         raise ValueError("scene_scores.csv is empty")
 
@@ -588,6 +616,11 @@ def assemble(
     schedule = build_schedule(beat_times, beat_energy, _beats_fast, _beats_mid, _beats_slow)
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
+
+    # Align music playback to the first detected beat.
+    # beat_times[0] is rarely exactly 0 — there's a short pre-beat silence.
+    # Without this offset every cut lands beat_times[0] seconds early.
+    music_ss = schedule[0]["start"]
 
     # Fill tail: librosa often misses beats in fade-out/outro sections.
     # Extend schedule with 4s slow slots up to the actual music duration.

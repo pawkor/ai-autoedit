@@ -105,10 +105,17 @@ async function rerollMusic() {
   const track = sorted[_rerollIdx];
   _suggestedTrack = track.file;
   await _showTrackInSummary(track);
+  // Auto-play new track if something was already playing
+  if (_playingFile) _toggleFooterPreview();
 }
 
 function _sortedTracks(tracks) {
-  const targetFromInput = _parseTargetInput(document.getElementById('gallery-target-min')?.value);
+  // Only use Target dur. input when threshold-bar is visible (Traditional mode).
+  // In Music-driven mode the bar is hidden and its stale value would override _live_est_dur.
+  const thresholdBarVisible = document.getElementById('threshold-bar')?.style.display !== 'none';
+  const targetFromInput = thresholdBarVisible
+    ? _parseTargetInput(document.getElementById('gallery-target-min')?.value)
+    : null;
   // Prefer explicit user target over clips-only estimate (clips don't include intro/outro)
   const targetDur = (targetFromInput > 0 ? targetFromInput : null)
     ?? analyzeResult?._live_est_dur
@@ -140,6 +147,21 @@ function _sortedTracks(tracks) {
     if (va > vb) return _musicSort.asc ?  1 : -1;
     return 0;
   });
+}
+
+function autoSelectBestTrack() {
+  if (musicSelected.size > 0 || !musicTracks.length) return;
+  const best = _sortedTracks(musicTracks)[0];
+  if (!best) return;
+  musicSelected.add(best.file);
+  pinnedTrack = best.file;
+  const name = best.file.split('/').pop().replace(/\.[^.]+$/, '');
+  const sumTrack = document.getElementById('sum-track');
+  if (sumTrack) sumTrack.textContent = `✓ ${name}`;
+  if (best.duration) _suggestSceneParamsForMusic(best.duration);
+  if (typeof _beatsUpdateDurations === 'function') _beatsUpdateDurations();
+  if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { music_files: [best.file] });
+  renderMusicList();
 }
 
 function renderMusicList() {

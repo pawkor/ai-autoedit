@@ -13,7 +13,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |
 | Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only; instant client-side binary search |
 | GPS speed/turn scoring | ✅ | exiftool GPS extraction, Haversine speed+bearing, `gps_weight` blends into CLIP score |
-| Music-driven render | ✅ | beat/segment sync, source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern |
+| Music-driven render | ✅ | beat/segment sync (cuts land exactly on beats via `music_ss = first_beat_time`), source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern, respects manual gallery exclusions, hard-excludes clips with `final_score < 0` |
 | Multi-cam sync (timestamp + clock offset) | ✅ | MP4 creation_time fallback |
 | Intro / outro overlay | ✅ | full-res frame from autocut clip (not thumbnail) |
 | Music mix with BPM/energy matching | ✅ | target duration drives track selection |
@@ -32,12 +32,13 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Select scenes manual overrides (include/exclude) | ✅ | persist across binary search |
 | Target duration binary search | ✅ | + fill logic when target unreachable |
 | Select scenes hover → video clip preview | ✅ | 500ms delay, reuses file-tip overlay |
-| Music tab with BPM/energy sort | ✅ | |
+| Music tab with BPM/energy sort | ✅ | auto-re-sorts by estimated duration on every tab switch (calculateGalleryStats refresh) |
 | Music → Target dur. sort button | ✅ | picks closest track to target |
 | Music checkbox selection persistence | ✅ | saved to job params on toggle |
 | Render tab with duration estimate | ✅ | dual-cam aware |
 | Log tab with live streaming | ✅ | |
 | Log filter dropdown (Steps / Info / All) | ✅ | CSS class-based, persists in session |
+| Render mini progress in tab row | ✅ | step name + bar + % + ETA, visible from any tab during active render, auto-hides on completion |
 | Results tab with file listing | ✅ | |
 | File browser (dir picker for new project) | ✅ | |
 | Video preview on hover in file browser | ✅ | |

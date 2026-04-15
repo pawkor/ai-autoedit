@@ -10,6 +10,12 @@ Po prawej stronie wykresy zasobów systemowych aktualizowane co sekundę: CPU, R
 
 On the right: system resource graphs updated every second — CPU, RAM, GPU, VRAM — and the job queue.
 
+## Mini pasek postępu w pasku zakładek / Render mini progress in tab row
+
+Podczas aktywnego renderowania w prawej części paska zakładek pojawia się kompaktowy wskaźnik postępu: nazwa kroku, mini pasek, procent i ETA. Widoczny niezależnie od aktywnej zakładki — nie trzeba przechodzić do Log żeby sprawdzić postęp. Znika automatycznie po zakończeniu.
+
+During an active render, a compact progress indicator appears in the right part of the tab bar: step name, mini bar, percentage, and ETA. Visible regardless of which tab is active — no need to switch to Log to check progress. Disappears automatically on completion.
+
 ## Filtr logów / Log filter
 
 Rozwijane menu **Info ▾** w nagłówku loga pozwala ograniczyć widoczne wpisy:

@@ -50,6 +50,7 @@ const api = {
 
 let currentJobId=null, jobWs=null, statsWs=null, elapsedTimer=null;
 let browsePath=null, framesData=[], manualOverrides={};
+let _currentJobProgressPct = 0;
 let jobSortNewest = localStorage.getItem('jobSortNewest') !== 'false';
 let currentJobMaxScene=null, currentJobPerFile=null, currentJobMinTake=0.5;
 let _overridesChangedSinceRender = false;
@@ -101,6 +102,21 @@ function _stopAudio() {
   document.querySelectorAll('.mt.mt-playing').forEach(row => row.classList.remove('mt-playing'));
   document.querySelectorAll('.mt-play').forEach(b => b.textContent = '▶');
   document.querySelectorAll('.mt-seek').forEach(s => { s.value = 0; });
+  const fp = document.getElementById('btn-footer-play');
+  if (fp) fp.textContent = '▶';
+}
+
+function _toggleFooterPreview() {
+  const file = pinnedTrack || _suggestedTrack;
+  if (!file) return;
+  const btn = document.getElementById('btn-footer-play');
+  if (_playingFile === file) { _stopAudio(); return; }
+  _stopAudio();
+  _playingFile = file;
+  if (btn) btn.textContent = '■';
+  _audioPlayer = new Audio('/api/file?path=' + encodeURIComponent(file));
+  _audioPlayer.addEventListener('ended', () => { _stopAudio(); });
+  _audioPlayer.play().catch(() => {});
 }
 
 function _playTrack(file, btn, seek) {
@@ -311,7 +327,11 @@ function switchTab(name) {
   }
   if (name==='music' && currentJobId) {
     _musicSort = { key: null, asc: true };  // always re-sort by estimated duration on tab switch
-    const _doMusic = () => { if (!musicTracks.length) loadMusicTracks(); else renderMusicList(); };
+    if (framesData.length) calculateGalleryStats();  // refresh _live_est_dur before sort
+    const _doMusic = () => {
+      if (!musicTracks.length) loadMusicTracks().then(() => autoSelectBestTrack());
+      else { renderMusicList(); autoSelectBestTrack(); }
+    };
     if (!analyzeResult?.estimated_duration_sec)
       loadAnalyzeResult(currentJobId).then(_doMusic);
     else
@@ -455,12 +475,17 @@ function _queueRow(j, canDequeue) {
   row.appendChild(phase);
 
   if (!canDequeue && j.started_at) {
+    const pct = (j.id === currentJobId) ? _currentJobProgressPct : null;
     const bar = document.createElement('div');
     bar.className = 'qm-bar-track';
-    bar.innerHTML = '<div class="qm-bar"></div>';
+    bar.innerHTML = `<div class="qm-bar" style="width:${pct !== null ? pct : 0}%"></div>`;
     row.appendChild(bar);
-    // Pulse animation — can't know real progress without WS, show indeterminate bar
-    bar.querySelector('.qm-bar').style.width = '60%';
+    if (pct !== null) {
+      const pctEl = document.createElement('span');
+      pctEl.className = 'qm-pct';
+      pctEl.textContent = pct + '%';
+      row.appendChild(pctEl);
+    }
   }
 
   if (canDequeue) {

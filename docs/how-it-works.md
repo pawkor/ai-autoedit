@@ -126,6 +126,14 @@ GPS boost: when `gps_weight > 0` and scenes have GPS columns, CLIP score is modi
 
 Beaty per ujęcie / Beats per shot: harmonogram cięć budowany przez `build_schedule()` z trzema tierami: fast (`beats_fast` beatów/slot, domyślnie 3), mid (`beats_mid`, domyślnie 4), slow (`beats_slow`, domyślnie 6). Tier przypisywany per muzyczny segment na podstawie energii. Przy 99 BPM: fast ≈ 1.8s/slot, mid ≈ 2.4s/slot, slow ≈ 3.6s/slot.
 
+Synchronizacja beat — precyzja cięć: `music_ss` (offset startowy muzyki) ustawiany na `schedule[0]["start"]` = czas pierwszego wykrytego beatu. Librosa rzadko wykrywa pierwszy beat w t=0 — zwykle jest 0.3–0.8s ciszy przed pierwszym uderzeniem. Bez tego offsetu każde cięcie ląduje `beat_times[0]` sekund za wcześnie. Z offsetem: cięcie k w filmie wypada w czasie `beat_times[k] - beat_times[0]`, muzyka gra od pozycji `beat_times[0]` → w chwili cięcia muzyka jest dokładnie na `beat_times[k]`.
+
+Beat alignment — cut precision: `music_ss` (music playback offset) is set to `schedule[0]["start"]` = first detected beat time. Librosa rarely detects the first beat at t=0 — there is typically 0.3–0.8s of silence before the first hit. Without this offset every cut lands `beat_times[0]` seconds early. With the offset: cut k in the video falls at video time `beat_times[k] - beat_times[0]`, music plays from position `beat_times[0]` → at the moment of the cut the music is exactly at `beat_times[k]`.
+
+Wykluczenia w music-driven: `manual_overrides.json` z galerii Select scenes jest wczytywany — sceny oznaczone jako `exclude` są pomijane niezależnie od wyniku CLIP. Dodatkowo klips z `final_score < 0` (gdy `neg_score × 0.5 > pos_score`) jest twardym wykluczeniem: nawet wysoki wynik pozytywny nie wystarczy, jeśli negatywny prompt dominuje. Oba wykluczenia logowane są w logu renderowania.
+
+Music-driven exclusions: `manual_overrides.json` from the Select scenes gallery is read — scenes marked `exclude` are skipped regardless of CLIP score. Additionally, clips with `final_score < 0` (i.e. `neg_score × 0.5 > pos_score`) are hard-excluded: even a high positive score is not enough if the negative prompt dominates. Both exclusion counts are logged at render time.
+
 Beats per shot: the cut schedule is built by `build_schedule()` with three tiers: fast (`beats_fast` beats/slot, default 3), mid (`beats_mid`, default 4), slow (`beats_slow`, default 6). Tier assigned per music segment by energy level. At 99 BPM: fast ≈ 1.8s/slot, mid ≈ 2.4s/slot, slow ≈ 3.6s/slot.
 
 ### Dobór i miks muzyki (Traditional mode)

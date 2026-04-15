@@ -110,6 +110,7 @@ async function openJob(jobId) {
   document.getElementById('js-negative').value = '';
   document.getElementById('sum-track').textContent = t_('misc.no_pin') || 'No track pinned — will auto-select.';
   document.getElementById('render-progress-wrap').style.display = 'none';
+  _hideJobProgress();
   document.getElementById('render-progress-bar').style.width = '0%';
   showView('job-view');
   stopVideo();
@@ -208,26 +209,44 @@ function connectJobWs(jobId, startedAt) {
     const msg = JSON.parse(e.data);
     if (msg.type==='log') {
       appendLog(msg.line);
-      // Scene detection progress bar
-      const sdStart = msg.line.match(/\[2\/6\] Scene detection \((\d+) files\)/);
-      if (sdStart) {
-        _sdTotal = parseInt(sdStart[1]);
+      // Scene detection / CLIP-first scan progress bar (gallery footer + tab-row mini)
+      const sdStart       = msg.line.match(/\[2\/6\] Scene detection \((\d+) files\)/);
+      const clipScanStart = msg.line.match(/\[2\/6\] CLIP-first scan/);
+      const clipScanFiles = msg.line.match(/Source files:\s*(\d+)/);
+      const _setAnalyzePct = pct => {
+        document.getElementById('sd-progress-bar').style.width = pct + '%';
+        document.getElementById('sd-progress-pct').textContent = pct + '%';
+        _setJobProgress(pct, 'Analyzing');
+      };
+      const _showAnalyzeBar = label => {
         document.getElementById('gallery-stats-text').style.display = 'none';
         const w = document.getElementById('sd-progress-wrap');
         w.style.display = 'flex';
-        document.getElementById('sd-progress-bar').style.width = '0%';
-        document.getElementById('sd-progress-pct').textContent = '0%';
+        const lbl = w.querySelector('span');
+        if (lbl) lbl.textContent = label || 'Scanning';
+        _setAnalyzePct(0);
+      };
+      const _hideAnalyzeBar = () => {
+        _sdTotal = 0;
+        document.getElementById('sd-progress-wrap').style.display = 'none';
+        document.getElementById('gallery-stats-text').style.display = '';
+        _hideJobProgress();
+      };
+      if (sdStart) {
+        _sdTotal = parseInt(sdStart[1]);
+        _showAnalyzeBar('Scene detect');
+      } else if (clipScanStart) {
+        _sdTotal = -1; // bar shown, count not known yet
+        _showAnalyzeBar('CLIP scan');
+      } else if (clipScanFiles && _sdTotal === -1) {
+        _sdTotal = parseInt(clipScanFiles[1]);
       } else if (_sdTotal > 0) {
-        if (msg.line.match(/^\s*\[3\/6\]/)) {
-          _sdTotal = 0;
-          document.getElementById('sd-progress-wrap').style.display = 'none';
-          document.getElementById('gallery-stats-text').style.display = '';
+        if (msg.line.match(/^\s*\[3\/6\]/) || msg.line.match(/\[3\/6\]–\[5\/6\] skipped/)) {
+          _hideAnalyzeBar();
         } else {
           const m = msg.line.match(/^\s*\[(\d+)\/(\d+)\]/);
           if (m && parseInt(m[2]) === _sdTotal) {
-            const pct = Math.round(parseInt(m[1]) / _sdTotal * 100);
-            document.getElementById('sd-progress-bar').style.width = pct + '%';
-            document.getElementById('sd-progress-pct').textContent = pct + '%';
+            _setAnalyzePct(Math.round(parseInt(m[1]) / _sdTotal * 100));
           }
         }
       }
@@ -511,6 +530,23 @@ async function startMusicDrivenRender() {
 // ── Log ───────────────────────────────────────────────────────────────────────
 const PROGRESS_RE = /^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|/;
 
+// ── Job progress ring (tab-row circular indicator) ───────────────────────────
+function _setJobProgress(pct, label, eta) {
+  const btn = document.getElementById('job-progress-btn');
+  if (!btn) return;
+  btn.style.display = 'flex';
+  document.getElementById('progress-ring').setAttribute('stroke-dasharray', `${pct} 100`);
+  document.getElementById('progress-ring-label').textContent = label || '';
+  document.getElementById('progress-ring-pct').textContent = pct + '%';
+  btn.title = (label ? label + ': ' : '') + pct + '%' + (eta ? '  ' + eta : '') + '  — click to view queue';
+  if (typeof _currentJobProgressPct !== 'undefined') _currentJobProgressPct = pct;
+}
+function _hideJobProgress() {
+  const btn = document.getElementById('job-progress-btn');
+  if (btn) btn.style.display = 'none';
+  if (typeof _currentJobProgressPct !== 'undefined') _currentJobProgressPct = 0;
+}
+
 // Render step helpers
 const _RENDER_STEP_ORDER = ['Clips', 'Encoding', 'Intro/outro', 'Music', 'Preview'];
 function _enterRenderStep(name) {
@@ -521,11 +557,13 @@ function _enterRenderStep(name) {
   document.getElementById('render-progress-bar').style.width = '0%';
   document.getElementById('render-pct').textContent = '0%';
   document.getElementById('render-eta').textContent = '';
+  _setJobProgress(0, `${name} ${_renderStepNum}/${total}`);
 }
 function _setRenderStepPct(pct, etaLabel) {
   document.getElementById('render-progress-bar').style.width = pct + '%';
   document.getElementById('render-pct').textContent = pct + '%';
   if (etaLabel !== undefined) document.getElementById('render-eta').textContent = etaLabel;
+  _setJobProgress(pct, `${_renderStepName} ${_renderStepNum}/${_RENDER_STEP_ORDER.length}`, etaLabel);
 }
 
 

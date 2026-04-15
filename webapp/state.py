@@ -420,6 +420,28 @@ async def _stats_broadcaster():
             _stats_subscribers.discard(ws)
 
 
+# ── Job task queue helper ──────────────────────────────────────────────────────
+
+def _enqueue_job_task(job: "Job", coro) -> "asyncio.Task":
+    """Schedule coro as job._task.
+    If a task is already running/pending, chain coro after it instead of rejecting.
+    Returns the new asyncio.Task.
+    """
+    import asyncio as _aio
+    old = job._task
+    if old and not old.done():
+        async def _chain():
+            try:
+                await old
+            except Exception:
+                pass
+            await coro
+        task = _aio.create_task(_chain())
+    else:
+        task = _aio.create_task(coro)
+    return task
+
+
 # ── Job runner ─────────────────────────────────────────────────────────────────
 
 async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optional[str] = None):

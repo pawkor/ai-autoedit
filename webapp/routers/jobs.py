@@ -34,6 +34,7 @@ from webapp.state import (
     _LogList,
     Job,
     _run_job,
+    _enqueue_job_task,
     wcfg,
     _prom_ok,
 )
@@ -640,9 +641,6 @@ async def rerun_job(job_id: str, params: JobParams):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.status in ("running", "queued"):
-        raise HTTPException(409, "Job is already running or queued")
-
     work_dir = Path(params.work_dir).resolve()
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
@@ -664,10 +662,9 @@ async def rerun_job(job_id: str, params: JobParams):
     job.started_at     = time.time()
     job.ended_at       = None
     job.process        = None
-    job._task          = None
     job.save()
 
-    job._task = asyncio.create_task(_run_job(job, analyze_only=True))
+    job._task = _enqueue_job_task(job, _run_job(job, analyze_only=True))
     return {"id": job_id}
 
 
@@ -914,9 +911,6 @@ async def render_job(job_id: str, params: RenderParams):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.status in ("running", "queued"):
-        raise HTTPException(409, "Job is already running or queued")
-
     if params.threshold is not None:
         job.params["threshold"] = params.threshold
     if params.max_scene is not None:
@@ -948,7 +942,7 @@ async def render_job(job_id: str, params: RenderParams):
     job.selected_track = track
     job.save()
 
-    job._task = asyncio.create_task(_run_job(job, analyze_only=False, selected_track=track))
+    job._task = _enqueue_job_task(job, _run_job(job, analyze_only=False, selected_track=track))
     return {"id": job_id, "phase": "rendering"}
 
 
@@ -982,9 +976,6 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.status in ("running", "queued"):
-        raise HTTPException(409, "Job is already running or queued")
-
     # Resolve music file: explicit → pinned track → auto-pick from music_dir
     music_path_str = data.get("music_file") or job.selected_track or ""
     if not music_path_str:
@@ -1072,7 +1063,7 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
             job.save()
             await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
 
-    job._task = asyncio.create_task(_run())
+    job._task = _enqueue_job_task(job, _run())
     return {"id": job_id, "phase": "music-driven"}
 
 

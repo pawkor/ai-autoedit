@@ -64,9 +64,13 @@ After download the file is saved automatically:
 
 Domyślnie lista ścieżek sortowana jest według zbliżenia do aktualnego Target dur.: na górze utwór najbardziej pasujący długością, niżej na przemian dłuższe i krótsze (±1 s, ±2 s, ±3 s…). Gdy nie ma ustawionego Target dur., lista pojawia się w kolejności indeksu.
 
+Przy każdym wejściu na zakładkę Music sortowanie jest resetowane do trybu domyślnego (est. dur.) i `calculateGalleryStats()` jest wywoływane — lista zawsze odzwierciedla aktualną szacowaną długość po zmianie zaznaczenia klatek w Select scenes.
+
 Kliknięcie nagłówka kolumny (tytuł, czas, BPM, energia) przełącza na sortowanie wg tej kolumny. Ponowne kliknięcie odwraca kierunek. Kliknięcie raz jeszcze wraca do sortowania domyślnego.
 
 By default tracks are sorted by proximity to the current Target dur.: the best-matching track is at the top, then alternating longer and shorter (±1 s, ±2 s, ±3 s…). If Target dur. is not set, tracks appear in index order.
+
+On every entry to the Music tab, sort is reset to default (est. dur.) and `calculateGalleryStats()` is called — the list always reflects the current estimated duration after changing scene selection in Select scenes.
 
 Clicking a column header (title, duration, BPM, energy) sorts by that column. Click again to reverse. Click once more to return to default sort.
 
