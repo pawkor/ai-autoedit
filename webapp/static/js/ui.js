@@ -35,6 +35,11 @@ function _saveUiPrefs() {
   api.put('/api/settings', { theme: currentTheme, lang: currentLang, sort_newest: jobSortNewest ? 'true' : 'false' });
 }
 
+// HTML-escape helper — prevents XSS when interpolating untrusted strings into innerHTML
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 const api = {
   async get(u)    { try { const r=await fetch(u); return r.ok?r.json():null; } catch{return null;} },
   async post(u,b) { const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.json(); },

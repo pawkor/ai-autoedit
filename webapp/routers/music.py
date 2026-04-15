@@ -134,7 +134,9 @@ async def _acr_fingerprint(path: Path) -> dict:
     import hmac, base64
     import urllib.request
 
-    tmp = Path(tempfile.mktemp(suffix=".wav"))
+    fd, _tmp_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    tmp = Path(_tmp_path)
     try:
         for offset in (60, 0):
             proc = await asyncio.create_subprocess_exec(

@@ -137,7 +137,11 @@ function _updateProxyUI(st) {
     } else {
       msg = `Done — ${finished}/${total} proxy files`; color = 'var(--muted)';
     }
-    bars.innerHTML = `<span style="font-size:11px;color:${color}">${msg}</span>`;
+    bars.innerHTML = '';
+    const _msgSpan = document.createElement('span');
+    _msgSpan.style.cssText = `font-size:11px;color:${color}`;
+    _msgSpan.textContent = msg;
+    bars.appendChild(_msgSpan);
     return;
   }
 
@@ -189,12 +193,14 @@ function _updateProxyUI(st) {
     const pct = total > 0 ? Math.round(finished / total * 100) : 0;
     bars.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:2px">
-        <span style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${st.current_file || 'Creating proxies…'}</span>
+        <span id="_proxy-file-label" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         <span style="color:var(--accent);font-weight:600">${finished}/${total}</span>
       </div>
       <div style="background:var(--bg3);border-radius:3px;height:3px;overflow:hidden">
         <div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.3s"></div>
       </div>`;
+    const _lbl = bars.querySelector('#_proxy-file-label');
+    if (_lbl) _lbl.textContent = st.current_file || 'Creating proxies…';
     if (st.error) appendLog('[proxy] ' + st.error);
   }
 }

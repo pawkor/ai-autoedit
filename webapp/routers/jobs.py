@@ -1013,6 +1013,11 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
             job.save()
             await job.broadcast({"type": "status", "status": "running", "phase": "music-driven"})
             try:
+                # Flush in-memory params to config.ini so music_driven.py sees
+                # the latest cam_pattern / beats_* / gps_weight even when the
+                # frontend PUT /api/job-config was still in-flight at render time.
+                save_job_config(Path(job.params["work_dir"]), job.params)
+
                 cmd = [sys.executable, str(SCRIPT_DIR / "music_driven.py"),
                        job.params["work_dir"]]
                 if music_path_str:

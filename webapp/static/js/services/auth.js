@@ -84,20 +84,45 @@ async function _renderUsersList(firstRun = false) {
 
   if (!users.length) { list.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 0">No users yet.</div>'; return; }
 
-  list.innerHTML = users.map(u => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
-      <span style="font-size:12px">${u.username}</span>
-      <div style="display:flex;gap:6px;align-items:center">
-        <span id="pw-edit-${u.username}" style="font-size:11px;color:var(--accent);cursor:pointer" onclick="_startEditPw('${u.username}')">change pw</span>
-        <button class="icon-btn" style="font-size:11px;color:var(--red)" onclick="_authDeleteUser('${u.username}')" title="Delete user">✕</button>
-      </div>
-    </div>
-    <div id="pw-row-${u.username}" style="display:none;padding:4px 0 6px">
-      <input type="password" id="pw-input-${u.username}" placeholder="New password" style="width:100%;box-sizing:border-box;font-size:11px"
-             onblur="_savePwIfValue('${u.username}')"
-             onkeydown="if(event.key==='Enter')_savePw('${u.username}');else if(event.key==='Escape')_cancelEditPw('${u.username}')">
-    </div>
-  `).join('');
+  list.innerHTML = '';
+  for (const u of users) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)';
+    const nameSpan = document.createElement('span');
+    nameSpan.style.fontSize = '12px';
+    nameSpan.textContent = u.username;
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:6px;align-items:center';
+    const editSpan = document.createElement('span');
+    editSpan.id = `pw-edit-${_esc(u.username)}`;
+    editSpan.style.cssText = 'font-size:11px;color:var(--accent);cursor:pointer';
+    editSpan.textContent = 'change pw';
+    editSpan.addEventListener('click', () => _startEditPw(u.username));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'icon-btn';
+    delBtn.style.cssText = 'font-size:11px;color:var(--red)';
+    delBtn.title = 'Delete user';
+    delBtn.textContent = '✕';
+    delBtn.addEventListener('click', () => _authDeleteUser(u.username));
+    btns.append(editSpan, delBtn);
+    row.append(nameSpan, btns);
+    list.appendChild(row);
+    const pwRow = document.createElement('div');
+    pwRow.id = `pw-row-${_esc(u.username)}`;
+    pwRow.style.cssText = 'display:none;padding:4px 0 6px';
+    const pwInput = document.createElement('input');
+    pwInput.type = 'password';
+    pwInput.id = `pw-input-${_esc(u.username)}`;
+    pwInput.placeholder = 'New password';
+    pwInput.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px';
+    pwInput.addEventListener('blur', () => _savePwIfValue(u.username));
+    pwInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') _savePw(u.username);
+      else if (e.key === 'Escape') _cancelEditPw(u.username);
+    });
+    pwRow.appendChild(pwInput);
+    list.appendChild(pwRow);
+  }
 }
 
 function _startEditPw(username) {

@@ -316,7 +316,11 @@ function _pollYtUpload(uploadId, statusEl, btn, fileName, onClose, onUrl) {
       statusEl.textContent = `Uploading… ${s.pct}%${spd}`;
     } else if (s.status === 'done') {
       clearInterval(poll);
-      statusEl.innerHTML = `✓ <a href="${s.url}" target="_blank" style="color:var(--accent)">${s.url}</a>`;
+      statusEl.textContent = '✓ ';
+      const _ytLink = document.createElement('a');
+      if (/^https?:\/\//i.test(s.url)) _ytLink.href = s.url;
+      _ytLink.target = '_blank'; _ytLink.style.color = 'var(--accent)'; _ytLink.textContent = s.url;
+      statusEl.appendChild(_ytLink);
       statusEl.style.color = 'var(--green)';
       btn.textContent = '✓ Done';
       btn.disabled = false;
