@@ -823,13 +823,18 @@ async def run(params: dict, work_dir: Path,
             float(params.get("clip_scan_clip_dur", 8)),
             float(params.get("clip_scan_min_gap",  30)),
         )
-        # Clear stale clips from previous runs (both scenedetect and old clip-first)
-        _stale_clips = (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
-                        list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+        # Clear stale clips and frames from previous runs (both scenedetect and old clip-first)
+        _stale_clips  = (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
+                         list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+        _stale_frames = list((auto_dir / "frames").glob("*.jpg"))
         if _stale_clips:
             for _sf in _stale_clips:
                 _sf.unlink()
             yield f"  Cleared {len(_stale_clips)} old clip(s)"
+        if _stale_frames:
+            for _sf in _stale_frames:
+                _sf.unlink()
+            yield f"  Cleared {len(_stale_frames)} old frame(s)"
         _safe_env_cs = {k: v for k, v in os.environ.items()
                         if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
         _is_dual_cs = bool(cameras and len(cameras) > 1)
@@ -1139,6 +1144,9 @@ async def run(params: dict, work_dir: Path,
         m = re.match(r'^(.+)-scene-(\d+)$', mp4.stem)
         if not m:
             mp4.unlink(missing_ok=True)
+            # Also remove corresponding frame files so next CLIP-first run regenerates them
+            for _fsuf in ("_f0.jpg", "_f1.jpg", "_f2.jpg", ".jpg"):
+                (auto_dir / "frames" / (mp4.stem + _fsuf)).unlink(missing_ok=True)
             return f"  ⚠ Cannot parse name, removed: {mp4.name}"
         source_stem, scene_num = m.group(1), int(m.group(2))
         scene_csv = auto_dir / "csv" / f"{source_stem}-Scenes.csv"

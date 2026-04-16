@@ -13,7 +13,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |
 | Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only; instant client-side binary search |
 | GPS speed/turn scoring | ✅ | exiftool GPS extraction, Haversine speed+bearing, `gps_weight` blends into CLIP score |
-| Music-driven render | ✅ | beat/segment sync (cuts land exactly on beats via `music_ss = first_beat_time`), source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern, respects manual gallery exclusions, hard-excludes clips with `final_score < 0` |
+| Music-driven render | ✅ | beat/segment sync (cuts land on downbeats via `_bar_ceil()` rounding to nearest bar), source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern, respects manual gallery exclusions, hard-excludes clips with `final_score < 0` |
 | Multi-cam sync (timestamp + clock offset) | ✅ | MP4 creation_time fallback |
 | Intro / outro overlay | ✅ | full-res frame from autocut clip (not thumbnail) |
 | Music mix with BPM/energy matching | ✅ | target duration drives track selection |
@@ -92,6 +92,9 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | Delete track from library | ✅ | removes file, index.json entry, shorts_used.json entry |
 | ACRCloud Content ID check (manual) | ✅ | ⚙ button per track, fingerprint via ACRCloud API |
 | ACRCloud auto pre-check before render | ✅ | skips claimed tracks, retries until free candidate found |
+| Global used-tracks index | ✅ | `webapp/jobs/used_tracks.json`; red ● per track + ⚠ footer warning when previously used; tooltip shows project/render/date/YT; auto-recorded after every render (music-driven and traditional) |
+| Music offset auto-fill | ✅ | offset field pre-filled from `intro_outro.duration` on project load |
+| CLIP prompts editor modal | ✅ | 80×80% modal opened from inspector "AI / CLIP ↗" button; About/Generate/Save + two-column POSITIVE/NEGATIVE editor |
 | Waveform visualisation | 💡 | small inline waveform on music cards |
 | Auto-trim silence at start/end of tracks | 💡 | |
 

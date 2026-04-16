@@ -301,14 +301,17 @@ for sf_idx, sf in enumerate(source_files, 1):
 
             # Extract clip
             clip_out = autocut_dir / f"{scene_name}.mp4"
-            if not clip_out.exists():
+            clip_newly_created = not clip_out.exists()
+            if clip_newly_created:
                 _extract_clip(sf, clip_start, CLIP_DUR_SEC, clip_out)
 
             # Copy peak frame → frames/ for gallery
+            # Always overwrite when clip was just created (avoids stale frame from deleted+recreated clip)
             peak_frame_src = frame_paths[peak_i]
             peak_frame_dst = frames_dir / f"{scene_name}_f0.jpg"
-            if not peak_frame_dst.exists():
+            if clip_newly_created or not peak_frame_dst.exists():
                 import shutil
+                peak_frame_dst.unlink(missing_ok=True)
                 shutil.copy2(peak_frame_src, peak_frame_dst)
 
             all_clips.append({

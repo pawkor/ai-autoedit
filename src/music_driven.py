@@ -467,9 +467,13 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         # Limit NVENC parallel encodes — GPU encoder has a session cap (typically 3-5)
         trim_workers = 3 if nvenc else _WORKERS
         results = {}
+        total_clips = len(edit)
+        done_count = 0
         with ThreadPoolExecutor(max_workers=trim_workers) as pool:
             for i, out in pool.map(_trim_one, list(enumerate(edit))):
                 results[i] = out
+                done_count += 1
+                print(f"  [{done_count}/{total_clips}] clip (md)", flush=True)
 
         trimmed: list[Path] = []
         for i in range(len(edit)):
@@ -557,22 +561,24 @@ def assemble(
     if not scores_csv.exists():
         raise FileNotFoundError("scene_scores.csv not found — run Analyze first")
 
-    # Load manual exclusions from gallery UI
+    # Load manual exclusions/inclusions from gallery UI
     _overrides_path = auto_dir / "manual_overrides.json"
     _manual_excluded: set[str] = set()
+    _manual_included: set[str] = set()
     if _overrides_path.exists():
         try:
             import json as _json
             _ov = _json.loads(_overrides_path.read_text())
             _manual_excluded = {k for k, v in _ov.items() if v == "exclude"}
+            _manual_included = {k for k, v in _ov.items() if v == "include"}
             if _manual_excluded:
                 sample = sorted(_manual_excluded)[:5]
                 print(f"  Manual exclusions: {len(_manual_excluded)} scene(s) skipped: {sample}")
         except Exception:
             pass
 
-    # Load CLIP scores; hard-exclude scenes where negative prompt dominates
-    scene_scores: dict[str, float] = {}
+    # Load CLIP scores; hard-exclude: manual excludes + negative-dominant scenes
+    _all_scores: dict[str, float] = {}
     _neg_excluded = 0
     with open(scores_csv) as f:
         for row in csv.DictReader(f):
@@ -581,20 +587,28 @@ def assemble(
                 if scene in _manual_excluded:
                     continue
                 final = float(row["score"])
-                # Hard-exclude: score < 0 means neg*weight > pos — clearly matches negative prompts
                 if final < 0:
                     _neg_excluded += 1
                     continue
-                scene_scores[scene] = float(row["score"])
+                _all_scores[scene] = final
             except (KeyError, ValueError):
                 pass
     if _neg_excluded:
-        print(f"  Neg-score excluded: {_neg_excluded} scene(s) (neg > pos)")
-    if not scene_scores:
+        print(f"  Neg-score excluded: {_neg_excluded} scene(s)")
+    if not _all_scores:
         raise ValueError("scene_scores.csv is empty")
 
-    print(f"\n[music-driven] {len(scene_scores)} clips  music={music_path.name}  "
-          f"scores={scores_csv.name}  res={_resolution}@{_framerate}fps")
+    # Apply gallery threshold: preferred pool = selected scenes, fallback = rest sorted desc.
+    # Manual includes bypass threshold. Fallback used only when preferred pool too small.
+    _threshold = float(_cp.get("scene_selection", "threshold", fallback="0"))
+    _preferred = {k: v for k, v in _all_scores.items() if v >= _threshold or k in _manual_included}
+    _fallback  = sorted(
+        ((k, v) for k, v in _all_scores.items() if k not in _preferred),
+        key=lambda x: x[1], reverse=True
+    )
+
+    print(f"\n[music-driven] {len(_all_scores)} clips (threshold≥{_threshold:.3f}: {len(_preferred)})  "
+          f"music={music_path.name}  scores={scores_csv.name}  res={_resolution}@{_framerate}fps")
 
     # 1. Analyse music
     music_info = analyze_music(music_path)
@@ -613,6 +627,25 @@ def assemble(
     _beats_fast = int(_cp.get("music_driven", "beats_fast", fallback="3"))
     _beats_mid  = int(_cp.get("music_driven", "beats_mid",  fallback="4"))
     _beats_slow = int(_cp.get("music_driven", "beats_slow", fallback="6"))
+    # BPM-adaptive: ensure minimum clip durations regardless of tempo.
+    # At high BPM (e.g. 117) default 3 beats = 1.5s → slideshow.
+    # Targets: fast≥2.5s, mid≥4.0s, slow≥6.0s.
+    import math as _math
+    _bpm = music_info.get("tempo", 120.0)
+    _beat_sec = 60.0 / _bpm
+    _min_fast = float(_cp.get("music_driven", "min_clip_fast_sec", fallback="2.5"))
+    _min_mid  = float(_cp.get("music_driven", "min_clip_mid_sec",  fallback="4.0"))
+    _min_slow = float(_cp.get("music_driven", "min_clip_slow_sec", fallback="6.0"))
+    # Round up to nearest multiple of 4 (bar in 4/4) so cuts land on downbeats.
+    def _bar_ceil(n: int, bar: int = 4) -> int:
+        return _math.ceil(n / bar) * bar
+    _beats_fast = _bar_ceil(max(_beats_fast, _math.ceil(_min_fast / _beat_sec)))
+    _beats_mid  = _bar_ceil(max(_beats_mid,  _math.ceil(_min_mid  / _beat_sec)))
+    _beats_slow = _bar_ceil(max(_beats_slow, _math.ceil(_min_slow / _beat_sec)))
+    print(f"  BPM={_bpm:.0f}  beat={_beat_sec:.2f}s  "
+          f"beats: fast={_beats_fast}({_beats_fast*_beat_sec:.1f}s) "
+          f"mid={_beats_mid}({_beats_mid*_beat_sec:.1f}s) "
+          f"slow={_beats_slow}({_beats_slow*_beat_sec:.1f}s)")
     schedule = build_schedule(beat_times, beat_energy, _beats_fast, _beats_mid, _beats_slow)
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
@@ -708,13 +741,20 @@ def assemble(
     else:
         stem_to_time = {}
 
-    # 3. Motion analysis — dynamic top_percent so schedule can be filled without reuse
-    total_available = len(scene_scores)
+    # 3. Build final clip pool: preferred (above threshold) first, fallback if needed
     needed = len(schedule)
-    dynamic_pct = min(1.0, max(top_percent, (needed / total_available) * 1.2)) if total_available > 0 else top_percent
-    if dynamic_pct > top_percent:
-        print(f"  Motion pass: expanding to {dynamic_pct*100:.0f}% ({needed} slots / {total_available} clips)")
-    clips = analyse_clips(autocut_dir, scene_scores, dynamic_pct, ffprobe,
+    scene_scores = dict(_preferred)
+    if len(scene_scores) < needed:
+        _take = needed - len(scene_scores)
+        _added = dict(_fallback[:_take])
+        scene_scores.update(_added)
+        print(f"  Pool: {len(_preferred)} above-threshold + {len(_added)} fallback "
+              f"(needed {needed} slots, {len(_fallback)} available below threshold)")
+    else:
+        print(f"  Pool: {len(scene_scores)} clips above threshold  ({len(_fallback)} below, unused)")
+
+    # Motion analysis — use full pool (threshold already filtered quality)
+    clips = analyse_clips(autocut_dir, scene_scores, 1.0, ffprobe,
                           stem_to_camera=stem_to_camera or None,
                           stem_to_time=stem_to_time or None)
     if not clips:

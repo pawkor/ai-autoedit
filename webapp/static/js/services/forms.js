@@ -309,4 +309,10 @@ function openAdvancedDetect() {
 function closeAdvancedDetect() {
   document.getElementById('advanced-detect-modal').style.display = 'none';
 }
+function openPromptsModal() {
+  document.getElementById('prompts-modal').classList.add('open');
+}
+function closePromptsModal() {
+  document.getElementById('prompts-modal').classList.remove('open');
+}
 function _syncAdvancedHint() {}  // placeholder for future live hint

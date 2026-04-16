@@ -1,5 +1,21 @@
 // ── Music tab ─────────────────────────────────────────────────────────────────
 
+function _updateTrackUsedWarn(trackFile) {
+  const el = document.getElementById('sum-track-used-warn');
+  if (!el) return;
+  if (!trackFile) { el.style.display = 'none'; return; }
+  const name = trackFile.split('/').pop();
+  const entries = (window._usedTracksIndex || {})[name] || [];
+  if (entries.length) {
+    el.style.display = '';
+    el.title = 'Already used:\n' + entries.map(e =>
+      `${e.project.split('/').pop()}  ${e.render}  ${e.date}${e.yt_url ? '  YT: ' + e.yt_url : ''}`
+    ).join('\n');
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 async function loadMusicTracks() {
   const dir = document.getElementById('music-dir-input').value.trim();
   if (!dir) return;
@@ -7,10 +23,12 @@ async function loadMusicTracks() {
   const wd = document.getElementById('js-workdir').value.trim();
   if (wd) api.put('/api/job-config', { work_dir: wd, music_dir: dir });
   if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { music_dir: dir });
-  const [data, acrSt] = await Promise.all([
+  const [data, acrSt, usedRaw] = await Promise.all([
     api.get(`/api/music-files?dir=${encodeURIComponent(dir)}`),
     api.get('/api/acr-status'),
+    api.get('/api/music/used-tracks'),
   ]);
+  window._usedTracksIndex = usedRaw || {};
   if (!data) return;
   _acrConfigured = acrSt?.configured ?? false;
   musicTracks = data;
@@ -123,17 +141,22 @@ function _sortedTracks(tracks) {
     ?? 0;
   if (!_musicSort.key) {
     if (!targetDur) return tracks;
-    // Penalise tracks shorter than target (music would end mid-video).
-    // Cost: delta if track >= target, 2× delta if track < target.
+    const offsetSec    = parseFloat(document.getElementById('music-offset-s')?.value || '4');
+    const toleranceSec = parseFloat(document.getElementById('music-tolerance-s')?.value || '15');
+    // Effective target: video est + offset (silence + fade the track covers beyond video end)
+    const effTarget = targetDur + offsetSec;
+    // Cost: tracks within tolerance window cost 0; outside window cost grows with distance.
+    // Tracks shorter than (effTarget - tolerance) penalised 3× — music would end before video.
     const cost = dur => {
-      const d = (dur || 0) - targetDur;
-      return d >= 0 ? d : -d * 2;
+      const d = (dur || 0) - effTarget;
+      if (Math.abs(d) <= toleranceSec) return 0;           // within window — equal priority
+      return d >= 0 ? (d - toleranceSec) : ((-d - toleranceSec) * 3); // too long vs too short
     };
     return [...tracks].sort((a, b) => {
       const ca = cost(a.duration), cb = cost(b.duration);
       if (ca !== cb) return ca - cb;
-      // tie-break: prefer longer
-      return (b.duration || 0) - (a.duration || 0);
+      // within window: prefer track whose duration is closest to effTarget
+      return Math.abs((a.duration || 0) - effTarget) - Math.abs((b.duration || 0) - effTarget);
     });
   }
   return [...tracks].sort((a, b) => {
@@ -151,6 +174,7 @@ function _sortedTracks(tracks) {
 
 function autoSelectBestTrack() {
   if (musicSelected.size > 0 || !musicTracks.length) return;
+  if (_musicManuallyCleared) return; // user explicitly cleared — don't re-select
   const best = _sortedTracks(musicTracks)[0];
   if (!best) return;
   musicSelected.add(best.file);
@@ -158,6 +182,7 @@ function autoSelectBestTrack() {
   const name = best.file.split('/').pop().replace(/\.[^.]+$/, '');
   const sumTrack = document.getElementById('sum-track');
   if (sumTrack) sumTrack.textContent = `✓ ${name}`;
+  _updateTrackUsedWarn(best.file);
   if (best.duration) _suggestSceneParamsForMusic(best.duration);
   if (typeof _beatsUpdateDurations === 'function') _beatsUpdateDurations();
   if (currentJobId) api.patch(`/api/jobs/${currentJobId}/params`, { music_files: [best.file] });
@@ -189,19 +214,26 @@ function renderMusicList() {
     cb.type = 'checkbox';
     cb.checked = musicSelected.has(t.file);
     cb.addEventListener('change', e => {
-      if (e.target.checked) musicSelected.add(t.file);
-      else musicSelected.delete(t.file);
+      if (e.target.checked) {
+        musicSelected.add(t.file);
+        _musicManuallyCleared = false; // user re-selected — allow auto-select again
+      } else {
+        musicSelected.delete(t.file);
+        if (musicSelected.size === 0) _musicManuallyCleared = true; // explicit clear
+      }
       // single checked = pinned; 0 or multiple = auto-select
       if (musicSelected.size === 1) {
         pinnedTrack = [...musicSelected][0];
         const name = pinnedTrack.split('/').pop().replace(/\.[^.]+$/, '');
         const sumTrack = document.getElementById('sum-track');
         if (sumTrack) sumTrack.textContent = `✓ ${name}`;
+        _updateTrackUsedWarn(pinnedTrack);
         if (t.duration) _suggestSceneParamsForMusic(t.duration);
       } else {
         pinnedTrack = null;
         const sumTrack = document.getElementById('sum-track');
         if (sumTrack) sumTrack.textContent = t_('misc.no_pin') || 'No track pinned — will auto-select.';
+        _updateTrackUsedWarn(null);
       }
       updateMusicCount(shown);
       updatePhaseUI();
@@ -219,6 +251,20 @@ function renderMusicList() {
     const titleText = document.createElement('span');
     titleText.textContent = t.title;
     titleWrap.appendChild(titleText);
+    // Used-in-render indicator
+    const _usedEntries = (window._usedTracksIndex || {})[t.file.split('/').pop()] || [];
+    if (_usedEntries.length) {
+      const usedBadge = document.createElement('span');
+      usedBadge.style.cssText = 'font-size:9px;color:var(--red);cursor:default;flex-shrink:0;margin-left:3px';
+      usedBadge.textContent = '●';
+      const tip = _usedEntries.map(e => {
+        let s = `${e.project.split('/').pop()}  ${e.render}  ${e.date}`;
+        if (e.yt_url) s += `  YT: ${e.yt_url}`;
+        return s;
+      }).join('\n');
+      usedBadge.title = tip;
+      titleWrap.appendChild(usedBadge);
+    }
     if (t.yt_url) {
       const badge = document.createElement('a');
       badge.href = t.yt_url;

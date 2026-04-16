@@ -147,13 +147,21 @@ Examples:
 
 ### CLIP prompts
 
-Opis wyjazdu (pole **About this ride**) + przycisk **✦ Generate CLIP prompts** wywołuje Claude API i generuje prompty POSITIVE/NEGATIVE dopasowane do opisu. Wyniki pojawiają się w polach poniżej. **Save prompts** zapisuje je do `config.ini` projektu.
+Przycisk **AI / CLIP ↗** w prawym panelu (inspector) otwiera modal edytora promptów (80% szerokości × 80% wysokości okna).
 
-The **About this ride** field + **✦ Generate CLIP prompts** button calls the Claude API and generates POSITIVE/NEGATIVE prompts matched to the ride description. Results appear in the fields below. **Save prompts** writes them to the project's `config.ini`.
+The **AI / CLIP ↗** button in the right inspector panel opens the prompts editor modal (80% width × 80% height).
 
-Prompty POSITIVE/NEGATIVE można też edytować bezpośrednio, jeden prompt na linię.
+Modal zawiera:
+- Pole **About this ride** (opis wyjazdu, 15 linii)
+- Przycisk **✦ Generate** — wywołuje Claude API i generuje prompty na podstawie opisu
+- Przycisk **Save** — zapisuje prompty do `config.ini` projektu
+- Dwie kolumny: **POSITIVE** i **NEGATIVE** — po jednym prompcie na linię, edytowalne bezpośrednio
 
-POSITIVE/NEGATIVE prompts can also be edited directly, one prompt per line.
+The modal contains:
+- **About this ride** field (ride description, 15 rows)
+- **✦ Generate** button — calls Claude API and generates prompts from the description
+- **Save** button — saves prompts to the project's `config.ini`
+- Two columns: **POSITIVE** and **NEGATIVE** — one prompt per line, directly editable
 
 ---
 

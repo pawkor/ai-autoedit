@@ -47,6 +47,7 @@ async function populateJobSettings(params) {
   }
   if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
   musicSelected = new Set();
+  _musicManuallyCleared = false;
 
   let th = params.threshold, ms = params.max_scene, pf = params.per_file;
   if (cfg) {

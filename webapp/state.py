@@ -499,6 +499,12 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
                             latest.with_suffix(".meta.json").write_text(
                                 json.dumps(meta, ensure_ascii=False)
                             )
+                            try:
+                                from webapp.routers.music import record_used_track
+                                _yt = job.params.get("yt_url", "")
+                                record_used_track(selected_track, str(work_dir), latest.name, _yt)
+                            except Exception:
+                                pass
                     except Exception:
                         pass
         except asyncio.CancelledError:

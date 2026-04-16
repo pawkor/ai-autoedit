@@ -18,9 +18,31 @@ from fastapi.responses import StreamingResponse
 from webapp.state import (
     SCRIPT_DIR,
     BROWSE_ROOT,
+    JOBS_DIR,
     in_browse_root,
     _rebuild_tasks,
 )
+
+# ── Used-tracks global index ──────────────────────────────────────────────────
+_USED_TRACKS_FILE = JOBS_DIR / "used_tracks.json"
+
+def _load_used_tracks() -> dict:
+    try:
+        return json.loads(_USED_TRACKS_FILE.read_text()) if _USED_TRACKS_FILE.exists() else {}
+    except Exception:
+        return {}
+
+def record_used_track(track_path: str, project: str, render_name: str, yt_url: str = ""):
+    """Append a usage record for track_path. Called after successful music-driven render."""
+    index = _load_used_tracks()
+    entry = {
+        "project":     project,
+        "render":      render_name,
+        "yt_url":      yt_url,
+        "date":        time.strftime("%Y-%m-%d"),
+    }
+    index.setdefault(track_path, []).append(entry)
+    _USED_TRACKS_FILE.write_text(json.dumps(index, indent=2))
 
 router = APIRouter()
 
@@ -249,6 +271,18 @@ async def acr_check(data: dict = Body(...)):
 @router.get("/api/acr-status")
 async def acr_status():
     return {"configured": bool(_ACR_HOST and _ACR_KEY and _ACR_SECRET)}
+
+
+@router.get("/api/music/used-tracks")
+async def get_used_tracks():
+    """Global index of tracks used in music-driven renders, keyed by track filename (basename)."""
+    raw = _load_used_tracks()
+    # Re-key by basename so frontend can match regardless of music dir
+    by_name: dict = {}
+    for path, entries in raw.items():
+        name = Path(path).name
+        by_name.setdefault(name, []).extend(entries)
+    return by_name
 
 
 @router.get("/api/music-subdirs")

@@ -227,16 +227,17 @@
         </div>
         <div id="music-list-scroll">
           <div id="music-list-header">
-            <span class="mh-cb"></span>
-            <span class="mh-play"></span>
-            <span class="mh-del-acr"></span>
+            <span class="mh-left-controls" title="Offset: seconds added to target (intro silence + outro fade).&#10;Tolerance: max deviation from target+offset to highlight best-fit tracks.">
+              <span id="btn-music-sort-reset" onclick="resetMusicSort()" title="Reset — sort by estimated duration" style="display:none;color:var(--accent);cursor:pointer;font-size:10px;flex-shrink:0">↺ est.</span>
+              <span style="font-size:10px;color:var(--muted)">+</span><input id="music-offset-s" type="number" min="0" max="30" step="1" value="3" style="width:36px;font-size:10px;padding:1px 3px;text-align:center;background:var(--bg2);border:1px solid var(--border);border-radius:3px;color:var(--fg)" title="Intro/outro offset (s)" oninput="renderMusicList()" onclick="event.stopPropagation()">
+              <span style="font-size:10px;color:var(--muted)">±</span><input id="music-tolerance-s" type="number" min="5" max="120" step="5" value="15" style="width:40px;font-size:10px;padding:1px 3px;text-align:center;background:var(--bg2);border:1px solid var(--border);border-radius:3px;color:var(--fg)" title="Tolerance window (s)" oninput="renderMusicList()" onclick="event.stopPropagation()">
+            </span>
             <span class="mh-title" onclick="sortMusic('title')" data-sort="title" data-label="Title / Artist">Title / Artist</span>
             <span class="mh-genre" onclick="sortMusic('genre')" data-sort="genre" data-label="Genre">Genre</span>
             <span class="mh-dur"   onclick="sortMusic('dur')"   data-sort="dur"   data-label="Dur">Dur</span>
             <span class="mh-bpm"   onclick="sortMusic('bpm')"   data-sort="bpm"   data-label="BPM">BPM</span>
             <span class="mh-energy" onclick="sortMusic('energy')" data-sort="energy" data-label="Nrg">Nrg</span>
             <span class="mh-copyright">Copyright</span>
-            <span id="btn-music-sort-reset" onclick="resetMusicSort()" title="Reset — sort by estimated duration" style="display:none;color:var(--accent);cursor:pointer;font-size:10px;flex-shrink:0">↺ est.</span>
           </div>
           <div id="music-list"></div>
         </div>
@@ -414,29 +415,10 @@
         </div>
       </details>
 
-      <!-- CLIP Prompts -->
-      <details class="insp-section" data-cat="ai">
-        <summary><span class="insp-cat-dot"></span>AI / CLIP</summary>
-        <div class="insp-body">
-          <div class="ff">
-            <label data-i18n="lbl.describe_ride_short">Describe this ride</label>
-            <textarea id="js-description" rows="3" placeholder="Motorcycle ride on winding mountain roads, scenic landscapes..."></textarea>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <button class="btn-sm" id="btn-gen-prompts" data-i18n="btn.gen_prompts" onclick="generateJobPrompts()">✦ Generate</button>
-            <span id="gen-prompts-status" style="font-size:11px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-            <button class="btn-sm" data-i18n="btn.save_prompts" onclick="saveJobPrompts()">Save</button>
-          </div>
-          <div>
-            <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.positive">POSITIVE</label>
-            <textarea id="js-positive" rows="6" style="resize:vertical;width:100%;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;margin-top:2px" onchange="savePromptsField()"></textarea>
-          </div>
-          <div>
-            <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.negative">NEGATIVE</label>
-            <textarea id="js-negative" rows="6" style="resize:vertical;width:100%;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;margin-top:2px" onchange="savePromptsField()"></textarea>
-          </div>
-        </div>
-      </details>
+      <!-- CLIP Prompts — opens modal -->
+      <div class="insp-section" data-cat="ai" style="padding:8px 12px">
+        <button class="btn-sm" style="width:100%;text-align:left" onclick="openPromptsModal()"><span class="insp-cat-dot"></span>AI / CLIP ↗</button>
+      </div>
 
       <!-- Analyze CTA -->
       <div style="padding:10px 12px;flex-shrink:0;display:flex;flex-direction:column;gap:5px">
@@ -453,6 +435,7 @@
       <div id="footer-left">
         <div id="footer-track-row">
           <span id="sum-track" style="font-size:11px;color:var(--muted);flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word" data-i18n="misc.no_pin">No track pinned — will auto-select.</span>
+          <span id="sum-track-used-warn" style="display:none;color:var(--red);font-size:13px;flex-shrink:0;margin-right:2px" title="">⚠</span>
           <button onclick="_toggleFooterPreview()" id="btn-footer-play" title="Play / Stop preview" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:12px;padding:0 3px;line-height:1;flex-shrink:0">▶</button>
           <button onclick="rerollMusic()" title="Pick a different track" id="btn-reroll-music" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 4px;line-height:1;flex-shrink:0">↻</button>
         </div>
@@ -462,8 +445,8 @@
           <span data-i18n="lbl.est_duration">Est:</span>&nbsp;<span id="sum-duration" style="color:var(--accent)">—</span>
         </div>
       </div>
-      <div id="timeline-bar-wrap" title="Selected duration vs target">
-        <div id="timeline-bar-label"><span>Timeline</span><span id="timeline-bar-text">—</span></div>
+      <div id="timeline-bar-wrap" title="Estimated material vs selected track length">
+        <div id="timeline-bar-label"><span id="timeline-bar-mode-label">Est. / Track</span><span id="timeline-bar-text">—</span></div>
         <div id="timeline-bar-track"><div id="timeline-bar-fill"></div></div>
       </div>
       <div id="footer-progress">
@@ -917,6 +900,35 @@
     </div>
     <div style="margin-top:18px;display:flex;justify-content:flex-end">
       <button class="btn-sm" onclick="closeAdvancedDetect()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- AI / CLIP Prompts modal -->
+<div id="prompts-modal" onclick="if(event.target===this)closePromptsModal()">
+  <div id="prompts-modal-box">
+    <div id="prompts-modal-hdr">
+      <span style="font-size:13px;font-weight:600;color:var(--text)">AI / CLIP Prompts</span>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+        <button class="btn-sm" id="btn-gen-prompts" onclick="generateJobPrompts()">✦ Generate</button>
+        <span id="gen-prompts-status" style="font-size:11px;color:var(--muted);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <button class="btn-sm" onclick="saveJobPrompts()">Save</button>
+        <button class="btn-sm" onclick="closePromptsModal()" style="padding:2px 8px">✕</button>
+      </div>
+    </div>
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Describe this ride</label>
+      <textarea id="js-description" rows="15" placeholder="Motorcycle ride on winding mountain roads, scenic landscapes..." style="width:100%;box-sizing:border-box;margin-top:4px;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;resize:none"></textarea>
+    </div>
+    <div id="prompts-modal-body">
+      <div class="prompts-col">
+        <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Positive</label>
+        <textarea id="js-positive" style="flex:1;width:100%;box-sizing:border-box;margin-top:4px;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;resize:none" onchange="savePromptsField()"></textarea>
+      </div>
+      <div class="prompts-col">
+        <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Negative</label>
+        <textarea id="js-negative" style="flex:1;width:100%;box-sizing:border-box;margin-top:4px;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;resize:none" onchange="savePromptsField()"></textarea>
+      </div>
     </div>
   </div>
 </div>

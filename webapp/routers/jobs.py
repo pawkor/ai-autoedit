@@ -1057,6 +1057,22 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                 await job.broadcast({"type": "log", "line": f"ERROR: {exc}"})
                 ok = False
 
+            # Record used track in global index
+            if ok and music_path_str and Path(music_path_str).is_file():
+                try:
+                    from webapp.routers.music import record_used_track
+                    _work = Path(job.params.get("work_dir", ""))
+                    _render_name = job.log[-5] if job.log else ""
+                    # Find the output filename from log (→ YYYY-*.mp4 line)
+                    for _ll in reversed(job.log[-20:]):
+                        if _ll.strip().startswith("→ ") and ".mp4" in _ll:
+                            _render_name = _ll.strip()[2:].strip()
+                            break
+                    _yt = job.params.get("yt_url", "")
+                    record_used_track(music_path_str, str(_work), _render_name, _yt)
+                except Exception:
+                    pass
+
             job.status   = "done" if ok else "failed"
             job.phase    = "done" if ok else "failed"
             job.ended_at = time.time()
@@ -1461,11 +1477,18 @@ async def job_frames(job_id: str):
             "duration":   durations.get(row["scene"]),
             "camera":     row.get("camera") if "camera" in df.columns else None,
             "frame_url":  next(
-                              (str(p) for p in [
-                                  frames_dir / (row["scene"] + "_f1.jpg"),
-                                  frames_dir / (row["scene"] + "_f0.jpg"),
-                                  frames_dir / (row["scene"] + ".jpg"),
-                              ] if p.exists()),
+                              (str(p) for p in (
+                                  # CLIP-first scenes: _f0 is the peak frame — never prefer _f1 (stale step-4 extract)
+                                  [
+                                      frames_dir / (row["scene"] + "_f0.jpg"),
+                                      frames_dir / (row["scene"] + "_f1.jpg"),
+                                      frames_dir / (row["scene"] + ".jpg"),
+                                  ] if "-clip-" in row["scene"] else [
+                                      frames_dir / (row["scene"] + "_f1.jpg"),
+                                      frames_dir / (row["scene"] + "_f0.jpg"),
+                                      frames_dir / (row["scene"] + ".jpg"),
+                                  ]
+                              ) if p.exists()),
                               None
                           ),
             "file_start": file_starts.get(row["scene"]),

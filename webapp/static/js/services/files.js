@@ -210,8 +210,10 @@ function _showFilePreview(path, e, delay = 400) {
     const v = document.getElementById('file-tip-video');
     const src = path.startsWith('/data/') ? path : `/api/file?path=${encodeURIComponent(path)}`;
     v.src = src;
+    v.load(); // Firefox with preload="none" won't fetch without explicit load()
     v.addEventListener('loadedmetadata', () => {
-      v.currentTime = Math.min(3, v.duration * 0.05);
+      if (v.duration && !isNaN(v.duration))
+        v.currentTime = Math.min(3, v.duration * 0.05);
       v.play().catch(() => {});
     }, {once: true});
     document.getElementById('file-tip').style.display = 'block';

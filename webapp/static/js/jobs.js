@@ -395,6 +395,9 @@ async function loadAnalyzeResult(jobId) {
   const data = await api.get(`/api/jobs/${jobId}/analyze-result`);
   if (!data || currentJobId !== jobId) return;
   analyzeResult = data;
+  // Pre-fill offset from intro_outro duration in config (default 3s).
+  const _offsetEl = document.getElementById('music-offset-s');
+  if (_offsetEl && data.intro_dur_sec != null) _offsetEl.value = Math.round(data.intro_dur_sec);
   // Reset only when actual render data arrived (new render supersedes manual overrides).
   // If user has pending manual overrides, preserve them so calculateGalleryStats stays live.
   if (!_overridesChangedSinceRender || (data.actual_selected_scenes != null && data.actual_duration_sec != null)) {
@@ -644,9 +647,9 @@ function appendLog(line) {
   panel.appendChild(div);
   if (atBottom) panel.scrollTop = panel.scrollHeight;
 
-  if (jobPhase === 'rendering') {
+  if (jobPhase === 'rendering' || jobPhase === 'music-driven') {
     // ── Step: Clips ──
-    const clipM = line.match(/\[(\d+)\/(\d+)\]\s+\S.*\((trim|enc)\)/);
+    const clipM = line.match(/\[(\d+)\/(\d+)\]\s+\S.*\((trim|enc|md)\)/);
     if (clipM) {
       const n = parseInt(clipM[1]), tot = parseInt(clipM[2]);
       if (n === 1) _enterRenderStep('Clips');

@@ -572,16 +572,34 @@ function _syncThresholdDisplay() {
 function _updateTimelineBar() {
   const fill = document.getElementById('timeline-bar-fill');
   const label = document.getElementById('timeline-bar-text');
+  const wrap  = document.getElementById('timeline-bar-wrap');
   if (!fill || !label) return;
   const estDur = analyzeResult?._live_est_dur || 0;
-  const targetRaw = document.getElementById('gallery-target-min')?.value || '';
+
+  // In Music-driven mode (threshold-bar hidden), only show bar when track is pinned
+  const thresholdBarVisible = document.getElementById('threshold-bar')?.style.display !== 'none';
+  const trackDur = pinnedTrack ? (musicTracks.find(t => t.file === pinnedTrack)?.duration || 0) : 0;
+  const targetRaw = thresholdBarVisible
+    ? (document.getElementById('gallery-target-min')?.value || '')
+    : (trackDur ? String(Math.floor(trackDur / 60)) + ':' + String(Math.round(trackDur % 60)).padStart(2, '0') : '');
+
   const targetSec = _parseTargetInput(targetRaw);
-  if (!estDur || !targetSec) { label.textContent = '—'; fill.style.width = '0%'; return; }
+  if (!estDur || !targetSec) {
+    label.textContent = '—'; fill.style.width = '0%';
+    if (wrap && !thresholdBarVisible) wrap.style.display = 'none';
+    return;
+  }
+  if (wrap && !thresholdBarVisible) wrap.style.display = '';
   const ratio = Math.min(estDur / targetSec, 1.2);
   const pct   = Math.min(ratio * 100, 100);
   fill.style.width = pct + '%';
   fill.className = ratio >= 1.05 ? 'tl-over' : ratio >= 0.9 ? 'tl-ok' : ratio >= 0.5 ? 'tl-mid' : 'tl-low';
   label.textContent = fmtDur(estDur) + ' / ' + fmtDur(targetSec);
+  if (wrap) wrap.title = thresholdBarVisible
+    ? 'Selected duration vs target'
+    : 'Estimated material vs selected track length';
+  const modeLabel = document.getElementById('timeline-bar-mode-label');
+  if (modeLabel) modeLabel.textContent = thresholdBarVisible ? 'Timeline' : 'Est. / Track';
 }
 
 // Parse "M:SS", "M:S", or plain "M" / "M.f" into total seconds

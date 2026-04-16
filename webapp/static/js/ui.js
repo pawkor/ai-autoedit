@@ -64,6 +64,7 @@ let musicTracks=[], musicSelected=new Set();
 let _acrConfigured = false;
 let jobPhase=null, analyzeResult=null, pinnedTrack=null, _sdTotal=0, _shortsCount=1;
 let _suggestedTrack=null, _rerollIdx=0;
+let _musicManuallyCleared = false; // set when user explicitly unchecks all tracks; blocks auto-select on tab switch
 const _frameCache = new Map(); // original url → blob URL
 let _galleryDirty = true;
 let _musicSort = { key: null, asc: true };
@@ -357,6 +358,9 @@ async function loadFrames(jobId) {
   if (!frames?.length) return;
   // Guard: ignore stale response if user switched to another job
   if (currentJobId !== jobId) return;
+  // Invalidate blob cache — re-analyze may have replaced files at same paths
+  for (const blobUrl of _frameCache.values()) URL.revokeObjectURL(blobUrl);
+  _frameCache.clear();
   framesData = frames;
   _avgBackCamTakeSec = data?.back_cam?.avg_take_sec ?? null;
   // Ensure caps are set from job params (guards against populateJobSettings race)
