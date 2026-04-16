@@ -359,7 +359,7 @@ function t_(key) { return TRANS[currentLang]?.labels?.[key] || ''; }
 
 function updatePhaseUI() {
   const analyzed = jobPhase === 'analyzed' || jobPhase === 'done' || jobPhase === 'failed';
-  const rendering = jobPhase === 'rendering';
+  const rendering = jobPhase === 'rendering' || jobPhase === 'music-driven';
 
   const btnGallery = document.getElementById('btn-gallery-to-music');
   if (btnGallery) btnGallery.style.display = analyzed ? '' : 'none';
@@ -513,8 +513,12 @@ async function startMusicDrivenRender() {
   btn.textContent = '♪ Working…';
   document.getElementById('render-progress-wrap').style.display = '';
   document.getElementById('render-status-label').textContent = 'Music-driven render…';
+  const _bv = typeof getBeatsValues === 'function' ? getBeatsValues() : {};
   const resp = await api.post(`/api/jobs/${currentJobId}/render-music-driven`, {
     music_file: pinnedTrack || _suggestedTrack || null,
+    beats_fast: _bv.fast ?? null,
+    beats_mid:  _bv.mid  ?? null,
+    beats_slow: _bv.slow ?? null,
   });
   if (!resp?.id) {
     alert('Music-driven render failed to start: ' + JSON.stringify(resp));

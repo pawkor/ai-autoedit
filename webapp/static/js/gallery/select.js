@@ -9,7 +9,7 @@ function _computePerFileCuts() {
     const groups = new Map();
     for (const f of framesData) {
       const ov = manualOverrides[f.scene];
-      if (ov === 'include' || ov === 'exclude') continue;
+      if (ov === 'include' || ov === 'ban') continue;
       if (f.score == null || f.score < _galleryThreshold) continue;
       const src = f.scene.replace(/-(scene|clip)-\d+$/, '');
       if (!groups.has(src)) groups.set(src, []);
@@ -36,7 +36,7 @@ function _computePerFileCuts() {
 // Passes threshold + per-file budget checks (no camera balance). Used as input for balancing.
 function _passesPreBalance(f) {
   const ov = manualOverrides[f.scene];
-  if (ov === 'include' || ov === 'exclude') return false;
+  if (ov === 'include' || ov === 'ban') return false;
   if (f.score != null && (_galleryThreshold !== null ? f.score < _galleryThreshold : f.score < parseFloat(document.getElementById('threshold-val').value))) return false;
   return !_perFileCuts.has(f.scene);
 }
@@ -91,7 +91,7 @@ function _computeBalancedScenes() {
       const candidates = framesData
         .filter(f => f.camera === cam && f.score >= boostFloor &&
                      f.score < _galleryThreshold && !allUsed.has(f.scene) &&
-                     manualOverrides[f.scene] !== 'exclude')
+                     manualOverrides[f.scene] !== 'ban')
         .sort((a, b) => b.score - a.score);
       for (const f of candidates) {
         if (g.length >= targetMin) break;
@@ -132,7 +132,7 @@ function _computeGapExclusions() {
   // Collect auto-included scenes (not manual overrides) with timestamps
   const maxSec = currentJobMaxScene || parseFloat(document.getElementById('js-max-scene')?.value || '0') || 10;
   const candidates = framesData.filter(f => {
-    if (manualOverrides[f.scene] === 'include' || manualOverrides[f.scene] === 'exclude') return false;
+    if (manualOverrides[f.scene] === 'include' || manualOverrides[f.scene] === 'ban') return false;
     if (f.duplicate) return false;
     if (_balancedScenes !== null) return _balancedScenes.has(f.scene);
     if (_galleryThreshold !== null ? f.score < _galleryThreshold : false) return false;
@@ -157,7 +157,7 @@ function _computeGapExclusions() {
 function isIncluded(f) {
   const ov = manualOverrides[f.scene];
   if (ov === 'include') return true;
-  if (ov === 'exclude') return false;
+  if (ov === 'ban') return false;
   if (f.duplicate) return false;
   // In dual-cam mode use the pre-computed balanced set (includes boosted below-threshold scenes)
   if (_balancedScenes !== null) {
@@ -184,11 +184,12 @@ function toggleFrame(scene) {
   if (!f) return;
   const threshold = parseFloat(document.getElementById('threshold-val').value);
   const ov = manualOverrides[scene];
-  const byThreshold = f.score != null && f.score >= threshold;
-  if (ov === undefined) {
-    manualOverrides[scene] = byThreshold ? 'exclude' : 'include';
+  if (!ov) {
+    manualOverrides[scene] = 'include';   // auto → include (blue dashed)
+  } else if (ov === 'include') {
+    manualOverrides[scene] = 'ban';       // include → ban (red solid)
   } else {
-    delete manualOverrides[scene];
+    delete manualOverrides[scene];        // ban → auto
   }
   _overridesChangedSinceRender = true;
   saveOverrides();
@@ -199,12 +200,14 @@ function toggleFrame(scene) {
     const included = isIncluded(f);
     const aboveThreshold = f.score != null && _galleryThreshold !== null && f.score >= _galleryThreshold;
     const limited = !newOv && !included && aboveThreshold;
-    card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + (newOv ? ' manual' : '');
+    const manualClass = newOv === 'include' ? ' manual-include' : newOv === 'ban' ? ' manual-ban' : '';
+    card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + manualClass;
     const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
     const _sc = f.score != null ? f.score.toFixed(3) : '—';
-    card.title = newOv ? `Score: ${_sc} (manual — click to reset)`
+    card.title = newOv === 'include' ? `Score: ${_sc} (force include — click to ban)`
+      : newOv === 'ban' ? `Score: ${_sc} (banned — click to reset)`
       : limited ? `Score: ${_sc} (cut by ${limitReason} — click to force include)`
-      : `Score: ${_sc} (click to toggle)`;
+      : `Score: ${_sc} (click to include)`;
   }
   _syncThresholdDisplay();
   calculateGalleryStats();
@@ -255,14 +258,16 @@ function renderGallery() {
     const aboveThreshold = f.score != null && _galleryThreshold !== null && f.score >= _galleryThreshold;
     const limited = !ov && !included && aboveThreshold;
     const card = document.createElement('div');
-    card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + (ov ? ' manual' : '');
+    const manualClass = ov === 'include' ? ' manual-include' : ov === 'ban' ? ' manual-ban' : '';
+    card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + manualClass;
     card.style.cursor = 'pointer';
     card.dataset.scene = f.scene;
     const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
     const _scoreStr = f.score != null ? f.score.toFixed(3) : '—';
-    card.title = ov ? `Score: ${_scoreStr} (manual — click to reset)`
+    card.title = ov === 'include' ? `Score: ${_scoreStr} (force include — click to ban)`
+      : ov === 'ban' ? `Score: ${_scoreStr} (banned — click to reset)`
       : limited ? `Score: ${_scoreStr} (cut by ${limitReason} — click to force include)`
-      : `Score: ${_scoreStr} (click to toggle)`;
+      : `Score: ${_scoreStr} (click to include)`;
     card.onclick = ()=>toggleFrame(f.scene);
     const sceneNum = (f.scene.match(/-scene-(\d+)$/) || [])[1] || '';
     const sceneLabel = (() => {
@@ -312,11 +317,13 @@ function _refreshGalleryClasses() {
     const included = isIncluded(f);
     const aboveThreshold = f.score != null && _galleryThreshold !== null && f.score >= _galleryThreshold;
     const limited = !ov && !included && aboveThreshold;
-    card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + (ov ? ' manual' : '');
+    const manualClass = ov === 'include' ? ' manual-include' : ov === 'ban' ? ' manual-ban' : '';
+    card.className = 'fc ' + (included ? 'included' : limited ? 'limited' : 'excluded') + manualClass;
     const limitReason = _perFileCuts.has(f.scene) ? 'per-file limit' : 'camera balance';
-    card.title = ov ? `Score: ${f.score.toFixed(3)} (manual — click to reset)`
+    card.title = ov === 'include' ? `Score: ${f.score.toFixed(3)} (force include — click to ban)`
+      : ov === 'ban' ? `Score: ${f.score.toFixed(3)} (banned — click to reset)`
       : limited ? `Score: ${f.score.toFixed(3)} (cut by ${limitReason} — click to force include)`
-      : `Score: ${f.score.toFixed(3)} (click to toggle)`;
+      : `Score: ${f.score.toFixed(3)} (click to include)`;
     const badge = card.querySelector('.fc-limit-badge');
     if (limited && !badge) {
       card.querySelector('.fc-info')?.insertAdjacentHTML('beforeend', '<span class="fc-limit-badge">limit</span>');
@@ -767,6 +774,7 @@ function onThresholdEdit() {
 // ── Beats-per-shot controls (music-driven render) ─────────────────────────────
 // Single ▼/▲ pair shifts all three tiers together, preserving relative gaps.
 const _beatsValues = { fast: 3, mid: 4, slow: 6 };
+function getBeatsValues() { return { ..._beatsValues }; }
 
 /**
  * Initialise beats widget from job config (called from populateJobSettings).

@@ -60,19 +60,19 @@ def analyze_music(music_path: Path) -> dict:
         Path(_tmp.name).unlink(missing_ok=True)
     duration = len(y) / sr
 
-    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-    tempo = float(np.squeeze(tempo))  # librosa ≥0.10 returns 0-dim array
-    beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
-
     hop = 512
-    rms = librosa.feature.rms(y=y, hop_length=hop)[0]
-    rms_times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop)
+    # Onset strength as input to beat_track → more accurate beat timestamps
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
+    tempo, beat_frames = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, hop_length=hop)
+    tempo = float(np.squeeze(tempo))  # librosa ≥0.10 returns 0-dim array
+    beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=hop).tolist()
 
-    # Smooth ~1 s window so chorus/verse boundaries are clear
-    win = max(1, int(sr / hop))
-    rms_smooth = np.convolve(rms, np.ones(win) / win, mode="same")
+    # PLP (Predominant Local Pulse) — rhythmic intensity, not just loudness.
+    # Captures verse/chorus/bridge boundaries more accurately than RMS.
+    pulse = librosa.beat.plp(onset_envelope=onset_env, sr=sr, hop_length=hop)
+    pulse_times = librosa.times_like(pulse, sr=sr, hop_length=hop)
 
-    beat_energy = np.interp(beat_times, rms_times, rms_smooth)
+    beat_energy = np.interp(beat_times, pulse_times, pulse)
     e_min, e_max = beat_energy.min(), beat_energy.max()
     if e_max > e_min:
         beat_energy = (beat_energy - e_min) / (e_max - e_min)
@@ -450,13 +450,17 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
 
+        _fps_int = int(framerate) if framerate else 60
+
         def _trim_one(args):
             i, entry = args
             out = tmp / f"s{i:04d}.mp4"
+            # Snap duration to frame boundary to prevent accumulation of rounding drift
+            dur = round(entry["duration"] * _fps_int) / _fps_int
             cmd = [
                 ffmpeg, "-y",
                 "-ss", str(entry["clip_ss"]),
-                "-t",  str(entry["duration"]),
+                "-t",  str(dur),
                 "-i",  entry["clip_path"],
                 *enc_v, *vf_args, "-an",
                 str(out)
@@ -490,7 +494,13 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
 
         # Concat video-only
         clist = tmp / "list.txt"
-        clist.write_text("\n".join(f"file '{p}'" for p in trimmed))
+        # Include 'duration' directive so concat demuxer enforces exact segment length.
+        # Without it, PTS from encoded files may be off by ±1 frame → drift accumulates.
+        clist_lines = []
+        for i, p in enumerate(trimmed):
+            snapped = round(edit[i]["duration"] * _fps_int) / _fps_int
+            clist_lines.append(f"file '{p}'\nduration {snapped:.6f}")
+        clist.write_text("\n".join(clist_lines))
         vid = tmp / "vid.mp4"
         subprocess.run(
             [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(clist),
@@ -561,30 +571,111 @@ def assemble(
     if not scores_csv.exists():
         raise FileNotFoundError("scene_scores.csv not found — run Analyze first")
 
-    # Load manual exclusions/inclusions from gallery UI
+    # Load manual overrides from gallery UI
+    # States: "include" = force-include, "ban" = hard-exclude (never, not even fallback),
+    #         "exclude" treated as "ban" for backwards compatibility
     _overrides_path = auto_dir / "manual_overrides.json"
-    _manual_excluded: set[str] = set()
-    _manual_included: set[str] = set()
+    _manual_banned: set[str] = set()   # never use, hard exclude
+    _manual_included: set[str] = set() # force include regardless of threshold
     if _overrides_path.exists():
         try:
             import json as _json
             _ov = _json.loads(_overrides_path.read_text())
-            _manual_excluded = {k for k, v in _ov.items() if v == "exclude"}
+            _manual_banned   = {k for k, v in _ov.items() if v in ("ban", "exclude")}
             _manual_included = {k for k, v in _ov.items() if v == "include"}
-            if _manual_excluded:
-                sample = sorted(_manual_excluded)[:5]
-                print(f"  Manual exclusions: {len(_manual_excluded)} scene(s) skipped: {sample}")
+            if _manual_banned:
+                print(f"  Banned: {len(_manual_banned)} scene(s) — hard excluded from pool")
         except Exception:
             pass
 
-    # Load CLIP scores; hard-exclude: manual excludes + negative-dominant scenes
+    # Precompute source→camera and source→absolute epoch (used for exclusion propagation
+    # and back-cam filtering below). Done once here, reused in stem_to_time later.
+    _interval_s  = float(_cp.get("clip_scan", "interval_sec", fallback="3.0"))
+    _clip_dur_s  = float(_cp.get("clip_scan", "clip_dur_sec", fallback="10.0"))
+    _src_cam_off: dict[str, float] = {}
+    if _cp.has_section("cam_offsets"):
+        for _ko, _vo in _cp.items("cam_offsets"):
+            try: _src_cam_off[_ko] = float(_vo)
+            except ValueError: pass
+    _src_cam_map: dict[str, str] = {}
+    _cam_src_path = auto_dir / "camera_sources.csv"
+    if _cam_src_path.exists():
+        with open(_cam_src_path) as _csf:
+            for _csr in csv.DictReader(_csf):
+                if "source" in _csr and "camera" in _csr:
+                    _src_cam_map[_csr["source"]] = _csr["camera"]
+    _src_epoch: dict[str, float] = {}
+    _vext3 = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts"}
+    for _svf in sorted(work_dir.rglob("*")):
+        if _svf.suffix.lower() not in _vext3: continue
+        if "_autoframe" in _svf.parts: continue
+        try:
+            _r3 = subprocess.run(
+                [ffprobe, "-v", "quiet", "-show_entries", "format_tags=creation_time",
+                 "-of", "csv=p=0", str(_svf)],
+                capture_output=True, text=True, timeout=5)
+            _ts3 = _r3.stdout.strip()
+            if not _ts3: continue
+            from datetime import datetime as _dtcls
+            _ep3 = _dtcls.fromisoformat(_ts3.replace("Z", "+00:00")).timestamp()
+            _cam3 = _src_cam_map.get(_svf.stem, "")
+            _src_epoch[_svf.stem] = _ep3 + _src_cam_off.get(_cam3, 0.0)
+        except Exception:
+            pass
+
+    # Load per-clip offsets from CSV (offset_sec = actual start within source file).
+    # Produced by clip_scan.py; absent in older CSVs → fallback to clip_N * interval (buggy).
+    _clip_offset: dict[str, float] = {}
+    with open(scores_csv) as _foff:
+        for _roff in csv.DictReader(_foff):
+            _os = _roff.get("offset_sec", "")
+            if _os:
+                try: _clip_offset[_roff["scene"]] = float(_os)
+                except ValueError: pass
+
+    import re as _re3
+    def _clip_range(scene_key: str):
+        src = _clip_source(scene_key)
+        epoch = _src_epoch.get(src)
+        if epoch is None: return None
+        if scene_key in _clip_offset:
+            t0 = epoch + _clip_offset[scene_key]
+        else:
+            # Fallback for CSVs without offset_sec (pre-fix analyze)
+            m = _re3.search(r'-clip-(\d+)$', scene_key)
+            if not m: return None
+            t0 = epoch + int(m.group(1)) * _interval_s
+        return (t0, t0 + _clip_dur_s)
+
+    # Propagate bans to other cameras: banned cam-A clip → ban all cam-B clips
+    # overlapping the same absolute time window.
+    if _manual_banned and _src_epoch:
+        _ban_ranges = [r for s in _manual_banned if (r := _clip_range(s))]
+        if _ban_ranges:
+            _sync_banned: set[str] = set()
+            with open(scores_csv) as _f4:
+                for _r4 in csv.DictReader(_f4):
+                    _sc4 = _r4.get("scene", "")
+                    if _sc4 in _manual_banned: continue
+                    _rng4 = _clip_range(_sc4)
+                    if not _rng4: continue
+                    for (ban_s, ban_e) in _ban_ranges:
+                        if _rng4[0] < ban_e and _rng4[1] > ban_s:
+                            _sync_banned.add(_sc4)
+                            break
+            if _sync_banned:
+                print(f"  Sync-banned: {len(_sync_banned)} scene(s) from other cameras "
+                      f"in banned time windows")
+                _manual_banned.update(_sync_banned)
+
+    # Load CLIP scores; hard-exclude banned scenes and negative-dominant scenes
     _all_scores: dict[str, float] = {}
     _neg_excluded = 0
     with open(scores_csv) as f:
         for row in csv.DictReader(f):
             try:
                 scene = row["scene"]
-                if scene in _manual_excluded:
+                if scene in _manual_banned:
                     continue
                 final = float(row["score"])
                 if final < 0:
@@ -606,6 +697,10 @@ def assemble(
         ((k, v) for k, v in _all_scores.items() if k not in _preferred),
         key=lambda x: x[1], reverse=True
     )
+
+    # Back-cam scenes are allowed freely — sync-ban already propagates bans from
+    # main-cam to back-cam for the same time window. Camera pattern in match_clips()
+    # handles switching between cameras to build dynamics.
 
     print(f"\n[music-driven] {len(_all_scores)} clips (threshold≥{_threshold:.3f}: {len(_preferred)})  "
           f"music={music_path.name}  scores={scores_csv.name}  res={_resolution}@{_framerate}fps")
@@ -741,17 +836,42 @@ def assemble(
     else:
         stem_to_time = {}
 
-    # 3. Build final clip pool: preferred (above threshold) first, fallback if needed
+    # 3. Build final clip pool: preferred (above threshold + manual includes) first,
+    # fallback to auto scenes below threshold to fill music duration.
+    # Banned scenes never appear in either pool.
     needed = len(schedule)
     scene_scores = dict(_preferred)
     if len(scene_scores) < needed:
         _take = needed - len(scene_scores)
         _added = dict(_fallback[:_take])
         scene_scores.update(_added)
-        print(f"  Pool: {len(_preferred)} above-threshold + {len(_added)} fallback "
-              f"(needed {needed} slots, {len(_fallback)} available below threshold)")
+        print(f"  Pool: {len(_preferred)} selected + {len(_added)} fallback "
+              f"(needed {needed} slots)")
     else:
-        print(f"  Pool: {len(scene_scores)} clips above threshold  ({len(_fallback)} below, unused)")
+        print(f"  Pool: {len(scene_scores)} selected clips  ({len(_fallback)} below threshold)")
+
+    # Camera-pattern balance: if cam_pattern active, ensure each camera has enough
+    # clips in the pool to cover its pattern share. Add fallback for deficient cameras.
+    _resolved_pat_early = _parse_cam_pattern(_cam_pattern, _cam_order) if _cam_pattern and _cam_order else None
+    if _resolved_pat_early and stem_to_camera:
+        _cam_needed: dict[str, int] = {}
+        for _pi in range(needed):
+            _pc = _resolved_pat_early[_pi % len(_resolved_pat_early)]
+            _cam_needed[_pc] = _cam_needed.get(_pc, 0) + 1
+        _cam_have: dict[str, int] = {}
+        for _sc in scene_scores:
+            _pc2 = stem_to_camera.get(_clip_source(_sc), "unknown")
+            _cam_have[_pc2] = _cam_have.get(_pc2, 0) + 1
+        _pat_added = 0
+        for _pc, _cnt in _cam_needed.items():
+            _deficit = _cnt - _cam_have.get(_pc, 0)
+            if _deficit > 0:
+                _fb_cam = [(k, v) for k, v in _fallback if stem_to_camera.get(_clip_source(k), "") == _pc and k not in scene_scores]
+                _fb_add = dict(_fb_cam[:_deficit])
+                scene_scores.update(_fb_add)
+                _pat_added += len(_fb_add)
+        if _pat_added:
+            print(f"  Pattern balance: +{_pat_added} fallback clips to cover camera pattern")
 
     # Motion analysis — use full pool (threshold already filtered quality)
     clips = analyse_clips(autocut_dir, scene_scores, 1.0, ffprobe,
@@ -759,6 +879,20 @@ def assemble(
                           stem_to_time=stem_to_time or None)
     if not clips:
         raise RuntimeError("No clips available for motion analysis")
+
+    # Filter out static clips: configurable via [music_driven] min_motion_score (0.0 = off)
+    _min_motion = float(_cp.get("music_driven", "min_motion_score", fallback="0.1"))
+    if _min_motion > 0 and len(clips) > len(schedule):
+        _before = len(clips)
+        _filtered = [c for c in clips if c.get("motion_norm", 0) >= _min_motion]
+        # Only apply filter if enough clips remain to fill schedule
+        if len(_filtered) >= len(schedule):
+            clips = _filtered
+            print(f"  Motion filter: removed {_before - len(clips)} static clips "
+                  f"(motion_norm < {_min_motion}, {len(clips)} remain)")
+        else:
+            print(f"  Motion filter: skipped (would leave only {len(_filtered)} for "
+                  f"{len(schedule)} slots — pool too small)")
 
     if len(clips) < len(schedule):
         print(f"  ⚠ Only {len(clips)} unique clips for {len(schedule)} slots — schedule trimmed (no reuse)")

@@ -13,7 +13,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |
 | Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only; instant client-side binary search |
 | GPS speed/turn scoring | ✅ | exiftool GPS extraction, Haversine speed+bearing, `gps_weight` blends into CLIP score |
-| Music-driven render | ✅ | beat/segment sync (cuts land on downbeats via `_bar_ceil()` rounding to nearest bar), source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern, respects manual gallery exclusions, hard-excludes clips with `final_score < 0` |
+| Music-driven render | ✅ | beat/segment sync (cuts land on downbeats via `_bar_ceil()` rounding to nearest bar; frame-snapped durations + concat `duration` directive eliminate drift over long renders), source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern, hard-excludes `ban` scenes (propagated to sync-cam via time overlap), back-cam mirror filter, fallback pool fills to music duration |
 | Multi-cam sync (timestamp + clock offset) | ✅ | MP4 creation_time fallback |
 | Intro / outro overlay | ✅ | full-res frame from autocut clip (not thumbnail) |
 | Music mix with BPM/energy matching | ✅ | target duration drives track selection |
@@ -29,7 +29,7 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 | ⚠ Re-analyze badge | ✅ | warns when CLIP-first setting doesn't match existing scenes |
 | Proxy media (480p/20fps CFR for fast scene detection) | ✅ | atomic `.tmp` → `.mp4`, auto-started on project open |
 | Select scenes tab with score cards + duration badge | ✅ | |
-| Select scenes manual overrides (include/exclude) | ✅ | persist across binary search |
+| Select scenes manual overrides (3-state: auto/include/ban) | ✅ | blue dashed = force include; red solid = hard ban (never in render, not even fallback); ban propagates to sync-cam via time overlap; persists across binary search |
 | Target duration binary search | ✅ | + fill logic when target unreachable |
 | Select scenes hover → video clip preview | ✅ | 500ms delay, reuses file-tip overlay |
 | Music tab with BPM/energy sort | ✅ | auto-re-sorts by estimated duration on every tab switch (calculateGalleryStats refresh) |

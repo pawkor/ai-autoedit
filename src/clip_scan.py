@@ -315,11 +315,12 @@ for sf_idx, sf in enumerate(source_files, 1):
                 shutil.copy2(peak_frame_src, peak_frame_dst)
 
             all_clips.append({
-                "scene":     scene_name,
-                "score":     raw_scores[peak_i],
-                "pos_score": 0.0,   # re-scored below if needed
-                "neg_score": 0.0,
-                "is_main":   is_main,
+                "scene":      scene_name,
+                "score":      raw_scores[peak_i],
+                "pos_score":  0.0,   # re-scored below if needed
+                "neg_score":  0.0,
+                "is_main":    is_main,
+                "offset_sec": clip_start,  # seconds into source file (for sync-ban)
             })
 
 
@@ -403,7 +404,7 @@ if all_clips:
         for clip in all_clips: clip.setdefault("aesthetic_score", float("nan"))
 
     # ── Write CSVs ────────────────────────────────────────────────────────────
-    fieldnames = ["scene", "score", "pos_score", "neg_score", "aesthetic_score"]
+    fieldnames = ["scene", "score", "pos_score", "neg_score", "aesthetic_score", "offset_sec"]
     main_clips = [c for c in all_clips if c["is_main"]]
     all_clips_sorted  = sorted(all_clips, key=lambda c: c["score"], reverse=True)
     main_clips_sorted = sorted(main_clips, key=lambda c: c["score"], reverse=True)

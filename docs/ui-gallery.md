@@ -60,19 +60,29 @@ Scenes that passed the threshold but were cut by `max_per_file_sec` are shown wi
 
 ## Manualne overrides / Manual overrides
 
-Kliknięcie klatki przełącza jej status:
-- **Included → force-exclude** (ciemna ramka, ikona ×)
-- **Excluded → force-include** (zielona ramka, ikona ✓)
-- **Manual → reset** (powrót do decyzji threshold)
+Kliknięcie klatki przełącza jej status w trójstanowym cyklu:
+- **auto → include** (niebieska przerywana ramka) — scena zawsze trafia do renderu, niezależnie od progu
+- **include → ban** (czerwona pełna ramka, przyciemniony obraz) — scena *nigdy* nie trafi do renderu, nawet jako fallback
+- **ban → auto** (powrót do decyzji algorytmu)
 
-Overrides zapisywane są po stronie serwera w `_autoframe/manual_overrides.json` i stosowane przy każdym kolejnym renderze. Zmiana Target dur. przelicza threshold z uwzględnieniem aktywnych overrides.
+**Sceny nieoznaczone (auto) poniżej progu nie trafiają do renderu.** Music-driven render uzupełnia pulę scenami poniżej progu tylko gdy wybranych jest za mało — ale sceny z `ban` są wykluczone nawet wtedy.
 
-Clicking a frame toggles its status:
-- **Included → force-exclude** (dark border, × icon)
-- **Excluded → force-include** (green border, ✓ icon)
-- **Manual → reset** (back to threshold decision)
+W trybie multi-cam (helmet + back): zbanowanie sceny z kamery głównej automatycznie banuje sceny z kamery back w tym samym oknie czasowym (`sync-ban`).
 
-Overrides are saved server-side in `_autoframe/manual_overrides.json` and applied on every render. Changing Target dur. re-runs the search with active overrides respected.
+Overrides zapisywane są po stronie serwera w `_autoframe/manual_overrides.json` i stosowane przy każdym kolejnym renderze.
+
+---
+
+Clicking a frame cycles through three states:
+- **auto → include** (blue dashed border) — scene always included in render regardless of threshold
+- **include → ban** (red solid border, dimmed image) — scene *never* included in render, not even as fallback
+- **ban → auto** (back to algorithm decision)
+
+**Unmarked (auto) scenes below threshold never appear in the render.** Music-driven render fills the pool with below-threshold scenes only when selected scenes are insufficient — but `ban` scenes are excluded even then.
+
+In multi-cam mode (helmet + back): banning a main-cam scene automatically bans back-cam scenes overlapping the same time window (`sync-ban`).
+
+Overrides are saved server-side in `_autoframe/manual_overrides.json` and applied on every render.
 
 ---
 

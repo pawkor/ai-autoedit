@@ -321,9 +321,10 @@ html,body { height:100%; background:var(--bg); color:var(--text); font-family:va
 .fc.included { border-color:var(--accent); box-shadow:0 0 0 2px rgba(99,102,241,.6), 0 0 18px rgba(99,102,241,.15); transform:translateY(-2px); }
 .fc.limited img { opacity:.35; }
 .fc.limited { border-color:var(--yellow); box-shadow:0 0 0 2px rgba(245,158,11,.33); }
-.fc.manual.included { border-color:var(--accent); border-style:dashed; box-shadow:0 0 0 2px rgba(99,102,241,.6), 0 0 18px rgba(99,102,241,.17); transform:translateY(-2px); }
-.fc.manual.excluded { border:2px dashed var(--red); box-shadow:0 0 0 2px rgba(239,68,68,.33); }
-.fc.manual.excluded img { opacity:.2; }
+.fc.manual-include { border:2px dashed #3b82f6; box-shadow:0 0 0 2px rgba(59,130,246,.5); }
+.fc.manual-include.excluded img { opacity:.5; }
+.fc.manual-ban { border:2px solid #ef4444; box-shadow:0 0 0 2px rgba(239,68,68,.4); }
+.fc.manual-ban img { opacity:.15; }
 .fc-limit-badge { font-size:9px; color:var(--yellow); background:var(--bg); border:1px solid var(--yellow); border-radius:2px; padding:0 3px; margin-left:4px; flex-shrink:0; }
 .fc img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:var(--bg3); transition:opacity .15s; }
 .fc-info { padding:3px 6px; display:flex; justify-content:space-between; align-items:baseline; font-size:12px; background:var(--bg2); }

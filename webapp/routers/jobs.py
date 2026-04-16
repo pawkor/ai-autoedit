@@ -976,8 +976,18 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    # Resolve music file: explicit → pinned track → auto-pick from music_dir
+    # Update beats-per-shot if sent from UI
+    for _bk in ("beats_fast", "beats_mid", "beats_slow"):
+        if data.get(_bk) is not None:
+            job.params[_bk] = int(data[_bk])
+    job.save()
+
+    # Resolve music file: explicit → pinned track → music_files param (single) → auto-pick from music_dir
     music_path_str = data.get("music_file") or job.selected_track or ""
+    if not music_path_str:
+        _mf = job.params.get("music_files") or []
+        if len(_mf) == 1:
+            music_path_str = _mf[0]
     if not music_path_str:
         music_dir = job.params.get("music_dir", "")
         if not music_dir:
@@ -1287,7 +1297,11 @@ async def detect_cam_offsets(job_id: str, data: dict = Body(default={})):
             missing.append(cam)
             continue
         # offset to add to cam's timestamps to align with reference
-        offsets[cam] = round(ref_ts - ts)
+        # Ignore small differences (<5 min) — those are just different recording
+        # start times, not clock drift. Real drift (e.g. wrong timezone) is always
+        # much larger (hours).
+        raw = round(ref_ts - ts)
+        offsets[cam] = raw if abs(raw) >= 300 else 0
 
     return {"offsets": offsets, "reference": ref_cam, "missing": missing}
 
