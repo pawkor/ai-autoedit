@@ -34,9 +34,21 @@ Rules for prompts:
 - Positive prompts: describe exactly what IS visible in the footage — specific terrain,
   road type, lighting, landmarks. The more specific, the better CLIP discriminates.
   Do NOT add locations or conditions not mentioned in the description.
-- Negative prompts: describe what should be excluded — bad scenes, static shots,
-  dangerous/unwanted moments mentioned in the description.
-- 8–14 positive prompts, 6–10 negative prompts.
+- IMPORTANT: CLIP scores individual still frames, NOT motion or action. Never write
+  prompts about camera movement, speed, riding action, or anything that requires
+  seeing multiple frames (e.g. "motorcycle leaning", "sweeping curves", "ascending",
+  "slow crawling"). Describe only static visual content visible in a single frame.
+- Use proper nouns from the description: hill names, lake names, town names, road names.
+  CLIP is trained on internet images and recognises named landmarks well.
+  E.g. "Wieżyca hill Kashubia" scores higher than "hill with tower".
+- If the description mentions a passenger or group, include back-camera perspective prompts:
+  "two helmets visible on motorcycle from behind", "rider with passenger rear view",
+  "motorcycle with pillion passenger", "two riders on motorcycle back view".
+- If the description mentions a group ride, include: "group of motorcycles on road",
+  "motorcycle convoy on rural road", "multiple motorcycles in formation".
+- Negative prompts: describe what should be excluded — bad scenes, blurry footage,
+  dangerous/unwanted moments mentioned in the description. Do NOT negate motion/action.
+- 10–16 positive prompts, 5–8 negative prompts.
 - One prompt per line, each line is a short descriptive phrase (no punctuation at end).
 
 Rules for scene_selection:

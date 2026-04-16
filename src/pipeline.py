@@ -10,6 +10,7 @@ Usage (server.py):
 
 import asyncio
 import configparser
+import fcntl
 import json
 import os
 import pandas as pd
@@ -19,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 from typing import AsyncIterator, Optional
+
+_GPU_LOCK_FILE = Path("/tmp/ai-autoedit-gpu.lock")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 APP_DIR    = SCRIPT_DIR.parent
@@ -1345,18 +1348,26 @@ async def run(params: dict, work_dir: Path,
             **({"CLIP_BATCH_SIZE":   str(params["batch_size"])}   if params.get("batch_size")   else {}),
             **({"CLIP_NUM_WORKERS":  str(params["clip_workers"])}  if params.get("clip_workers")  else {}),
         }
-        clip_proc = await asyncio.create_subprocess_exec(
-            sys.executable, str(SCRIPT_DIR / "clip_score.py"),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(work_dir),
-            env=clip_env,
-        )
-        async for raw in clip_proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            if line:
-                yield f"  {line}"
-        await clip_proc.wait()
+        _gpu_lock_fd = open(_GPU_LOCK_FILE, "w")
+        try:
+            yield "  Waiting for GPU..."
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: fcntl.flock(_gpu_lock_fd, fcntl.LOCK_EX))
+            clip_proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(SCRIPT_DIR / "clip_score.py"),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(work_dir),
+                env=clip_env,
+            )
+            async for raw in clip_proc.stdout:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    yield f"  {line}"
+            await clip_proc.wait()
+        finally:
+            fcntl.flock(_gpu_lock_fd, fcntl.LOCK_UN)
+            _gpu_lock_fd.close()
         if not scores_csv.exists():
             raise RuntimeError("CLIP scoring failed — no scene_scores.csv produced.")
         try:
