@@ -267,7 +267,7 @@ class Job:
 
 
 jobs: dict[str, Job] = {}
-job_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
+job_semaphore: asyncio.Semaphore = asyncio.Semaphore(max(1, int(wcfg("max_concurrent_jobs", "1"))))
 shorts_semaphore: asyncio.Semaphore = asyncio.Semaphore(4)
 
 # ── Polling state dicts ───────────────────────────────────────────────────────

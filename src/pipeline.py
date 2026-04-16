@@ -338,31 +338,76 @@ async def apply_postprocess(
         src.rename(out_path)
         yield f"  → {out_path.name}"
 
-        # Preview
-        yield ""
-        yield "Generating preview..."
-        _prev_out = out_path.with_name(out_path.stem + "_preview.mp4")
-        if vid_codec == "h264_nvenc":
-            _prev_cmd = [
-                ffmpeg, *hwaccel, "-i", str(out_path),
-                "-vf", "scale=-2:1080",
-                "-c:v", "h264_nvenc", "-b:v", "15M", "-maxrate", "20M", "-bufsize", "30M",
-                "-preset", "p4", "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart", str(_prev_out), "-y",
-            ]
-        else:
-            _prev_cmd = [
-                ffmpeg, "-i", str(out_path),
-                "-vf", "scale=-2:1080",
-                "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart", str(_prev_out), "-y",
-            ]
-        _ret, _ = await _run(_prev_cmd)
-        if _prev_out.exists():
-            yield f"  ✓ {_prev_out.name}"
-        else:
-            yield f"  ⚠ Preview failed (code {_ret})"
+        # Detect output resolution to decide on upscale + preview
+        _out_h = 0
+        try:
+            _ph = await asyncio.create_subprocess_exec(
+                ffprobe, "-v", "quiet", "-show_entries", "stream=height",
+                "-of", "csv=p=0", str(out_path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            _ph_out, _ = await _ph.communicate()
+            _out_h = int(next((l for l in _ph_out.decode().splitlines() if l.strip()), "0"))
+        except Exception:
+            pass
+
+        # 4K upscale for YouTube: only when source < 4K and enabled in config
+        _upscale_4k = _s(cp, "video", "upscale_4k", "true").lower() in ("1", "true", "yes")
+        if _upscale_4k and 0 < _out_h < 2160:
+            _yt_out = out_path.with_name(out_path.stem + "_yt4k.mp4")
+            yield ""
+            yield "Upscaling to 4K for YouTube..."
+            # Use scale_cuda when NVENC available (stays on GPU), fall back to CPU scale
+            if vid_codec == "h264_nvenc":
+                _up_cmd = [
+                    ffmpeg, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+                    "-i", str(out_path),
+                    "-vf", "scale_cuda=3840:2160:interp_algo=lanczos",
+                    "-c:v", "h264_nvenc", "-rc", "vbr", "-cq", nvenc_cq,
+                    "-b:v", "0", "-preset", nvenc_preset,
+                    "-c:a", "copy", "-movflags", "+faststart",
+                    str(_yt_out), "-y",
+                ]
+            else:
+                _up_cmd = [
+                    ffmpeg, "-i", str(out_path),
+                    "-vf", "scale=3840:2160:flags=lanczos",
+                    "-c:v", "libx264", "-crf", x264_crf, "-preset", x264_preset,
+                    "-c:a", "copy", "-movflags", "+faststart",
+                    str(_yt_out), "-y",
+                ]
+            _ret, _ = await _run(_up_cmd)
+            if _yt_out.exists():
+                yield f"  ✓ {_yt_out.name}"
+            else:
+                yield f"  ⚠ 4K upscale failed (code {_ret})"
+
+        # Preview: only needed for 4K output (1080p is already web-playable)
+        if _out_h >= 2160:
+            yield ""
+            yield "Generating preview..."
+            _prev_out = out_path.with_name(out_path.stem + "_preview.mp4")
+            if vid_codec == "h264_nvenc":
+                _prev_cmd = [
+                    ffmpeg, *hwaccel, "-i", str(out_path),
+                    "-vf", "scale=-2:1080",
+                    "-c:v", "h264_nvenc", "-b:v", "15M", "-maxrate", "20M", "-bufsize", "30M",
+                    "-preset", "p4", "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart", str(_prev_out), "-y",
+                ]
+            else:
+                _prev_cmd = [
+                    ffmpeg, "-i", str(out_path),
+                    "-vf", "scale=-2:1080",
+                    "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart", str(_prev_out), "-y",
+                ]
+            _ret, _ = await _run(_prev_cmd)
+            if _prev_out.exists():
+                yield f"  ✓ {_prev_out.name}"
+            else:
+                yield f"  ⚠ Preview failed (code {_ret})"
     else:
         yield "  ⚠ No output file to rename"
 

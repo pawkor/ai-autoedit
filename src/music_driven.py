@@ -431,7 +431,7 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
     resolution: e.g. "3840:2160" — scale all clips to this; empty = preserve source.
     """
     enc_v = (
-        ["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "22", "-preset", "p4",
+        ["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "18", "-preset", "p4",
          "-profile:v", "high", "-pix_fmt", "yuv420p"]
         if nvenc else
         ["-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p"]
@@ -547,7 +547,27 @@ def assemble(
     import configparser as _cp_mod
     _cp = _cp_mod.ConfigParser()
     _cp.read([str(Path(__file__).parent.parent / "config.ini"), str(work_dir / "config.ini")])
-    _resolution  = _cp.get("video",        "resolution",  fallback="3840:2160")
+    # Auto-detect resolution from first clip in autocut/ — avoids unnecessary upscaling
+    # when source footage is 1080p. Config override still works when set explicitly.
+    _resolution_cfg = _cp.get("video", "resolution", fallback="")
+    if _resolution_cfg:
+        _resolution = _resolution_cfg
+    else:
+        _autocut_dir_probe = work_dir / "_autoframe" / "autocut"
+        _resolution = "1920:1080"  # safe default
+        _probe_clip = next(iter(sorted(_autocut_dir_probe.glob("*.mp4"))), None) if _autocut_dir_probe.exists() else None
+        if _probe_clip:
+            try:
+                import subprocess as _sp2
+                _pr = _sp2.run([ffprobe, "-v", "quiet", "-show_entries", "stream=width,height",
+                                "-of", "csv=p=0", str(_probe_clip)],
+                               capture_output=True, text=True, timeout=5)
+                _dims = [l for l in _pr.stdout.strip().splitlines() if l.strip()]
+                if _dims:
+                    _w, _h = _dims[0].split(",")[:2]
+                    _resolution = f"{_w.strip()}:{_h.strip()}"
+            except Exception:
+                pass
     _framerate   = _cp.get("video",        "framerate",   fallback="60")
     _cam_pattern = _cp.get("music_driven", "cam_pattern", fallback="")
     # Camera order from config: cam_a = 'a', cam_b = 'b' in pattern.
