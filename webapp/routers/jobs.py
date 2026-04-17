@@ -1439,34 +1439,40 @@ async def job_frames(job_id: str):
             pass
 
     file_starts: dict[str, float] = {}
+    _cm = cam_map if cam_sources_csv.exists() else {}
+    _cams_param = job.params.get("cameras") or []
+    if isinstance(_cams_param, str):
+        _cams_param = [c.strip() for c in _cams_param.split(",") if c.strip()]
+    _wd = job.work_dir()
+
+    _epoch_cache: dict[str, Optional[float]] = {}
+
+    def _file_start_epoch(stem: str) -> Optional[float]:
+        if stem in _epoch_cache:
+            return _epoch_cache[stem]
+        cam = _cm.get(stem)
+        dirs = [_wd / cam] if cam else ([_wd / c for c in _cams_param] if _cams_param else [_wd])
+        for d in dirs:
+            for ext in (".mp4", ".MP4", ".mov", ".MOV"):
+                p = d / (stem + ext)
+                if p.exists():
+                    try:
+                        r = subprocess.run(
+                            ["ffprobe", "-v", "quiet", "-print_format", "json",
+                             "-show_format", str(p)],
+                            capture_output=True, text=True, timeout=10,
+                        )
+                        ct = json.loads(r.stdout)["format"].get("tags", {}).get("creation_time", "")
+                        if ct:
+                            dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                            _epoch_cache[stem] = dt.timestamp()
+                            return _epoch_cache[stem]
+                    except Exception:
+                        pass
+        _epoch_cache[stem] = None
+        return None
+
     if csv_dir.exists():
-        _cm = cam_map if cam_sources_csv.exists() else {}
-        _cams_param = job.params.get("cameras") or []
-        if isinstance(_cams_param, str):
-            _cams_param = [c.strip() for c in _cams_param.split(",") if c.strip()]
-        _wd = job.work_dir()
-
-        def _file_start_epoch(stem: str) -> Optional[float]:
-            cam = _cm.get(stem)
-            dirs = [_wd / cam] if cam else ([_wd / c for c in _cams_param] if _cams_param else [_wd])
-            for d in dirs:
-                for ext in (".mp4", ".MP4", ".mov", ".MOV"):
-                    p = d / (stem + ext)
-                    if p.exists():
-                        try:
-                            r = subprocess.run(
-                                ["ffprobe", "-v", "quiet", "-print_format", "json",
-                                 "-show_format", str(p)],
-                                capture_output=True, text=True, timeout=10,
-                            )
-                            ct = json.loads(r.stdout)["format"].get("tags", {}).get("creation_time", "")
-                            if ct:
-                                dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
-                                return dt.timestamp()
-                        except Exception:
-                            pass
-            return None
-
         for _csv in csv_dir.glob("*-Scenes.csv"):
             _stem = _csv.stem[:-len("-Scenes")]
             _fstart = _file_start_epoch(_stem)
@@ -1481,6 +1487,20 @@ async def job_frames(job_id: str):
                     file_starts[_key] = round(_fstart + _secs, 1)
             except Exception:
                 pass
+
+    # CLIP-first clips: populate file_start from offset_sec column
+    if "offset_sec" in df.columns:
+        for _, _row in df.iterrows():
+            _scene = str(_row["scene"])
+            if "-clip-" not in _scene or _scene in file_starts:
+                continue
+            _offset = _row.get("offset_sec")
+            if _offset is None or (isinstance(_offset, float) and pd.isna(_offset)):
+                continue
+            _src_stem = re.sub(r"-clip-\d+$", "", _scene)
+            _epoch = _file_start_epoch(_src_stem)
+            if _epoch is not None:
+                file_starts[_scene] = round(_epoch + float(_offset), 1)
 
     scored_scenes = set(df["scene"].tolist())
 
