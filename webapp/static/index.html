@@ -97,6 +97,7 @@
     <div id="center-tabs">
       <div class="tab" data-i18n="tab.gallery" onclick="switchTab('gallery')">Select scenes</div>
       <div class="tab" data-i18n="tab.music" onclick="switchTab('music')">Music</div>
+      <div class="tab" data-i18n="tab.preview" onclick="switchTab('preview')">Preview</div>
       <div class="tab" data-i18n="tab.results" onclick="switchTab('results')">Results</div>
       <div class="tab" data-i18n="tab.log" onclick="switchTab('log')">Log</div>
       <div id="log-filter-widget" style="display:none;position:relative;margin-left:4px">
@@ -171,6 +172,11 @@
               </div>
               <span id="sd-progress-pct" style="font-size:11px;color:var(--accent);font-weight:600;min-width:3ch;text-align:right">0%</span>
             </div>
+            <div class="tile-sizer" title="Tile size">
+              <span>▪</span>
+              <input type="range" id="tile-size-gallery" min="80" max="320" value="160" oninput="_setTileSize(this.value)">
+              <span>◼</span>
+            </div>
           </div>
         </div>
         <div id="frames-scroll">
@@ -240,6 +246,23 @@
             <span class="mh-copyright">Copyright</span>
           </div>
           <div id="music-list"></div>
+        </div>
+      </div>
+
+      <!-- Preview tab -->
+      <div id="preview-panel">
+        <div id="preview-header" style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--bg)">
+          <button class="btn-primary" id="btn-preview-run" data-i18n="btn.preview_run" onclick="runPreviewSequence()">▶ Preview render order</button>
+          <span id="preview-status" data-i18n="misc.preview_hint" style="font-size:12px;color:var(--muted)">Run to see planned scene order before rendering.</span>
+          <span id="preview-ban-count" style="font-size:12px;color:var(--red);display:none"></span>
+          <div class="tile-sizer" title="Tile size">
+            <span>▪</span>
+            <input type="range" id="tile-size-preview" min="80" max="320" value="160" oninput="_setTileSize(this.value)">
+            <span>◼</span>
+          </div>
+        </div>
+        <div id="preview-scroll" style="flex:1;overflow-y:auto;padding:14px">
+          <div id="preview-grid"></div>
         </div>
       </div>
 
@@ -606,21 +629,35 @@
       <button class="icon-btn" onclick="closeSettings()">✕</button>
     </div>
     <div class="modal-body">
-      <div class="ff">
-        <label data-tip="How many pipeline jobs can run simultaneously.&#10;Requires server restart to take effect." data-i18n="lbl.max_concurrent">Max concurrent jobs</label>
-        <input type="number" id="s-max-jobs" value="1" min="1" max="8">
+      <div style="display:flex;gap:12px">
+        <div class="ff" style="flex:1">
+          <label data-tip="How many pipeline jobs can run simultaneously.&#10;Requires server restart to take effect." data-i18n="lbl.max_concurrent">Max concurrent jobs</label>
+          <input type="number" id="s-max-jobs" value="1" min="1" max="8" onchange="_saveSettingsData()">
+        </div>
+        <div class="ff" style="flex:1">
+          <label data-tip="Parallel scenedetect processes.&#10;Set to number of CPU cores for best speed." data-i18n="lbl.max_detect_workers">Max detection workers</label>
+          <input type="number" id="s-max-detect" value="4" min="1" max="32" onchange="_saveSettingsData()">
+        </div>
       </div>
-      <div class="ff">
-        <label data-tip="Parallel scenedetect processes.&#10;Set to number of CPU cores for best speed." data-i18n="lbl.max_detect_workers">Max detection workers</label>
-        <input type="number" id="s-max-detect" value="4" min="1" max="32">
+      <div style="display:flex;gap:12px">
+        <div class="ff" style="flex:1">
+          <label data-tip="CLIP scoring: frames processed per GPU batch.&#10;Higher = faster but uses more VRAM.&#10;Default: 64.">CLIP batch size</label>
+          <input type="number" id="s-clip-batch" value="64" min="1" max="512" onchange="_saveSettingsData()">
+        </div>
+        <div class="ff" style="flex:1">
+          <label data-tip="CLIP scoring: CPU threads for loading frames.&#10;More threads = faster data feeding to GPU.&#10;Default: 4.">CLIP data workers</label>
+          <input type="number" id="s-clip-workers" value="4" min="1" max="32" onchange="_saveSettingsData()">
+        </div>
       </div>
-      <div class="ff">
-        <label data-tip="CLIP scoring: frames processed per GPU batch.&#10;Higher = faster but uses more VRAM.&#10;Default: 64.">CLIP batch size</label>
-        <input type="number" id="s-clip-batch" value="64" min="1" max="512">
-      </div>
-      <div class="ff">
-        <label data-tip="CLIP scoring: CPU threads for loading frames.&#10;More threads = faster data feeding to GPU.&#10;Default: 4.">CLIP data workers</label>
-        <input type="number" id="s-clip-workers" value="4" min="1" max="32">
+      <div style="display:flex;gap:12px">
+        <div class="ff" style="flex:1">
+          <label data-i18n="lbl.sound_cam" data-tip="Volume of original camera audio in the final mix.&#10;0 = silent, 100 = full.&#10;Saved to config.ini [music] original_volume.">Sound: Cam %</label>
+          <input type="number" id="s-orig-vol" value="25" min="0" max="100" onchange="_saveSettingsData()">
+        </div>
+        <div class="ff" style="flex:1">
+          <label data-i18n="lbl.sound_music" data-tip="Volume of the music track in the final mix.&#10;0 = silent, 100 = full.&#10;Saved to config.ini [music] music_volume.">Sound: Music %</label>
+          <input type="number" id="s-music-vol" value="70" min="0" max="100" onchange="_saveSettingsData()">
+        </div>
       </div>
       <div id="settings-note" data-i18n="misc.settings_note">Changes to max concurrent jobs require server restart.</div>
       <hr style="border-color:var(--border);margin:12px 0">
@@ -838,6 +875,7 @@
 <script src="/js/gallery/music.js" defer></script>
 <script src="/js/gallery/jobs.js" defer></script>
 <script src="/js/gallery/results.js" defer></script>
+<script src="/js/gallery/preview.js" defer></script>
 <!-- Services module -->
 <script src="/js/services/s3.js" defer></script>
 <script src="/js/services/ytdl.js" defer></script>

@@ -207,6 +207,21 @@ function toggleTheme() {
   applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
+// ── Tile size slider ───────────────────────────────────────────────────────────
+function _setTileSize(px) {
+  px = Math.max(80, Math.min(320, parseInt(px) || 160));
+  document.documentElement.style.setProperty('--tile-min', px + 'px');
+  document.querySelectorAll('.tile-sizer input[type=range]').forEach(s => s.value = px);
+  localStorage.setItem('tileSize', px);
+}
+(function _initTileSize() {
+  const saved = parseInt(localStorage.getItem('tileSize')) || 160;
+  document.documentElement.style.setProperty('--tile-min', saved + 'px');
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tile-sizer input[type=range]').forEach(s => s.value = saved);
+  });
+})();
+
 async function refreshJobList() {
   if (_refreshing) return;
   _refreshing = true;
@@ -292,6 +307,7 @@ function switchTab(name) {
   document.getElementById('btn-clear-log').style.display      = name==='log'      ? ''     : 'none';
   document.getElementById('gallery-panel').classList.toggle('active', name==='gallery');
   document.getElementById('music-panel').classList.toggle('active', name==='music');
+  document.getElementById('preview-panel').classList.toggle('active', name==='preview');
   document.getElementById('results-panel').classList.toggle('active', name==='results');
   if (name==='gallery' && currentJobId) {
     if (_galleryThreshold !== null)
@@ -529,16 +545,19 @@ function _confirmCancel() { document.getElementById('confirm-modal').classList.r
 let _fileBrowserPath = '';
 
 function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
-async function saveSettings() {
-  const data = {
-    max_concurrent_jobs:  parseInt(document.getElementById('s-max-jobs').value),
-    max_detect_workers:   parseInt(document.getElementById('s-max-detect').value),
-    clip_batch_size:      parseInt(document.getElementById('s-clip-batch').value),
-    clip_workers:         parseInt(document.getElementById('s-clip-workers').value),
+function _readSettingsData() {
+  const iv = id => document.getElementById(id)?.value;
+  return {
+    max_concurrent_jobs:  parseInt(iv('s-max-jobs'))     || 1,
+    max_detect_workers:   parseInt(iv('s-max-detect'))   || 4,
+    clip_batch_size:      parseInt(iv('s-clip-batch'))   || 64,
+    clip_workers:         parseInt(iv('s-clip-workers')) || 4,
+    orig_vol_pct:         parseInt(iv('s-orig-vol'))     || 25,
+    music_vol_pct:        parseInt(iv('s-music-vol'))    || 70,
   };
-  await api.put('/api/settings', data);
-  closeSettings();
 }
+async function _saveSettingsData() { await api.put('/api/settings', _readSettingsData()); }
+async function saveSettings() { await _saveSettingsData(); closeSettings(); }
 
 // ── YouTube ───────────────────────────────────────────────────────────────────
 async function ytCheckStatus() {

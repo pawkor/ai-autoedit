@@ -402,6 +402,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
             "clip_ss":     round(ss, 3),
             "clip_score":  round(best["score"], 4),
             "motion_peak": round(best["motion_peak"], 3),
+            "camera":      best.get("camera", "unknown"),
         })
 
     covered = sum(e["duration"] for e in edit)
@@ -462,7 +463,8 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                 "-ss", str(entry["clip_ss"]),
                 "-t",  str(dur),
                 "-i",  entry["clip_path"],
-                *enc_v, *vf_args, "-an",
+                *enc_v, *vf_args,
+                "-an",
                 str(out)
             ]
             r = subprocess.run(cmd, capture_output=True)
@@ -516,15 +518,15 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         )
         video_dur = float(r.stdout.strip()) if r.stdout.strip() else sum(e["duration"] for e in edit)
 
-        # Overlay music with fade-out
+        # Overlay music with fade-out, mixed with original clip audio
         fade_st = max(0.0, video_dur - 3.0)
         cmd = [
             ffmpeg, "-y",
             "-i", str(vid),
             "-ss", str(music_ss), "-t", str(video_dur + 1.0), "-i", str(music_path),
             "-filter_complex",
-            f"[1:a]afade=t=out:st={fade_st:.2f}:d=3.0,volume=0.85[music]",
-            "-map", "0:v", "-map", "[music]",
+            f"[1:a]afade=t=out:st={fade_st:.2f}:d=3.0[aout]",
+            "-map", "0:v", "-map", "[aout]",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
             "-shortest", str(output)
         ]
@@ -543,10 +545,15 @@ def assemble(
     ffmpeg:         str            = "ffmpeg",
     ffprobe:        str            = "ffprobe",
     nvenc:          bool           = True,
+    dry_run:        bool           = False,
 ) -> Path:
     import configparser as _cp_mod
     _cp = _cp_mod.ConfigParser()
-    _cp.read([str(Path(__file__).parent.parent / "config.ini"), str(work_dir / "config.ini")])
+    _cp.read([
+        str(Path(__file__).parent.parent / "config.ini"),
+        str(work_dir / "config.ini"),
+        str(Path(__file__).parent.parent / "webapp" / "config.ini"),
+    ])
     # Auto-detect resolution from first clip in autocut/ — avoids unnecessary upscaling
     # when source footage is 1080p. Config override still works when set explicitly.
     _resolution_cfg = _cp.get("video", "resolution", fallback="")
@@ -893,16 +900,48 @@ def assemble(
         if _pat_added:
             print(f"  Pattern balance: +{_pat_added} fallback clips to cover camera pattern")
 
-    # Motion analysis — use full pool (threshold already filtered quality)
-    clips = analyse_clips(autocut_dir, scene_scores, 1.0, ffprobe,
-                          stem_to_camera=stem_to_camera or None,
-                          stem_to_time=stem_to_time or None)
+    # Motion analysis — skip entirely for dry-run, use duration_cache.json instead
+    if dry_run:
+        import json as _jd
+        _dur_cache: dict[str, float] = {}
+        _dur_cache_path = auto_dir / "duration_cache.json"
+        if _dur_cache_path.exists():
+            try:
+                _raw = _jd.loads(_dur_cache_path.read_text())
+                _dur_cache = {k.removesuffix(".mp4"): float(v) for k, v in _raw.items()}
+            except Exception:
+                pass
+        clips = []
+        for _scene, _score in sorted(scene_scores.items(), key=lambda x: x[1], reverse=True):
+            _clip_path = autocut_dir / f"{_scene}.mp4"
+            if not _clip_path.exists():
+                continue
+            _dur = _dur_cache.get(_scene, 0.0)
+            if _dur < 0.5:
+                continue
+            _src = _clip_source(_scene)
+            clips.append({
+                "scene":          _scene,
+                "score":          _score,
+                "path":           _clip_path,
+                "duration":       _dur,
+                "motion_peak":    _dur * 0.3,
+                "motion_level":   0.0,
+                "motion_norm":    0.0,
+                "camera":         (stem_to_camera or {}).get(_src, "unknown"),
+                "clip_time_norm": (stem_to_time or {}).get(_src),
+            })
+        print(f"  Dry-run: {len(clips)} clips from duration cache (motion skipped)")
+    else:
+        clips = analyse_clips(autocut_dir, scene_scores, 1.0, ffprobe,
+                              stem_to_camera=stem_to_camera or None,
+                              stem_to_time=stem_to_time or None)
     if not clips:
         raise RuntimeError("No clips available for motion analysis")
 
     # Filter out static clips: configurable via [music_driven] min_motion_score (0.0 = off)
     _min_motion = float(_cp.get("music_driven", "min_motion_score", fallback="0.1"))
-    if _min_motion > 0 and len(clips) > len(schedule):
+    if not dry_run and _min_motion > 0 and len(clips) > len(schedule):
         _before = len(clips)
         _filtered = [c for c in clips if c.get("motion_norm", 0) >= _min_motion]
         # Only apply filter if enough clips remain to fill schedule
@@ -925,7 +964,34 @@ def assemble(
     if not edit:
         raise RuntimeError("Clip matching produced no edit")
 
-    # 5. Render
+    # 5a. Dry-run: write sequence JSON and exit without encoding
+    if dry_run:
+        import json as _json
+        seq = []
+        for e in edit:
+            scene = e["scene"]
+            frame_path = None
+            for suffix in ("_f0.jpg", "_f1.jpg", ".jpg"):
+                fp = auto_dir / "frames" / (scene + suffix)
+                if fp.exists():
+                    frame_path = str(fp)
+                    break
+            seq.append({
+                "scene":      scene,
+                "duration":   round(e["duration"], 2),
+                "energy":     round(e["energy"], 3),
+                "clip_score": e.get("clip_score", 0),
+                "clip_ss":    round(e.get("clip_ss", 0), 3),
+                "clip_path":  e.get("clip_path", ""),
+                "music_start": round(e["music_start"], 2),
+                "frame_path": frame_path,
+            })
+        out_json = auto_dir / "preview_sequence.json"
+        out_json.write_text(_json.dumps({"sequence": seq, "music": str(music_path)}, indent=2))
+        print(f"Dry-run complete → {len(seq)} slots → {out_json}")
+        return out_json
+
+    # 5b. Render
     if output is None:
         output = auto_dir / "highlight_music_driven.mp4"
 
@@ -954,6 +1020,8 @@ if __name__ == "__main__":
     ap.add_argument("--output",      default="")
     ap.add_argument("--top-percent", type=float, default=0.40,
                     help="Fraction of top CLIP clips to motion-analyse (default 0.4)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Run scene selection only, write preview_sequence.json, skip encoding")
     args = ap.parse_args()
 
     # Read ffmpeg/ffprobe from global config.ini
@@ -993,5 +1061,6 @@ if __name__ == "__main__":
         ffmpeg=_ffmpeg,
         ffprobe=_ffprobe,
         nvenc=_nvenc,
+        dry_run=args.dry_run,
     )
     print(f"\nDone → {out}")

@@ -223,7 +223,7 @@ function _showFilePreview(path, e, delay = 400) {
 function _moveFileTip(e) {
   const tip = document.getElementById('file-tip');
   if (tip.style.display === 'none') return;
-  const m = 14, w = 964, h = 544;
+  const m = 14, w = 484, h = 274;
   let x = e.clientX + m, y = e.clientY + m;
   if (x + w > window.innerWidth)  x = e.clientX - w - m;
   if (y + h > window.innerHeight) y = e.clientY - h - m;
@@ -235,4 +235,44 @@ function _hideFilePreview() {
   tip.style.display = 'none';
   const v = document.getElementById('file-tip-video');
   v.pause(); v.removeAttribute('src'); v.load();
+}
+
+// Inline video preview — plays inside the gallery card itself (replaces img on hover)
+// Only one preview active at a time to prevent mass-loading all clips in background.
+let _activePreviewCard = null;
+
+function _showInlinePreview(card, clipPath, delay = 400) {
+  clearTimeout(card._pvTimer);
+  card._pvTimer = setTimeout(() => {
+    if (card.querySelector('video.fc-preview')) return;
+    // Abort any other active preview first
+    if (_activePreviewCard && _activePreviewCard !== card) _hideInlinePreview(_activePreviewCard);
+    _activePreviewCard = card;
+    const img = card.querySelector('img');
+    const src = clipPath.startsWith('/data/') ? clipPath : `/api/file?path=${encodeURIComponent(clipPath)}`;
+    const v = document.createElement('video');
+    v.className = 'fc-preview';
+    v.src = src;
+    v.muted = false;
+    v.loop = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.style.cssText = 'width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--bg3)';
+    if (img) { img.style.display = 'none'; img.insertAdjacentElement('afterend', v); }
+    else card.prepend(v);
+    v.load(); // required by Firefox to start fetch
+    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+  }, delay);
+}
+function _hideInlinePreview(card) {
+  clearTimeout(card._pvTimer);
+  const v = card.querySelector('video.fc-preview');
+  if (!v) return;
+  v.pause();
+  v.src = '';  // abort buffering
+  v.load();
+  v.remove();
+  if (_activePreviewCard === card) _activePreviewCard = null;
+  const img = card.querySelector('img');
+  if (img) img.style.display = '';
 }

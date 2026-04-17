@@ -744,7 +744,7 @@ async function removeJob(jobId) {
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const TAB_NAMES = ['gallery', 'music', 'results', 'log'];
+const TAB_NAMES = ['gallery', 'music', 'preview', 'results', 'log'];
 
 function stopVideo() {
   const v = document.getElementById('video-player');

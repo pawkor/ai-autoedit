@@ -295,9 +295,8 @@ function renderGallery() {
     // Hover → video clip preview
     if (f.frame_url) {
       const clipPath = f.frame_url.replace('_autoframe/frames/', '_autoframe/autocut/').replace(/_f\d+\.jpg$/, '.mp4').replace(/\.jpg$/, '.mp4');
-      card.addEventListener('mouseenter', e2 => _showFilePreview(clipPath, e2, 500));
-      card.addEventListener('mouseleave', _hideFilePreview);
-      card.addEventListener('mousemove',  _moveFileTip);
+      card.addEventListener('mouseenter', () => _showInlinePreview(card, clipPath, 500));
+      card.addEventListener('mouseleave', () => _hideInlinePreview(card));
     }
     frag.appendChild(card);
   }
@@ -707,6 +706,11 @@ function autoTargetThreshold(targetMin) {
     _overridesChangedSinceRender = false;
 
     _applyThreshold(thr);
+    // Cancel the estimate timer that _applyThreshold scheduled — the search
+    // already computed the correct client-side duration; letting the server
+    // respond 900ms later would overwrite bestDur with a potentially different
+    // Python-side multicam estimate and revert the display.
+    clearTimeout(_estimateTimer);
     if (currentJobId) {
       api.patch(`/api/jobs/${currentJobId}/params`, { threshold: thr });
       if (wd) api.put('/api/job-config', { work_dir: wd, threshold: thr });

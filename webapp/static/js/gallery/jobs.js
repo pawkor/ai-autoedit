@@ -48,6 +48,16 @@ async function populateJobSettings(params) {
   if (params.music_dir) document.getElementById('music-dir-input').value = params.music_dir;
   musicSelected = new Set();
   _musicManuallyCleared = false;
+  // Restore saved track selection from persisted params
+  if (Array.isArray(params.music_files) && params.music_files.length) {
+    params.music_files.forEach(f => musicSelected.add(f));
+    if (params.music_files.length === 1) {
+      pinnedTrack = params.music_files[0];
+      const _pname = pinnedTrack.split('/').pop().replace(/\.[^.]+$/, '');
+      const _sumEl = document.getElementById('sum-track');
+      if (_sumEl) _sumEl.textContent = `✓ ${_pname}`;
+    }
+  }
 
   let th = params.threshold, ms = params.max_scene, pf = params.per_file;
   if (cfg) {

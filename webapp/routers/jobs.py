@@ -971,6 +971,76 @@ async def render_short(job_id: str, data: dict = Body(default={})):
     return {"id": job_id, "phase": "shorts" if not main_active else job.phase, "count": count}
 
 
+@router.post("/api/jobs/{job_id}/preview-sequence")
+async def preview_sequence(job_id: str):
+    """Run music_driven --dry-run → return preview_sequence.json content."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status == "running":
+        raise HTTPException(409, "Job is running — wait for it to finish")
+
+    auto_dir = job.auto_dir()
+    seq_path = auto_dir / "preview_sequence.json"
+
+    # Resolve music file same way as render-music-driven
+    music_path_str = ""
+    selected = job.params.get("selected_track") or job.params.get("music_file") or ""
+    music_files = job.params.get("music_files") or []
+    if not selected and isinstance(music_files, list) and len(music_files) == 1:
+        selected = music_files[0]
+    if selected:
+        music_path_str = selected
+    else:
+        music_dir = job.params.get("music_dir") or ""
+        if music_dir:
+            music_path_str = music_dir
+
+    if not music_path_str:
+        raise HTTPException(400, "No music track selected")
+
+    save_job_config(Path(job.params["work_dir"]), job.params)
+
+    cmd = [sys.executable, str(SCRIPT_DIR / "music_driven.py"),
+           job.params["work_dir"], "--dry-run"]
+    if music_path_str:
+        if Path(music_path_str).is_file():
+            cmd += ["--music", music_path_str]
+        else:
+            cmd += ["--music-dir", music_path_str]
+    top_pct = float(job.params.get("md_top_percent", 0.40))
+    cmd += ["--top-percent", str(top_pct)]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(SCRIPT_DIR),
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        if proc.returncode != 0:
+            raise HTTPException(500, f"Dry-run failed:\n{stdout.decode(errors='replace')[-2000:]}")
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Dry-run timed out (>60s)")
+
+    if not seq_path.exists():
+        raise HTTPException(500, "preview_sequence.json not written")
+
+    data = json.loads(seq_path.read_text())
+
+    # Attach frame URLs (relative paths → web paths)
+    work_dir_str = str(job.params.get("work_dir", ""))
+    for slot in data.get("sequence", []):
+        fp = slot.get("frame_path")
+        if fp:
+            slot["frame_url"] = "/" + Path(fp).relative_to("/").as_posix()
+        else:
+            slot["frame_url"] = None
+
+    return data
+
+
 @router.post("/api/jobs/{job_id}/render-music-driven")
 async def render_music_driven(job_id: str, data: dict = Body(default={})):
     job = jobs.get(job_id)
@@ -1067,12 +1137,13 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                 await job.broadcast({"type": "log", "line": f"ERROR: {exc}"})
                 ok = False
 
-            # Record used track in global index
+            # Record used track in global index + write .meta.json sidecar
             if ok and music_path_str and Path(music_path_str).is_file():
                 try:
                     from webapp.routers.music import record_used_track
+                    from datetime import timezone as _tz2
                     _work = Path(job.params.get("work_dir", ""))
-                    _render_name = job.log[-5] if job.log else ""
+                    _render_name = ""
                     # Find the output filename from log (→ YYYY-*.mp4 line)
                     for _ll in reversed(job.log[-20:]):
                         if _ll.strip().startswith("→ ") and ".mp4" in _ll:
@@ -1080,6 +1151,19 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                             break
                     _yt = job.params.get("yt_url", "")
                     record_used_track(music_path_str, str(_work), _render_name, _yt)
+                    # Write .meta.json so Results tab shows music name
+                    if _render_name:
+                        _out_p = _work / _render_name
+                        if not _out_p.exists():
+                            _out_p = _work / Path(_render_name).name
+                        if _out_p.exists():
+                            _meta = {
+                                "music":        music_path_str,
+                                "generated_at": datetime.now(_tz2.utc).isoformat(),
+                            }
+                            _out_p.with_suffix(".meta.json").write_text(
+                                json.dumps(_meta, ensure_ascii=False)
+                            )
                 except Exception:
                     pass
 

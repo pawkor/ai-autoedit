@@ -247,9 +247,11 @@ async def yt_auth(origin: str = Query(...)):
 
 @router.get("/api/youtube/callback")
 async def yt_callback(code: str = Query(None), error: str = Query(None)):
+    import html as _html
     if error:
-        import html as _html
-        return HTMLResponse(f"<h2>YouTube auth error: {_html.escape(error)}</h2>")
+        return HTMLResponse(f"<h2>YouTube auth error: {_html.escape(error)}</h2><p>Close this tab and try again.</p><script>setTimeout(()=>window.close(),4000)</script>")
+    if not code:
+        return HTMLResponse("<h2>No authorization code received.</h2><p>Close this tab and try again.</p><script>setTimeout(()=>window.close(),4000)</script>")
     flow_file = WEBAPP_DIR / "youtube_flow.json"
     if not flow_file.exists():
         return HTMLResponse("<h2>OAuth flow not started — please try again.</h2>")

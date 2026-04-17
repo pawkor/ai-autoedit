@@ -61,8 +61,20 @@ async def set_data_root(data: dict):
     return {"ok": True}
 
 
+def _wcfg_music(key: str, default: str) -> str:
+    """Read music volume from webapp config (overrides main config.ini)."""
+    val = wcfg(key, "")
+    if val:
+        return val
+    cp = configparser.ConfigParser()
+    cp.read([str(APP_DIR / "config.ini")])
+    return cp.get("music", key, fallback=default)
+
+
 @router.get("/api/settings")
 async def get_settings():
+    orig_pct  = round(float(_wcfg_music("original_volume", "0.25")) * 100)
+    music_pct = round(float(_wcfg_music("music_volume",    "0.70")) * 100)
     return {
         "max_concurrent_jobs":  int(wcfg("max_concurrent_jobs",  "1")),
         "max_detect_workers":   int(wcfg("max_detect_workers",   str(os.cpu_count() or 4))),
@@ -72,11 +84,18 @@ async def get_settings():
         "theme":                wcfg("theme", ""),
         "lang":                 wcfg("lang", ""),
         "sort_newest":          wcfg("sort_newest", ""),
+        "orig_vol_pct":         orig_pct,
+        "music_vol_pct":        music_pct,
     }
 
 
 @router.put("/api/settings")
 async def put_settings(data: dict):
+    # Extract music volume fields before passing to save_wcfg (which writes webapp config)
+    if "orig_vol_pct" in data:
+        data["original_volume"] = str(round(int(data.pop("orig_vol_pct")) / 100, 4))
+    if "music_vol_pct" in data:
+        data["music_volume"] = str(round(int(data.pop("music_vol_pct")) / 100, 4))
     save_wcfg(data)
     if "max_concurrent_jobs" in data:
         new_val = max(1, int(data["max_concurrent_jobs"]))

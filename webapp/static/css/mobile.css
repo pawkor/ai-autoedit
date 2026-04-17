@@ -52,19 +52,41 @@
   #jh-path { font-size: 12px; max-width: calc(100vw - 120px); }
   #queue-box { width: 95vw !important; }
 
-  /* ── Steps wrap tighter ── */
-  #steps { gap: 3px; padding: 6px 10px; }
-  .step { font-size: 9px; padding: 2px 6px; }
+  /* ── Steps: horizontal scroll, no wrap ── */
+  #steps {
+    gap: 3px;
+    padding: 5px 10px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  #steps::-webkit-scrollbar { display: none; }
+  .step { font-size: 9px; padding: 2px 6px; flex-shrink: 0; }
 
   /* ── App height: use dvh so browser chrome (address bar) is excluded ── */
   #app { height: 100dvh; }
 
-  /* ── Tabs ── */
-  #center-tabs { flex-wrap: wrap; padding: 4px 8px; gap: 3px; }
-  .tab { flex: 1 1 auto; white-space: nowrap; text-align: center; }
+  /* ── Tabs: scrollable row ── */
+  #center-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 4px 8px 0;
+    gap: 2px;
+    scrollbar-width: none;
+  }
+  #center-tabs::-webkit-scrollbar { display: none; }
+  .tab { flex-shrink: 0; white-space: nowrap; text-align: center; font-size: 12px; padding: 4px 10px; }
 
-  /* ── Gallery grid: fluid columns, min 150px ── */
-  #frames-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  /* ── Gallery grid: 2 columns on narrow screens ── */
+  #frames-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+
+  /* ── Gallery header: compact ── */
+  #gallery-header { padding: 6px 10px; gap: 4px; }
+  #gallery-status { flex-wrap: wrap; gap: 4px; }
+  /* Beats/shot: hide labels, keep ▼ vals ▲ */
+  #gallery-status > span[style*="white-space:nowrap"] { display: none; }
+  #beats-durs { font-size: 10px; }
 
   /* ── All fixed-width modals → responsive ── */
   #dir-box,
@@ -78,9 +100,19 @@
     height: 90vh !important;
   }
 
-  /* ── Footer: stack on mobile ── */
-  #job-footer { flex-wrap: wrap; gap: 8px; padding: 8px; }
-  #footer-left { max-width: 100%; }
+  /* ── Footer: compact, single-line track name ── */
+  #job-footer { flex-wrap: wrap; gap: 6px; padding: 6px 8px; }
+  #footer-left { max-width: 100%; min-width: 0; flex: 1 1 100%; }
+  #footer-track-row { gap: 4px; }
+  #sum-track {
+    overflow-wrap: unset !important;
+    word-break: unset !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: calc(100vw - 80px);
+  }
+
   /* ── Inspector: hidden by default, slides in from right ── */
   #inspector {
     position: fixed;
@@ -108,18 +140,28 @@
 
   /* ── Results: full width cards, no inline player (tap = fullscreen) ── */
   #video-wrap { display: none !important; }
-  .rf-files { flex-direction: column; }
+  #results-cols { grid-template-columns: 1fr; }
   .rf { width: 100%; }
   .rf::after { content: '▶'; position: absolute; top: 8px; right: 32px; font-size: 16px; color: rgba(255,255,255,.45); pointer-events: none; }
 
-  /* ── Music tab: hide BPM/energy columns ── */
-  .mt-bpm, .mt-energy,
+  /* ── Music tab: hide BPM/energy/genre columns ── */
+  .mt-bpm, .mt-energy, .mt-genre,
   #music-list-header .mh-bpm,
-  #music-list-header .mh-energy { display: none; }
+  #music-list-header .mh-energy,
+  #music-list-header .mh-genre { display: none; }
 
-}
+  /* Re-define grid without hidden columns: cb play del acr title dur copyright */
+  #music-list-header,
+  .mt { grid-template-columns: 13px 16px 14px 14px 1fr 36px 64px; }
 
-@media (max-width: 768px) {
+  /* Re-pin header cells to new column positions */
+  #music-list-header .mh-left-controls { grid-column: 1 / 5; }
+  #music-list-header .mh-title         { grid-column: 5; }
+  #music-list-header .mh-dur           { grid-column: 6; }
+  #music-list-header .mh-copyright     { grid-column: 7; }
+
+  /* Music rows: bigger touch target */
+  .mt { min-height: 40px; }
 
   /* ── Mobile top bar ── */
   #mobile-topbar {
@@ -168,8 +210,6 @@
     order: -1;
   }
   #btn-hamburger:hover { border-color: var(--accent); color: var(--accent); }
-
-}
 
   /* ── Touch targets: key action buttons ── */
   .btn-primary,

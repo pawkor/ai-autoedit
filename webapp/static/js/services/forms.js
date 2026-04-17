@@ -290,10 +290,13 @@ async function browseTo(path) {
 async function openSettings() {
   const s = await api.get('/api/settings');
   if (s) {
-    document.getElementById('s-max-jobs').value     = s.max_concurrent_jobs;
-    document.getElementById('s-max-detect').value   = s.max_detect_workers;
-    document.getElementById('s-clip-batch').value   = s.clip_batch_size;
-    document.getElementById('s-clip-workers').value = s.clip_workers;
+    const sv = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+    sv('s-max-jobs',     s.max_concurrent_jobs);
+    sv('s-max-detect',   s.max_detect_workers);
+    sv('s-clip-batch',   s.clip_batch_size);
+    sv('s-clip-workers', s.clip_workers);
+    sv('s-orig-vol',     s.orig_vol_pct  ?? 25);
+    sv('s-music-vol',    s.music_vol_pct ?? 70);
   }
   document.getElementById('settings-modal').classList.add('open');
   ytCheckStatus();
