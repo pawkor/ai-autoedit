@@ -385,10 +385,16 @@ async def save_yt_url(job_id: str, payload: dict):
         raise HTTPException(404)
     filename = payload.get("filename", "").strip()
     url = payload.get("url", "").strip()
-    if not filename or not url:
-        raise HTTPException(400, "filename and url required")
+    if not filename:
+        raise HTTPException(400, "filename required")
     auto_dir = job.work_dir() / "_autoframe"
-    _write_yt_url(auto_dir, filename, url)
+    if url:
+        _write_yt_url(auto_dir, filename, url)
+    else:
+        # Clear: remove key from yt_urls.json
+        urls = _read_yt_urls(auto_dir)
+        urls.pop(filename, None)
+        _yt_urls_path(auto_dir).write_text(json.dumps(urls, indent=2))
     return {"ok": True}
 
 
@@ -401,14 +407,15 @@ async def generate_yt_meta(job_id: str, data: dict):
     project_name = data.get("project_name", "").strip()
     description  = job.params.get("description", "").strip() or ""
     footer       = data.get("footer", "").strip()
+    notes        = data.get("notes", "").strip()
 
     try:
         import anthropic
         client = anthropic.Anthropic()
-        ride_info = description if description else "a motorcycle ride"
+        ride_info = notes or description or "a motorcycle ride"
         user_msg = (
             f"Project: {project_name}\n"
-            f"Ride description: {ride_info}\n\n"
+            f"Ride notes: {ride_info}\n\n"
             "Write a YouTube title and bilingual description for this motorcycle highlight reel.\n"
             "Format (follow exactly):\n"
             "<title — max 100 chars, no quotes>\n\n"
@@ -441,11 +448,14 @@ async def save_yt_meta(job_id: str, data: dict):
     work_dir = job.work_dir()
     title = data.get("title", "").strip()
     desc  = data.get("desc",  "").strip()
+    notes = data.get("notes", "").strip()
     updates: dict[str, dict[str, str]] = {}
     if title:
         updates.setdefault("youtube", {})["title"] = title
     if desc:
         updates.setdefault("youtube", {})["description"] = desc.replace("\n", "\\n")
+    if notes is not None:
+        updates.setdefault("youtube", {})["notes"] = notes
     if updates:
         update_config_ini(work_dir / "config.ini", updates)
     return {"ok": True}

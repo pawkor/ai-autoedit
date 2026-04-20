@@ -75,6 +75,7 @@ _JOB_CONFIG_MAP = {
     "negative":     ("clip_prompts", "negative"),
     "yt_title":     ("youtube", "title"),
     "yt_desc":      ("youtube", "description"),
+    "yt_notes":     ("youtube", "notes"),
     "shorts_text":         ("shorts",  "text_overlays"),
     "shorts_multicam":     ("shorts",  "multicam"),
     "shorts_ncs":          ("shorts",  "ncs_music"),
@@ -1766,9 +1767,11 @@ async def delete_result_file(job_id: str, filename: str = Query(...)):
         if resolved.parent.resolve() in (work_dir.resolve(), (work_dir / "_autoframe").resolve()):
             if resolved.exists():
                 resolved.unlink()
-                # Also remove preview if it exists
-                preview = resolved.with_name(resolved.stem + "_preview.mp4")
-                if preview.exists():
-                    preview.unlink()
+                for _sidecar in (
+                    resolved.with_name(resolved.stem + "_preview.mp4"),
+                    resolved.with_suffix(".meta.json"),
+                ):
+                    if _sidecar.exists():
+                        _sidecar.unlink()
                 return {"ok": True}
     raise HTTPException(404, f"File not found: {filename}")

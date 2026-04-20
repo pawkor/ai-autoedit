@@ -518,19 +518,17 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         )
         video_dur = float(r.stdout.strip()) if r.stdout.strip() else sum(e["duration"] for e in edit)
 
-        # Overlay music with fade-out, mixed with original clip audio
-        fade_st = max(0.0, video_dur - 3.0)
-        cmd = [
+        # Mux silent audio into the output so apply_postprocess concat gets
+        # consistent streams (intro/outro have audio; mismatched streams break concat).
+        # Music is mixed in apply_postprocess after intro/outro are added.
+        subprocess.run([
             ffmpeg, "-y",
             "-i", str(vid),
-            "-ss", str(music_ss), "-t", str(video_dur + 1.0), "-i", str(music_path),
-            "-filter_complex",
-            f"[1:a]afade=t=out:st={fade_st:.2f}:d=3.0[aout]",
-            "-map", "0:v", "-map", "[aout]",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-shortest", str(output)
-        ]
-        subprocess.run(cmd, check=True, capture_output=True)
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            "-shortest",
+            str(output)
+        ], check=True, capture_output=True)
 
     print(f"  → {output.name}  ({video_dur:.1f}s  {len(trimmed)} shots)")
 
@@ -716,20 +714,22 @@ def assemble(
     if not _all_scores:
         raise ValueError("scene_scores.csv is empty")
 
-    # Apply gallery threshold: preferred pool = selected scenes, fallback = rest sorted desc.
-    # Manual includes bypass threshold. Fallback used only when preferred pool too small.
+    # Music-driven ignores gallery threshold — take top clips by score.
+    # Threshold read for info only; manual includes are guaranteed first.
     _threshold = float(_cp.get("scene_selection", "threshold", fallback="0"))
-    _preferred = {k: v for k, v in _all_scores.items() if v >= _threshold or k in _manual_included}
-    _fallback  = sorted(
-        ((k, v) for k, v in _all_scores.items() if k not in _preferred),
-        key=lambda x: x[1], reverse=True
+    _above_thr = sum(1 for v in _all_scores.values() if v >= _threshold)
+    _all_sorted = sorted(_all_scores.items(), key=lambda x: x[1], reverse=True)
+    # Guarantee manual includes appear first in the sorted list
+    _all_sorted = (
+        [(k, v) for k, v in _all_sorted if k in _manual_included] +
+        [(k, v) for k, v in _all_sorted if k not in _manual_included]
     )
 
     # Back-cam scenes are allowed freely — sync-ban already propagates bans from
     # main-cam to back-cam for the same time window. Camera pattern in match_clips()
     # handles switching between cameras to build dynamics.
 
-    print(f"\n[music-driven] {len(_all_scores)} clips (threshold≥{_threshold:.3f}: {len(_preferred)})  "
+    print(f"\n[music-driven] {len(_all_scores)} clips (above threshold {_threshold:.3f}: {_above_thr})  "
           f"music={music_path.name}  scores={scores_csv.name}  res={_resolution}@{_framerate}fps")
 
     # 1. Analyse music
@@ -755,15 +755,13 @@ def assemble(
     import math as _math
     _bpm = music_info.get("tempo", 120.0)
     _beat_sec = 60.0 / _bpm
-    _min_fast = float(_cp.get("music_driven", "min_clip_fast_sec", fallback="2.5"))
-    _min_mid  = float(_cp.get("music_driven", "min_clip_mid_sec",  fallback="4.0"))
-    _min_slow = float(_cp.get("music_driven", "min_clip_slow_sec", fallback="6.0"))
+    _min_fast = float(_cp.get("music_driven", "min_clip_fast_sec", fallback="1.5"))
+    _min_mid  = float(_cp.get("music_driven", "min_clip_mid_sec",  fallback="2.5"))
+    _min_slow = float(_cp.get("music_driven", "min_clip_slow_sec", fallback="4.0"))
     # Round up to nearest multiple of 4 (bar in 4/4) so cuts land on downbeats.
-    def _bar_ceil(n: int, bar: int = 4) -> int:
-        return _math.ceil(n / bar) * bar
-    _beats_fast = _bar_ceil(max(_beats_fast, _math.ceil(_min_fast / _beat_sec)))
-    _beats_mid  = _bar_ceil(max(_beats_mid,  _math.ceil(_min_mid  / _beat_sec)))
-    _beats_slow = _bar_ceil(max(_beats_slow, _math.ceil(_min_slow / _beat_sec)))
+    _beats_fast = max(_beats_fast, _math.ceil(_min_fast / _beat_sec))
+    _beats_mid  = max(_beats_mid,  _math.ceil(_min_mid  / _beat_sec))
+    _beats_slow = max(_beats_slow, _math.ceil(_min_slow / _beat_sec))
     print(f"  BPM={_bpm:.0f}  beat={_beat_sec:.2f}s  "
           f"beats: fast={_beats_fast}({_beats_fast*_beat_sec:.1f}s) "
           f"mid={_beats_mid}({_beats_mid*_beat_sec:.1f}s) "
@@ -778,9 +776,19 @@ def assemble(
     music_ss = schedule[0]["start"]
 
     # Fill tail: librosa often misses beats in fade-out/outro sections.
-    # Extend schedule with 4s slow slots up to the actual music duration.
-    avail_dur = music_info["duration"] - music_ss  # how much track we have after skip
-    tail_gap = avail_dur - schedule[-1]["end"]
+    # Reserve intro+outro card duration so clips don't consume the full track —
+    # apply_postprocess adds the cards AFTER, and music must cover them too.
+    _no_intro   = _cp.getboolean("job", "no_intro", fallback=False)
+    _card_dur   = _cp.getfloat("intro_outro", "duration", fallback=3.0) if not _no_intro else 0.0
+    _reserve    = _card_dur * 2  # intro card + outro card
+    avail_dur   = music_info["duration"] - music_ss - _reserve  # time available for clips
+    # Trim any existing slots that extend past avail_dur (last beat may overshoot)
+    schedule = [s for s in schedule if s["start"] < avail_dur]
+    if schedule and schedule[-1]["end"] > avail_dur:
+        schedule[-1] = {**schedule[-1], "end": avail_dur,
+                        "duration": avail_dur - schedule[-1]["start"]}
+
+    tail_gap    = avail_dur - schedule[-1]["end"]
     if tail_gap > 1.5:
         t = schedule[-1]["end"]
         while t < avail_dur - 1.0:
@@ -863,19 +871,13 @@ def assemble(
     else:
         stem_to_time = {}
 
-    # 3. Build final clip pool: preferred (above threshold + manual includes) first,
-    # fallback to auto scenes below threshold to fill music duration.
-    # Banned scenes never appear in either pool.
+    # 3. Build clip pool: top clips by score — no threshold cutoff for music-driven.
+    # Banned scenes already excluded from _all_sorted.
     needed = len(schedule)
-    scene_scores = dict(_preferred)
-    if len(scene_scores) < needed:
-        _take = needed - len(scene_scores)
-        _added = dict(_fallback[:_take])
-        scene_scores.update(_added)
-        print(f"  Pool: {len(_preferred)} selected + {len(_added)} fallback "
-              f"(needed {needed} slots)")
-    else:
-        print(f"  Pool: {len(scene_scores)} selected clips  ({len(_fallback)} below threshold)")
+    _pool_size = max(needed * 2, 50)
+    scene_scores = dict(_all_sorted[:_pool_size])
+    _fallback = [(k, v) for k, v in _all_sorted if k not in scene_scores]
+    print(f"  Pool: {len(scene_scores)} clips (top by score, {_above_thr} above threshold)")
 
     # Camera-pattern balance: if cam_pattern active, ensure each camera has enough
     # clips in the pool to cover its pattern share. Add fallback for deficient cameras.
@@ -953,6 +955,56 @@ def assemble(
             print(f"  Motion filter: skipped (would leave only {len(_filtered)} for "
                   f"{len(schedule)} slots — pool too small)")
 
+    # Post-motion pattern balance: re-check per-camera count after motion filter.
+    # Adds lower-scored clips for deficient cameras, bypassing motion filter.
+    if _resolved_pat_early and stem_to_camera and not dry_run:
+        _clips_scenes = {c["scene"] for c in clips}
+        _cam_have_post: dict[str, int] = {}
+        for _c in clips:
+            _cam = _c.get("camera", "unknown")
+            _cam_have_post[_cam] = _cam_have_post.get(_cam, 0) + 1
+        _post_added = 0
+        for _pc, _cnt in _cam_needed.items():
+            _deficit_post = _cnt - _cam_have_post.get(_pc, 0)
+            if _deficit_post <= 0:
+                continue
+            _candidates = [(k, v) for k, v in _all_sorted
+                           if stem_to_camera.get(_clip_source(k), "") == _pc
+                           and k not in _clips_scenes]
+            for _ek, _ev in _candidates:
+                if _cam_have_post.get(_pc, 0) >= _cnt:
+                    break
+                _cp_path = autocut_dir / f"{_ek}.mp4"
+                if not _cp_path.exists():
+                    continue
+                try:
+                    _dr = subprocess.run(
+                        [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
+                         "-of", "csv=p=0", str(_cp_path)],
+                        capture_output=True, text=True, timeout=5)
+                    _dur = float(_dr.stdout.strip())
+                except Exception:
+                    continue
+                if _dur < 1.0:
+                    continue
+                _src = _clip_source(_ek)
+                clips.append({
+                    "scene":          _ek,
+                    "score":          _ev,
+                    "path":           _cp_path,
+                    "duration":       _dur,
+                    "motion_peak":    _dur * 0.3,
+                    "motion_level":   0.5,
+                    "motion_norm":    0.5,
+                    "camera":         _pc,
+                    "clip_time_norm": (stem_to_time or {}).get(_src),
+                })
+                _clips_scenes.add(_ek)
+                _cam_have_post[_pc] = _cam_have_post.get(_pc, 0) + 1
+                _post_added += 1
+        if _post_added:
+            print(f"  Post-motion balance: +{_post_added} clips added for camera pattern coverage")
+
     if len(clips) < len(schedule):
         print(f"  ⚠ Only {len(clips)} unique clips for {len(schedule)} slots — schedule trimmed (no reuse)")
         schedule = schedule[:len(clips)]
@@ -997,6 +1049,14 @@ def assemble(
 
     render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
            resolution=_resolution, framerate=_framerate)
+
+    # Write music info so apply_postprocess() can mix music over the final video
+    # (after intro/outro are added), ensuring the fade covers the outro too.
+    _music_vol = _cp.getfloat("music", "music_volume", fallback=0.7)
+    (auto_dir / "music_info.json").write_text(
+        _json.dumps({"music_path": str(music_path), "music_ss": music_ss, "music_vol": _music_vol})
+    )
+
     return output
 
 

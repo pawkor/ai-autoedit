@@ -141,9 +141,9 @@ async def apply_postprocess(
     params:    dict,
 ) -> AsyncIterator[str]:
     """
-    Apply intro/outro, rename to output name, generate preview.
+    Apply intro/outro, mix music (from music_info.json), rename to output name, generate preview.
     Yields log lines. Called after music_driven.py completes.
-    highlight: path to the rendered video (music already mixed in).
+    highlight: path to the rendered video (video-only, no music yet).
     """
     cp       = _load_cfg(work_dir)
     auto_dir = work_dir / _s(cp, "paths", "work_subdir", "_autoframe")
@@ -333,6 +333,44 @@ async def apply_postprocess(
     # Rename to output name (work_dir/YYYY-MM-Place-DD-vNN.mp4)
     src = final or highlight
     if src and src.exists():
+        # Mix music over the final video (including intro/outro) so the fade
+        # covers the outro rather than ending at the highlight clip boundary.
+        _music_info_path = auto_dir / "music_info.json"
+        if _music_info_path.exists():
+            try:
+                _mi       = json.loads(_music_info_path.read_text())
+                _mpath    = _mi.get("music_path", "")
+                _mss      = float(_mi.get("music_ss", 0))
+                _mvol     = float(_mi.get("music_vol", 0.7))
+                if _mpath and Path(_mpath).exists():
+                    yield ""
+                    yield "Mixing music..."
+                    _vdur      = await _probe_duration(src, ffprobe) or 0.0
+                    _outro_dur = float(intro_dur)  # outro has same duration as intro card
+                    _fst       = max(0.0, _vdur - _outro_dur - 3.0)
+                    _mout   = src.with_name(src.stem + "_withmusic.mp4")
+                    _mix_ret, _mix_err = await _run([
+                        ffmpeg, "-y",
+                        "-i", str(src),
+                        "-ss", str(_mss), "-t", str(_vdur + 0.5),
+                        "-i", _mpath,
+                        "-filter_complex",
+                        f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d=3.0[aout]",
+                        "-map", "0:v", "-map", "[aout]",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                        "-t", str(_vdur),
+                        str(_mout),
+                    ])
+                    if _mout.exists():
+                        src.unlink(missing_ok=True)
+                        src = _mout
+                        _music_info_path.unlink(missing_ok=True)
+                        yield f"  Music mixed: {_vdur:.1f}s, fade at {_fst:.1f}s"
+                    else:
+                        yield f"  ⚠ Music mix failed — continuing without music"
+            except Exception as _me:
+                yield f"  ⚠ Music mix error: {_me}"
+
         out_name = _output_name(work_dir)
         out_path = _next_version(work_dir / f"{out_name}.mp4")
         src.rename(out_path)

@@ -24,16 +24,18 @@ async function ytModalOpen(filePath, fileName, existingUrl) {
   document.getElementById('yt-existing-url').value = existingUrl || '';
   const workdir = document.getElementById('js-workdir').value;
   const projectName = _ytProjectMeta(workdir) || workdir.split('/').filter(Boolean).pop() || fileName.replace(/\.mp4$/i, '');
-  let savedTitle = '', savedDesc = '';
+  let savedTitle = '', savedDesc = '', savedNotes = '';
   if (currentJobId) {
     try {
       const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(workdir)}`);
       savedTitle = cfg?.yt_title || '';
       savedDesc  = cfg?.yt_desc  || '';
+      savedNotes = cfg?.yt_notes || '';
     } catch (_) {}
   }
   document.getElementById('yt-title').value = savedTitle || projectName;
   document.getElementById('yt-desc').value  = savedDesc  || _YT_DEFAULT_FOOTER;
+  const _notesEl = document.getElementById('yt-notes'); if (_notesEl) _notesEl.value = savedNotes;
   document.getElementById('yt-gen-status').textContent = '';
   document.querySelector('input[name="yt-privacy"][value="unlisted"]').checked = true;
   document.getElementById('yt-new-playlist').style.display = 'none';
@@ -53,7 +55,8 @@ async function _ytMetaSave() {
   if (_ytMetaSaved || !currentJobId) return;
   const title = document.getElementById('yt-title').value.trim();
   const desc  = document.getElementById('yt-desc').value.trim();
-  await api.post(`/api/jobs/${currentJobId}/save-yt-meta`, { title, desc });
+  const notes = document.getElementById('yt-notes')?.value?.trim() || '';
+  await api.post(`/api/jobs/${currentJobId}/save-yt-meta`, { title, desc, notes });
   _ytMetaSaved = true;
 }
 
@@ -76,7 +79,8 @@ async function _generateYtMeta() {
                    || _ytProjectMeta(workdir) || workdir.split('/').filter(Boolean).pop() || '';
   const currentDesc = document.getElementById('yt-desc').value;
   const footer = _ytFooterFromDesc(currentDesc);
-  const res = await api.post(`/api/jobs/${currentJobId}/generate-yt-meta`, { project_name: projectName, footer });
+  const notes = document.getElementById('yt-notes')?.value?.trim() || '';
+  const res = await api.post(`/api/jobs/${currentJobId}/generate-yt-meta`, { project_name: projectName, footer, notes });
   btn.disabled = false;
   if (res?.ok) {
     document.getElementById('yt-desc').value  = res.description;
@@ -233,6 +237,16 @@ async function ytShortsUpload() {
     return;
   }
   _pollYtUpload(res.upload_id, status, btn, _ytsFileName, ytShortsModalClose);
+}
+
+async function ytClearUrl() {
+  if (!currentJobId || !_ytFileName) return;
+  const resp = await api.post(`/api/jobs/${currentJobId}/youtube-url`, { filename: _ytFileName, url: '' });
+  if (resp?.ok) {
+    document.getElementById('yt-existing-url').value = '';
+    document.getElementById('yt-status').textContent = '';
+    loadResults(currentJobId);
+  }
 }
 
 async function ytSaveExistingUrl() {

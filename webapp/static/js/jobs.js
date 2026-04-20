@@ -116,6 +116,11 @@ async function openJob(jobId) {
   stopVideo();
   document.getElementById('log-panel').innerHTML = '';
   document.getElementById('frames-grid').innerHTML = '';
+  // Clear preview tab state from previous project
+  _previewSequence = []; _prevPreviewScenes = [];
+  const _pg = document.getElementById('preview-grid'); if (_pg) _pg.innerHTML = '';
+  const _ps = document.getElementById('preview-status'); if (_ps) _ps.textContent = '';
+  const _pbc = document.getElementById('preview-ban-count'); if (_pbc) _pbc.style.display = 'none';
   document.getElementById('rf-files-main').innerHTML = '';
   document.getElementById('rf-files-short').innerHTML = '';
   document.getElementById('btn-kill').style.display = 'none';
@@ -259,6 +264,7 @@ function connectJobWs(jobId, startedAt) {
           const lbl = document.getElementById('shorts-pct');
           if (bar) bar.style.width = pct + '%';
           if (lbl) lbl.textContent = pct + '%';
+          _setJobProgress(pct, 'Short');
         }
       }
     } else if (msg.type === 'shorts_status') {
@@ -267,6 +273,7 @@ function connectJobWs(jobId, startedAt) {
         if (btnS) { btnS.disabled = true; btnS.textContent = 'Generating…'; }
         const wrap = document.getElementById('shorts-progress-wrap');
         if (wrap) wrap.style.display = '';
+        _setJobProgress(0, 'Short');
       } else {
         if (btnS) {
           btnS.disabled = false;
@@ -280,8 +287,10 @@ function connectJobWs(jobId, startedAt) {
           if (spct) spct.textContent = '100%';
           if (slbl) slbl.textContent = '✓ Short ready';
           loadResults(currentJobId);
+          _hideJobProgress();
         } else {
           if (slbl) slbl.textContent = '✗ Failed';
+          _hideJobProgress();
         }
       }
     } else if (msg.type === 'shorts_batch_progress') {
@@ -291,6 +300,7 @@ function connectJobWs(jobId, startedAt) {
       if (bar)  bar.style.width = msg.pct + '%';
       if (lbl)  lbl.textContent = msg.pct + '%';
       if (slbl) slbl.textContent = `${msg.done} / ${msg.total} done`;
+      _setJobProgress(msg.pct, `Short ${msg.done}/${msg.total}`);
     } else if (msg.type==='status') {
       const isInitialSync = wsInitial;
       wsInitial = false;

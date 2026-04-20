@@ -257,7 +257,7 @@
           <span id="preview-ban-count" style="font-size:12px;color:var(--red);display:none"></span>
           <div class="tile-sizer" title="Tile size">
             <span>▪</span>
-            <input type="range" id="tile-size-preview" min="80" max="320" value="160" oninput="_setTileSize(this.value)">
+            <input type="range" id="tile-size-preview" min="160" max="640" value="160" oninput="_setTileSize(this.value)">
             <span>◼</span>
           </div>
         </div>
@@ -707,6 +707,10 @@
         <input type="text" id="yt-title" oninput="_ytMetaDirty()" onblur="_ytMetaSave()">
       </div>
       <div class="ff">
+        <label>Notes for AI <span style="font-size:10px;color:var(--muted)">(route, mood, key moments)</span></label>
+        <textarea id="yt-notes" rows="2" placeholder="e.g. coastal road Balkans, cold mountain summit, sandy track to TV antenna station, GPS boost scenes, sharp corners…" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box" oninput="_ytMetaDirty()" onblur="_ytMetaSave()"></textarea>
+      </div>
+      <div class="ff">
         <label style="display:flex;align-items:center;gap:6px">
           Description
           <button type="button" id="btn-yt-gen" class="icon-btn" style="font-size:13px;line-height:1" title="Generate description via Claude API" onclick="_generateYtMeta()">↺</button>
@@ -739,6 +743,7 @@
           <input type="text" id="yt-existing-url" placeholder="https://youtu.be/…"
                  style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 7px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none">
           <button type="button" class="btn-sm" onclick="ytSaveExistingUrl()" data-i18n="btn.save_link">Save link</button>
+          <button type="button" class="icon-btn" onclick="ytClearUrl()" title="Clear YouTube link">✕</button>
         </div>
       </div>
       <div id="yt-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>

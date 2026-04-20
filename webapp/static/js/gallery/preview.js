@@ -14,6 +14,7 @@ async function runPreviewSequence() {
   btn.textContent = L()['misc.preview_running'] || '⏳ Running…';
   status.textContent = L()['misc.preview_calculating'] || 'Calculating scene order (no encoding)…';
   grid.innerHTML = '';
+  _prevPreviewScenes = [];
 
   try {
     const data = await api.post(`/api/jobs/${currentJobId}/preview-sequence`, {});
@@ -44,7 +45,8 @@ function _renderPreviewGrid() {
     if (banned) bannedCount++;
     const isNew = _prevPreviewScenes.length > 0
       && _prevPreviewScenes[idx] !== undefined
-      && _prevPreviewScenes[idx] !== slot.scene;
+      && _prevPreviewScenes[idx] !== slot.scene
+      && manualOverrides[_prevPreviewScenes[idx]] === 'ban';
 
     const card = document.createElement('div');
     card.style.cssText = `

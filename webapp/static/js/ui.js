@@ -209,7 +209,7 @@ function toggleTheme() {
 
 // ── Tile size slider ───────────────────────────────────────────────────────────
 function _setTileSize(px) {
-  px = Math.max(80, Math.min(320, parseInt(px) || 160));
+  px = Math.max(80, Math.min(640, parseInt(px) || 160));
   document.documentElement.style.setProperty('--tile-min', px + 'px');
   document.querySelectorAll('.tile-sizer input[type=range]').forEach(s => s.value = px);
   localStorage.setItem('tileSize', px);
