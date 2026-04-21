@@ -21,6 +21,7 @@ Output:
 from __future__ import annotations
 
 import csv
+import json as _json
 import os
 import random
 import subprocess
@@ -604,7 +605,6 @@ def assemble(
     _manual_included: set[str] = set() # force include regardless of threshold
     if _overrides_path.exists():
         try:
-            import json as _json
             _ov = _json.loads(_overrides_path.read_text())
             _manual_banned   = {k for k, v in _ov.items() if v in ("ban", "exclude")}
             _manual_included = {k for k, v in _ov.items() if v == "include"}
@@ -904,12 +904,11 @@ def assemble(
 
     # Motion analysis — skip entirely for dry-run, use duration_cache.json instead
     if dry_run:
-        import json as _jd
         _dur_cache: dict[str, float] = {}
         _dur_cache_path = auto_dir / "duration_cache.json"
         if _dur_cache_path.exists():
             try:
-                _raw = _jd.loads(_dur_cache_path.read_text())
+                _raw = _json.loads(_dur_cache_path.read_text())
                 _dur_cache = {k.removesuffix(".mp4"): float(v) for k, v in _raw.items()}
             except Exception:
                 pass
@@ -1018,7 +1017,6 @@ def assemble(
 
     # 5a. Dry-run: write sequence JSON and exit without encoding
     if dry_run:
-        import json as _json
         seq = []
         for e in edit:
             scene = e["scene"]

@@ -988,8 +988,12 @@ async def preview_sequence(job_id: str):
     music_path_str = ""
     selected = job.params.get("selected_track") or job.params.get("music_file") or ""
     music_files = job.params.get("music_files") or []
-    if not selected and isinstance(music_files, list) and len(music_files) == 1:
-        selected = music_files[0]
+    if not selected:
+        if len(music_files) == 1:
+            selected = music_files[0]
+        elif len(music_files) > 1:
+            import random as _rnd2
+            selected = _rnd2.choice(music_files)
     if selected:
         music_path_str = selected
     else:
@@ -1053,12 +1057,19 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
             job.params[_bk] = int(data[_bk])
     job.save()
 
-    # Resolve music file: explicit → pinned track → music_files param (single) → auto-pick from music_dir
+    # Resolve music file: explicit → pinned track → music_files param → auto-pick from music_dir
     music_path_str = data.get("music_file") or job.selected_track or ""
     if not music_path_str:
         _mf = job.params.get("music_files") or []
         if len(_mf) == 1:
             music_path_str = _mf[0]
+        elif len(_mf) > 1:
+            # Multiple tracks selected — ACR preselect from that filtered pool
+            if _ACR_HOST and _ACR_KEY and _ACR_SECRET:
+                music_path_str = await _acr_preselect(job) or ""
+            if not music_path_str:
+                import random as _rnd
+                music_path_str = _rnd.choice(_mf)
     if not music_path_str:
         music_dir = job.params.get("music_dir", "")
         if not music_dir:
