@@ -478,7 +478,17 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                 str(out)
             ]
             r = subprocess.run(cmd, capture_output=True)
-            return (i, out) if (r.returncode == 0 and out.exists()) else (i, None)
+            if r.returncode != 0 or not out.exists():
+                return (i, None, 0.0)
+            # Probe actual encoded duration — used in concat list to prevent freeze frames.
+            # (target dur vs actual dur mismatch causes concat demuxer to hold last frame.)
+            _pr = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", str(out)],
+                capture_output=True, text=True
+            )
+            actual_dur = float(_pr.stdout.strip()) if _pr.stdout.strip() else dur
+            return (i, out, actual_dur)
 
         # Limit NVENC parallel encodes — GPU encoder has a session cap (typically 3-5)
         trim_workers = 3 if nvenc else _WORKERS
@@ -486,16 +496,16 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         total_clips = len(edit)
         done_count = 0
         with ThreadPoolExecutor(max_workers=trim_workers) as pool:
-            for i, out in pool.map(_trim_one, list(enumerate(edit))):
-                results[i] = out
+            for i, out, actual_dur in pool.map(_trim_one, list(enumerate(edit))):
+                results[i] = (out, actual_dur)
                 done_count += 1
                 print(f"  [{done_count}/{total_clips}] clip (md)", flush=True)
 
-        trimmed: list[Path] = []
+        trimmed: list[tuple[Path, float]] = []
         for i in range(len(edit)):
-            out = results.get(i)
+            out, actual_dur = results.get(i, (None, 0.0))
             if out:
-                trimmed.append(out)
+                trimmed.append((out, actual_dur))
             else:
                 print(f"  WARN: trim failed for {edit[i]['scene']}")
 
@@ -506,12 +516,11 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
 
         # Concat video-only
         clist = tmp / "list.txt"
-        # Include 'duration' directive so concat demuxer enforces exact segment length.
-        # Without it, PTS from encoded files may be off by ±1 frame → drift accumulates.
+        # Use probed actual duration — NOT the target. Target vs actual mismatch
+        # causes the concat demuxer to hold the last frame (freeze) to fill the gap.
         clist_lines = []
-        for i, p in enumerate(trimmed):
-            snapped = round(edit[i]["duration"] * _fps_int) / _fps_int
-            clist_lines.append(f"file '{p}'\nduration {snapped:.6f}")
+        for p, actual_dur in trimmed:
+            clist_lines.append(f"file '{p}'\nduration {actual_dur:.6f}")
         clist.write_text("\n".join(clist_lines))
         vid = tmp / "vid.mp4"
         subprocess.run(
