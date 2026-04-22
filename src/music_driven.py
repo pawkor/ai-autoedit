@@ -369,8 +369,16 @@ def match_clips(schedule: list[dict], clips: list[dict],
         if not pool: pool = _pool(relax_dur=True, camera_filter=False)
         if not pool:
             pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in used]
+        # Pool exhausted — allow reuse rather than leaving slots empty
+        _reusing = False
         if not pool:
-            continue  # skip slot — no reuse ever
+            pool = [c for c in clips if c["duration"] >= dur]
+            _reusing = bool(pool)
+        if not pool:
+            pool = list(clips)  # last resort: any clip (will be trimmed)
+            _reusing = bool(pool)
+        if not pool:
+            continue
 
         def rank(c: dict) -> float:
             motion_match = 1.0 - abs(energy - c.get("motion_norm", 0.5))
@@ -383,7 +391,8 @@ def match_clips(schedule: list[dict], clips: list[dict],
             return c["score"] * 0.60 + motion_match * 0.40
 
         best = max(pool, key=rank)
-        used.add(best["scene"])
+        if not _reusing:
+            used.add(best["scene"])
         recent_sources.append(_clip_source(best["scene"]))
         _slot_idx += 1
 
