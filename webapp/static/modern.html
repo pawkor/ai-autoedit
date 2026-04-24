@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-autoedit Studio</title>
+  <link rel="stylesheet" href="/css/modern.css">
+</head>
+<body data-theme="dark">
+
+  <div id="studio">
+
+    <aside id="m-sidebar">
+      <div class="m-sidebar-header">Projects</div>
+      <div id="m-project-list"></div>
+    </aside>
+
+    <div id="m-main">
+
+      <header id="m-topbar">
+        <span id="m-project-name" class="m-project-name">No project selected</span>
+        <div class="m-topbar-actions">
+          <button id="m-btn-preview" class="m-btn m-btn-blue" onclick="previewTimeline()" disabled>▶ Preview</button>
+          <button id="m-btn-render"  class="m-btn m-btn-green" onclick="renderTimeline()" disabled>⬡ Render</button>
+          <button class="m-btn m-btn-ghost" onclick="location.href='index.html'+location.search">← Legacy</button>
+        </div>
+      </header>
+
+      <section id="m-pool">
+        <div class="m-section-header">
+          <span class="m-section-title">POOL</span>
+          <span id="m-pool-count" class="m-section-meta"></span>
+          <span class="m-section-meta" style="margin-left:auto">drag ↓ to timeline</span>
+        </div>
+        <div id="m-pool-grid"></div>
+      </section>
+
+      <section id="m-timeline-wrap">
+        <div class="m-section-header">
+          <span class="m-section-title">TIMELINE</span>
+          <span id="m-timeline-meta" class="m-section-meta"></span>
+          <button id="m-btn-rebuild" class="m-btn m-btn-ghost m-btn-sm" onclick="rebuildTimeline()" disabled style="margin-left:auto">↺ rebuild</button>
+        </div>
+        <div id="m-timeline">
+          <div class="m-track-row">
+            <div class="m-track-label">clips</div>
+            <div id="m-clip-track" class="m-track-clips"></div>
+          </div>
+          <div class="m-track-row">
+            <div class="m-track-label">music</div>
+            <div id="m-music-bar" class="m-track-music">
+              <span id="m-music-label" class="m-music-label">no track selected</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <aside id="m-panel">
+      <div class="m-panel-section">
+        <div class="m-panel-title">MUSIC</div>
+        <div id="m-music-list"></div>
+      </div>
+      <div class="m-panel-section m-panel-bottom">
+        <button id="m-render-btn" class="m-btn m-btn-green m-btn-full" onclick="renderTimeline()" disabled>⬡ Render</button>
+      </div>
+    </aside>
+
+  </div>
+
+  <script src="/js/mode_switcher.js"></script>
+  <script src="/js/modern_music.js"></script>
+  <script src="/js/modern.js"></script>
+</body>
+</html>
