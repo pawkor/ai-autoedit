@@ -176,6 +176,7 @@ function setLogFilter(f) {
   _logFilter = f;
   localStorage.setItem('logFilter', f);
   const panel = document.getElementById('log-panel');
+  if (!panel) return; // Guard for Modern UI
   if (!panel.classList.contains('lf-' + f)) {
     panel.classList.remove('lf-steps', 'lf-info', 'lf-all');
     panel.classList.add('lf-' + f);
@@ -184,7 +185,8 @@ function setLogFilter(f) {
   const trigger = document.getElementById('log-filter-trigger');
   if (trigger) trigger.textContent = label + ' ▾';
   document.querySelectorAll('.lfm-item').forEach(el => el.classList.toggle('active', el.dataset.lf === f));
-  document.getElementById('log-filter-menu')?.classList.remove('open');
+  const menu = document.getElementById('log-filter-menu');
+  if (menu) menu.classList.remove('open');
 }
 function _toggleLogFilterMenu(e) {
   e.stopPropagation();
@@ -244,6 +246,7 @@ async function refreshJobList() {
         `<button class="ji-del" title="Remove job" onclick="event.stopPropagation();removeJob('${j.id}')">×</button>` +
         `</div>`;
     }).join('');
+
     if (list.dataset.lastHtml !== rows) {
       list.innerHTML = rows;
       list.dataset.lastHtml = rows;
@@ -260,6 +263,12 @@ refreshJobList();
 setLang(currentLang);
 applyTheme(currentTheme);
 setLogFilter(_logFilter);
+
+function setUiMode(mode) {
+  localStorage.setItem('uiMode', mode);
+  if (mode === 'modern') window.location.href = 'modern.html' + window.location.search;
+}
+
 // Sync UI prefs from server (authoritative across all devices)
 api.get('/api/settings').then(s => {
   if (!s) return;

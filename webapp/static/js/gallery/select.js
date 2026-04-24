@@ -751,6 +751,7 @@ function _applyThreshold(v) {
   _saveThreshold();
   _scheduleEstimate();
   calculateGalleryStats();
+  _galleryDirty = true;
   if (_thresholdRafId) cancelAnimationFrame(_thresholdRafId);
   _thresholdRafId = requestAnimationFrame(() => {
     _thresholdRafId = null;
