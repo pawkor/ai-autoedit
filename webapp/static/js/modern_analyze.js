@@ -274,18 +274,20 @@ async function runAnalyze() {
 }
 window.runAnalyze = runAnalyze;
 
-// ── Settings panel ────────────────────────────────────────────────────────────
-let _settingsOpen = false;
-
-function toggleSettingsPanel() {
-  _settingsOpen = !_settingsOpen;
-  const body = document.getElementById('m-settings-body');
-  const btn  = document.getElementById('m-settings-toggle');
-  if (body) body.style.display = _settingsOpen ? '' : 'none';
-  if (btn)  btn.textContent = `⚙ Settings ${_settingsOpen ? '▾' : '▸'}`;
-  if (_settingsOpen) _loadSettingsPanel();
+// ── Settings modal ────────────────────────────────────────────────────────────
+async function openSettingsModal() {
+  const modal = document.getElementById('m-settings-modal');
+  if (!modal) return;
+  document.getElementById('m-settings-status').textContent = '';
+  await _loadSettingsPanel();
+  modal.style.display = 'flex';
 }
-window.toggleSettingsPanel = toggleSettingsPanel;
+window.openSettingsModal = openSettingsModal;
+
+function closeSettingsModal() {
+  document.getElementById('m-settings-modal').style.display = 'none';
+}
+window.closeSettingsModal = closeSettingsModal;
 
 async function _loadSettingsPanel() {
   if (typeof _jobId === 'undefined' || !_jobId) return;
@@ -325,19 +327,16 @@ async function saveSettings() {
     negative,
   };
 
+  const status = document.getElementById('m-settings-status');
   const r = await fetch('/api/job-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const btn = document.getElementById('m-settings-toggle');
-  const orig = btn?.textContent;
   if (!r.ok) {
-    if (btn) btn.textContent = '⚙ Settings ✗';
-    setTimeout(() => { if (btn && orig) btn.textContent = orig; }, 2000);
+    if (status) status.textContent = '✗ Save failed';
     return;
   }
-  if (btn) btn.textContent = '⚙ Settings ✓';
-  setTimeout(() => { if (btn && orig) btn.textContent = orig; }, 1500);
+  closeSettingsModal();
 }
 window.saveSettings = saveSettings;
