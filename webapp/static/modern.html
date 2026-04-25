@@ -17,12 +17,41 @@
 
     <div id="m-main">
 
+      <div id="m-job-status" style="display:none">
+        <span id="m-job-phase"></span>
+        <div id="m-job-bar-track"><div id="m-job-bar-fill"></div></div>
+        <span id="m-job-text"></span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="cancelRender()" id="m-btn-cancel" style="display:none">✕</button>
+      </div>
+
       <header id="m-topbar">
         <span id="m-project-name" class="m-project-name">No project selected</span>
+        <div id="m-hw-monitor" style="display:none">
+          <div id="m-hw-cols">
+            <div class="m-hw-col">
+              <span class="m-hw-label" id="m-hw-cpu-label">CPU —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar cpu" id="m-bar-cpu"></div></div>
+            </div>
+            <div class="m-hw-col">
+              <span class="m-hw-label" id="m-hw-ram-label">RAM —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar ram" id="m-bar-ram"></div></div>
+            </div>
+            <div class="m-hw-col" id="m-hw-gpu-col" style="display:none">
+              <span class="m-hw-label" id="m-hw-gpu-label">GPU —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar gpu" id="m-bar-gpu"></div></div>
+            </div>
+            <div class="m-hw-col" id="m-hw-vram-col" style="display:none">
+              <span class="m-hw-label" id="m-hw-vram-label">VRAM —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar vram" id="m-bar-vram"></div></div>
+            </div>
+          </div>
+        </div>
         <div class="m-topbar-actions">
-          <button id="m-btn-preview" class="m-btn m-btn-blue" onclick="previewTimeline()" disabled>▶ Preview</button>
+          <button id="m-btn-results" class="m-btn m-btn-ghost" onclick="openResultsModal()" style="display:none">▤ Results</button>
+          <button id="m-btn-preview" class="m-btn m-btn-ghost" onclick="previewTimeline()" disabled>▶ Preview</button>
           <button id="m-btn-render"  class="m-btn m-btn-green" onclick="renderTimeline()" disabled>⬡ Render</button>
-          <button class="m-btn m-btn-ghost" onclick="location.href='index.html'+location.search">← Legacy</button>
+          <button id="m-theme-btn" class="m-btn m-btn-ghost" onclick="modernToggleTheme()" title="Toggle theme">☽</button>
+          <button class="m-btn m-btn-ghost" onclick="location.href='index.html'+location.search" title="Settings & Legacy UI">⚙</button>
         </div>
       </header>
 
@@ -31,6 +60,8 @@
           <span class="m-section-title">POOL</span>
           <span id="m-pool-count" class="m-section-meta"></span>
           <span class="m-section-meta" style="margin-left:auto">drag ↓ to timeline</span>
+          <input class="m-tile-slider" type="range" min="60" max="240" value="120"
+                 oninput="setTileSize(this.value)" title="Tile size" id="m-tile-slider">
         </div>
         <div id="m-pool-grid"></div>
       </section>
@@ -39,7 +70,6 @@
         <div class="m-section-header">
           <span class="m-section-title">TIMELINE</span>
           <span id="m-timeline-meta" class="m-section-meta"></span>
-          <button id="m-btn-rebuild" class="m-btn m-btn-ghost m-btn-sm" onclick="rebuildTimeline()" disabled style="margin-left:auto">↺ rebuild</button>
         </div>
         <div id="m-timeline">
           <div class="m-track-row">
@@ -55,22 +85,187 @@
         </div>
       </section>
 
+
+      <div id="m-log" style="display:none">
+        <div class="m-section-header">
+          <span class="m-section-title" id="m-log-toggle" onclick="toggleLog()">LOG ▸</span>
+          <span id="m-log-meta" class="m-section-meta"></span>
+          <button class="m-btn m-btn-ghost m-btn-sm" style="margin-left:auto" onclick="clearLog()">✕</button>
+        </div>
+        <div id="m-log-lines" style="display:none"></div>
+      </div>
+
     </div>
 
     <aside id="m-panel">
       <div class="m-panel-section">
-        <div class="m-panel-title">MUSIC</div>
-        <div id="m-music-list"></div>
+        <button class="m-btn m-btn-ghost m-btn-full" onclick="openMusicModal()">♪ Music</button>
+        <div id="m-pinned-info" style="display:none; margin-top:8px">
+          <div id="m-pinned-title" class="m-pinned-title"></div>
+          <div id="m-pinned-dur" class="m-pinned-dur"></div>
+        </div>
       </div>
-      <div class="m-panel-section m-panel-bottom">
-        <button id="m-render-btn" class="m-btn m-btn-green m-btn-full" onclick="renderTimeline()" disabled>⬡ Render</button>
+      <div class="m-panel-section">
+        <button id="m-btn-rebuild" class="m-btn m-btn-blue m-btn-full" onclick="rebuildTimeline()" disabled>↺ Build timeline</button>
+      </div>
+      <div class="m-panel-section">
+        <button class="m-btn m-btn-ghost m-btn-full" onclick="openAnalyzeModal()">⚡ Analyze / New</button>
+      </div>
+      <div class="m-panel-section" id="m-settings-section">
+        <button class="m-btn m-btn-ghost m-btn-full" onclick="toggleSettingsPanel()"
+                id="m-settings-toggle">⚙ Settings ▸</button>
+        <div id="m-settings-body" style="display:none;margin-top:8px">
+          <div class="m-settings-row">
+            <span class="m-settings-label">Music dir</span>
+            <input id="m-settings-music-dir" class="m-input m-settings-input"
+                   type="text" placeholder="/data/music…">
+          </div>
+          <div class="m-settings-row">
+            <span class="m-settings-label">Clip dur</span>
+            <input id="m-settings-clip-dur" class="m-input"
+                   type="number" min="2" max="30" step="0.5"
+                   style="width:60px">
+            <span class="m-section-meta" style="margin-left:4px">s</span>
+          </div>
+          <div class="m-settings-row" style="align-items:flex-start">
+            <span class="m-settings-label" style="padding-top:4px">Positive</span>
+            <textarea id="m-settings-positive" class="m-input m-settings-textarea"
+                      rows="2" placeholder="Positive prompts…"></textarea>
+          </div>
+          <div class="m-settings-row" style="align-items:flex-start">
+            <span class="m-settings-label" style="padding-top:4px">Negative</span>
+            <textarea id="m-settings-negative" class="m-input m-settings-textarea"
+                      rows="2" placeholder="Negative prompts…"></textarea>
+          </div>
+          <button class="m-btn m-btn-blue m-btn-full m-btn-sm"
+                  onclick="saveSettings()" style="margin-top:6px">Save</button>
+        </div>
+      </div>
+      <div class="m-panel-section" style="margin-top:auto;padding-top:8px">
+        <button class="m-btn m-btn-ghost m-btn-full m-btn-sm"
+                onclick="location.href='index.html'+location.search"
+                title="Legacy UI">⚙ Legacy UI</button>
       </div>
     </aside>
 
   </div>
 
+  <!-- Build overlay -->
+  <div id="m-build-overlay" style="display:none">
+    <div class="m-build-modal">
+      <div class="m-spinner" style="width:28px;height:28px;border-width:3px"></div>
+      <div class="m-build-msg">Building timeline…</div>
+      <div class="m-build-bar-track"><div class="m-build-bar-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Timeline clip hover preview -->
+  <div id="m-tl-preview" style="display:none">
+    <video muted loop playsinline preload="auto"></video>
+  </div>
+
+  <!-- Music modal -->
+  <div id="m-music-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)closeMusicModal()">
+    <div class="m-modal">
+      <div class="m-modal-hd">
+        <span class="m-modal-title">♪ Music</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeMusicModal()">×</button>
+      </div>
+      <div class="m-modal-dir">
+        <input id="m-music-dir-input" class="m-input" type="text" placeholder="Music directory…">
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="loadMusicDirModal()">Load</button>
+      </div>
+      <div class="m-modal-filter">
+        <input id="m-music-filter" class="m-input" type="text" placeholder="Filter title…"
+               oninput="filterMusicModal()">
+        <span id="m-music-count" class="m-section-meta"></span>
+      </div>
+      <div id="m-music-modal-list" class="m-music-modal-list"></div>
+      <div class="m-modal-footer">
+        <span id="m-music-target" class="m-section-meta"></span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="rebuildMusicIndex()" id="m-btn-rebuild-idx" style="margin-left:auto">↺ Rebuild index</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analyze modal -->
+  <div id="m-analyze-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)closeAnalyzeModal()">
+    <div class="m-modal m-analyze-modal-inner">
+      <div class="m-modal-hd">
+        <span class="m-modal-title">⚡ Analyze / New Project</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeAnalyzeModal()">×</button>
+      </div>
+      <div class="m-modal-dir">
+        <input id="m-analyze-dir" class="m-input" type="text" placeholder="Project directory…">
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeToggleBrowser()">📁</button>
+      </div>
+      <div id="m-analyze-browser" style="display:none">
+        <div id="m-analyze-browser-path" class="m-section-meta"
+             style="padding:4px 0;display:flex;align-items:center;gap:4px"></div>
+        <div id="m-analyze-browser-entries" class="m-music-modal-list"
+             style="max-height:180px"></div>
+      </div>
+      <div id="m-analyze-cam-list" class="m-analyze-cams"></div>
+      <div style="margin-top:4px">
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeAddCam()">+ Camera</button>
+      </div>
+      <div class="m-analyze-opts">
+        <label class="m-analyze-check">
+          <input type="checkbox" id="m-analyze-clip-first" checked>
+          <span>CLIP-first</span>
+        </label>
+        <label class="m-analyze-check" style="margin-left:16px">
+          <span>Clip dur:</span>
+          <input id="m-analyze-clip-dur" class="m-input" type="number"
+                 min="2" max="30" step="0.5" value="6"
+                 style="width:56px;margin-left:4px">
+          <span>s</span>
+        </label>
+      </div>
+      <div style="margin-top:8px">
+        <textarea id="m-analyze-positive" class="m-input" rows="2"
+                  placeholder="Positive CLIP prompts (comma-separated)…"
+                  style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div style="margin-top:4px">
+        <textarea id="m-analyze-negative" class="m-input" rows="2"
+                  placeholder="Negative CLIP prompts (comma-separated)…"
+                  style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div class="m-modal-footer">
+        <span id="m-analyze-status" class="m-section-meta"></span>
+        <button class="m-btn m-btn-blue" id="m-analyze-btn"
+                onclick="runAnalyze()" style="margin-left:auto">⚡ Analyze</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results modal -->
+  <div id="m-results-modal" class="m-results-overlay" style="display:none"
+       onclick="if(event.target===this)closeResultsModal()">
+    <div class="m-results-modal">
+      <div class="m-results-hd">
+        <span class="m-results-title">Results</span>
+        <span id="m-results-meta" class="m-section-meta"></span>
+        <button class="m-btn m-btn-ghost m-btn-sm" style="margin-left:auto" onclick="closeResultsModal()">×</button>
+      </div>
+      <div class="m-results-body">
+        <div class="m-results-player-col">
+          <video id="m-results-video" controls preload="metadata"></video>
+          <div id="m-results-playing-info"></div>
+        </div>
+        <div class="m-results-list-col">
+          <div id="m-results-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/mode_switcher.js"></script>
   <script src="/js/modern_music.js"></script>
+  <script src="/js/modern_analyze.js"></script>
   <script src="/js/modern.js"></script>
 </body>
 </html>
