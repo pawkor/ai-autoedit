@@ -1,3 +1,5 @@
+.superpowers/
+
 # Per-event configs (personal prompts/paths)
 config.ini.bak
 webapp/ig_last_upload.json
@@ -37,3 +39,6 @@ node_modules
 webapp/users.json
 package.json
 package-lock.json
+chats
+*.pt
+.aider*

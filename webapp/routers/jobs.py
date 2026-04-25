@@ -16,6 +16,7 @@ from typing import List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from webapp.state import (
@@ -1128,6 +1129,109 @@ async def preview_render(job_id: str):
         raise HTTPException(504, "Preview render timed out (>180s)")
 
     return {"url": str(output)}
+
+
+@router.get("/api/jobs/{job_id}/preview-stream")
+async def preview_stream(job_id: str):
+    """Stream preview via NVENC: reads preview_sequence.json → concat → fMP4 pipe."""
+    import os as _os
+    import tempfile as _tmp
+
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+
+    auto_dir = job.auto_dir()
+    seq_path = auto_dir / "preview_sequence.json"
+    if not seq_path.exists():
+        raise HTTPException(400, "Rebuild timeline first (preview_sequence.json missing)")
+
+    data = json.loads(seq_path.read_text())
+    sequence = data.get("sequence", [])
+    if not sequence:
+        raise HTTPException(400, "Empty sequence")
+
+    # Read ffmpeg binary from global config (jellyfin-ffmpeg has NVENC)
+    _gcfg = configparser.ConfigParser()
+    _gcfg.read(str(APP_DIR / "config.ini"))
+    ffmpeg_bin = _gcfg.get("paths", "ffmpeg", fallback="ffmpeg")
+
+    music_path_str = (
+        job.params.get("selected_track") or
+        job.params.get("music_file") or
+        data.get("music", "")
+    )
+    music_ss = float(sequence[0].get("music_start", 0.0))
+
+    # Write temp concat file
+    cf = _tmp.NamedTemporaryFile(
+        suffix=".txt", mode="w", delete=False, prefix="pvs_concat_"
+    )
+    try:
+        cf.write("ffconcat version 1.0\n")
+        for slot in sequence:
+            cp = slot.get("clip_path", "")
+            if not cp or not Path(cp).exists():
+                continue
+            ss  = float(slot.get("clip_ss", 0))
+            dur = float(slot.get("duration", 0))
+            cf.write(f"file '{cp}'\ninpoint {ss:.4f}\noutpoint {ss + dur:.4f}\n")
+        cf.close()
+
+        has_music = bool(music_path_str and Path(music_path_str).exists())
+        cmd = [
+            ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+            "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+            "-f", "concat", "-safe", "0", "-i", cf.name,
+        ]
+        if has_music:
+            cmd += ["-ss", f"{music_ss:.4f}", "-i", music_path_str]
+
+        cmd += [
+            "-map", "0:v:0",
+            "-vf", "scale_cuda=1280:-2",
+            "-r", "30",
+            "-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30",
+        ]
+        if has_music:
+            cmd += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
+        else:
+            cmd += ["-an"]
+        cmd += ["-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
+
+        concat_name = cf.name
+
+        async def _stream():
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                while True:
+                    chunk = await proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                if proc.returncode is None:
+                    proc.kill()
+                try:
+                    _os.unlink(concat_name)
+                except OSError:
+                    pass
+
+        return StreamingResponse(
+            _stream(),
+            media_type="video/mp4",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+    except Exception:
+        try:
+            _os.unlink(cf.name)
+        except OSError:
+            pass
+        raise
 
 
 @router.post("/api/jobs/{job_id}/render-music-driven")

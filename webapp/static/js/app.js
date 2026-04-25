@@ -14,6 +14,7 @@ const TRANS = {
       // tabs
       'tab.settings':        'Settings',
       'tab.gallery':         'Select scenes',
+      'tab.gallery_md':      'Candidate pool',
       'tab.music':           'Music',
       'tab.preview':         'Preview',
       'tab.summary':         'Render',
@@ -116,7 +117,9 @@ const TRANS = {
       'misc.rendering':        'Rendering…',
       'misc.generating_short': 'Generating Short…',
       'btn.preview_run':         '▶ Preview render order',
-      'misc.preview_hint':       'Run to see planned scene order before rendering.',
+      'misc.preview_hint':   'Run to see planned scene order before rendering.',
+      'misc.candidate_pool_hint': 'All scenes above the threshold are candidates for the beat-aligned highlight. Use overrides to force-include or ban specific shots.',
+
       'misc.preview_running':    '⏳ Running…',
       'misc.preview_calculating':'Calculating scene order (no encoding)…',
     },
@@ -251,4 +254,17 @@ const TRANS = {
 };
 
 let currentLang = localStorage.getItem('lang') || 'en';
+
+function applyTheme(theme) {
+    if (!theme) {
+        theme = localStorage.getItem('theme') || 'dark';
+    }
+    document.body.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Other initializations
+    applyTheme();
+});
 

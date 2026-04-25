@@ -302,3 +302,31 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-settings-input { flex: 1; font-size: 12px; }
 .m-shorts-count-row { display: flex; align-items: center; gap: 6px; }
 .m-settings-textarea { flex: 1; font-size: 11px; resize: vertical; }
+
+/* ── Upload modals ─────────────────────────────────────────────────────────── */
+.m-upload-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.m-upload-label { width: 90px; flex-shrink: 0; padding-top: 5px;
+                  color: var(--sub); font-size: 12px; }
+.m-upload-row input[type="text"],
+.m-upload-row select,
+.m-upload-row textarea { flex: 1; }
+.m-upload-row textarea { resize: vertical; min-height: 60px; }
+.m-upload-privacy { display: flex; gap: 12px; align-items: center; padding-top: 4px; }
+.m-upload-privacy label { display: flex; align-items: center; gap: 4px;
+                           cursor: pointer; color: var(--text); }
+.m-upload-status { font-size: 12px; color: var(--muted); min-height: 16px;
+                   word-break: break-all; }
+.m-upload-gen-row { display: flex; gap: 6px; align-items: center;
+                    margin-top: -4px; margin-bottom: 8px; padding-left: 98px; }
+.m-upload-existing-row { display: flex; gap: 6px; align-items: center; flex: 1; }
+.m-upload-existing-row input { flex: 1; }
+/* Result row upload badges */
+.m-rf-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+.m-rf-yt, .m-rf-ig { padding: 2px 7px; border-radius: 4px; font-size: 11px;
+                      cursor: pointer; border: 1px solid var(--border);
+                      background: var(--bg2); color: var(--text);
+                      white-space: nowrap; line-height: 1.2; }
+.m-rf-yt:hover:not(:disabled), .m-rf-ig:hover:not(:disabled) { background: var(--bg1); }
+.m-rf-yt:disabled, .m-rf-ig:disabled { opacity: .4; cursor: not-allowed; }
+.m-rf-yt.linked { color: var(--green-hi); border-color: var(--green-hi); background: transparent; }
+.m-rf-ig.linked { color: var(--purple); border-color: var(--purple); background: transparent; }

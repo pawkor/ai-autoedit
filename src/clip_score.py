@@ -260,8 +260,39 @@ try:
     _aes_emb_t = _aes_emb_t / _aes_emb_t.norm(dim=-1, keepdim=True)
     with torch.no_grad():
         _aes_raw = _aes_model(_aes_emb_t).squeeze(-1).cpu().tolist()
-    aes_scores = dict(zip(_stems, _aes_raw))
-    print(f"Aesthetic: {min(_aes_raw):.2f}–{max(_aes_raw):.2f}  mean={sum(_aes_raw)/len(_aes_raw):.2f}")
+    
+    # ── Quality/Luminance pass ──
+    # Check for "muddy" or "blown out" frames to further refine aesthetic score.
+    _quality_boosts = []
+    for stem in _stems:
+        img_path = Path(FRAMES_DIR) / f"{scene_best[stem]['frame']}.jpg"
+        try:
+            # Use OpenCV to check luminance (Y channel in YUV)
+            _img_bgr = cv2.imread(str(img_path))
+            if _img_bgr is not None:
+                _yuv = cv2.cvtColor(_img_bgr, cv2.COLOR_BGR2YUV)
+                _y = _yuv[:, :, 0]
+                _avg_luma = _y.mean()
+                _std_luma = _y.std()
+                # Boost frames with good contrast and balanced lighting
+                # Penalty for very dark (<30) or very bright (>225)
+                _luma_mult = 1.0
+                if _avg_luma < 40 or _avg_luma > 230: _luma_mult = 0.7
+                elif 80 < _avg_luma < 180: _luma_mult = 1.1 # Sweet spot
+                
+                # Penalty for extremely low contrast (foggy/muddy)
+                if _std_luma < 15: _luma_mult *= 0.5
+                
+                _quality_boosts.append(_luma_mult)
+            else:
+                _quality_boosts.append(1.0)
+        except Exception:
+            _quality_boosts.append(1.0)
+
+    # Combine Aesthetic MLP with Quality Boost
+    _aes_final = [r * q for r, q in zip(_aes_raw, _quality_boosts)]
+    aes_scores = dict(zip(_stems, _aes_final))
+    print(f"Aesthetic (with Quality Boost): {min(_aes_final):.2f}–{max(_aes_final):.2f}  mean={sum(_aes_final)/len(_aes_final):.2f}")
 except Exception as _e:
     print(f"Aesthetic scoring skipped: {_e}")
 

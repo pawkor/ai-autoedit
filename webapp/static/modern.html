@@ -174,7 +174,8 @@
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeAnalyzeModal()">×</button>
       </div>
       <div class="m-modal-dir">
-        <input id="m-analyze-dir" class="m-input" type="text" placeholder="Project directory…">
+        <input id="m-analyze-dir" class="m-input" type="text" placeholder="Project directory…"
+               onblur="analyzeRefreshCams(this.value.trim())">
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeToggleBrowser()">📁</button>
       </div>
       <div id="m-analyze-browser" style="display:none">
@@ -334,10 +335,168 @@
     </div>
   </div>
 
+  <!-- YT Main Upload modal -->
+  <div id="m-yt-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)mYtClose()">
+    <div class="m-modal" style="width:640px;max-width:96vw">
+      <div class="m-modal-hd">
+        <span class="m-modal-title">▲ YouTube Upload</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="mYtClose()">×</button>
+      </div>
+      <div style="padding:12px 0 4px;overflow-y:auto;max-height:80vh">
+        <div class="m-upload-row">
+          <span class="m-upload-label">File</span>
+          <span id="m-yt-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Title</span>
+          <input id="m-yt-title" class="m-input" type="text"
+                 oninput="mYtMetaDirty()" onblur="mYtMetaSave()">
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Description</span>
+          <textarea id="m-yt-desc" class="m-input" rows="8"
+                    oninput="mYtMetaDirty()" onblur="mYtMetaSave()"></textarea>
+        </div>
+        <div class="m-upload-gen-row">
+          <button class="m-btn m-btn-sm" id="m-yt-gen-btn" onclick="mYtGenDesc()">✦ Generate</button>
+          <button class="m-btn m-btn-sm" id="m-yt-chapters-btn" onclick="mYtChapters()">✦ AI Chapters</button>
+          <span id="m-yt-gen-status" class="m-upload-status"></span>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Notes</span>
+          <textarea id="m-yt-notes" class="m-input" rows="3"
+                    placeholder="Optional notes for Claude generation"
+                    oninput="mYtMetaDirty()" onblur="mYtMetaSave()"></textarea>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Privacy</span>
+          <div class="m-upload-privacy">
+            <label><input type="radio" name="m-yt-privacy" value="public"> Public</label>
+            <label><input type="radio" name="m-yt-privacy" value="unlisted" checked> Unlisted</label>
+            <label><input type="radio" name="m-yt-privacy" value="private"> Private</label>
+          </div>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Playlist</span>
+          <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+            <select id="m-yt-playlist" class="m-input"></select>
+            <button class="m-btn m-btn-sm" style="align-self:flex-start"
+                    onclick="mYtToggleNewPlaylist()">+ New playlist</button>
+            <input id="m-yt-new-playlist" class="m-input" type="text"
+                   placeholder="New playlist name" style="display:none">
+          </div>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Existing URL</span>
+          <div class="m-upload-existing-row">
+            <input id="m-yt-existing-url" class="m-input" type="text"
+                   placeholder="https://youtu.be/…">
+            <button class="m-btn m-btn-sm" onclick="mYtSaveUrl()">Save</button>
+            <button class="m-btn m-btn-sm m-btn-ghost" onclick="mYtClearUrl()">Clear</button>
+          </div>
+        </div>
+        <div id="m-yt-status" class="m-upload-status" style="margin-top:4px"></div>
+      </div>
+      <div class="m-modal-footer">
+        <button class="m-btn m-btn-green" id="m-yt-upload-btn"
+                onclick="mYtUpload()">▲ Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- YT Shorts Upload modal -->
+  <div id="m-yts-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)mYtsClose()">
+    <div class="m-modal" style="width:640px;max-width:96vw">
+      <div class="m-modal-hd">
+        <span class="m-modal-title">▲ YouTube Shorts Upload</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="mYtsClose()">×</button>
+      </div>
+      <div style="padding:12px 0 4px;overflow-y:auto;max-height:80vh">
+        <div class="m-upload-row">
+          <span class="m-upload-label">File</span>
+          <span id="m-yts-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Title</span>
+          <input id="m-yts-title" class="m-input" type="text">
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Description</span>
+          <textarea id="m-yts-desc" class="m-input" rows="7"></textarea>
+        </div>
+        <div class="m-upload-gen-row">
+          <button class="m-btn m-btn-sm" id="m-yts-gen-btn" onclick="mYtsGenDesc()">✦ Generate</button>
+          <span id="m-yts-gen-status" class="m-upload-status"></span>
+        </div>
+        <div class="m-upload-row" id="m-yts-fullvideo-row" style="display:none">
+          <span class="m-upload-label">Full video</span>
+          <select id="m-yts-fullvideo-select" class="m-input"
+                  onchange="mYtsUpdateLink()"></select>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Privacy</span>
+          <div class="m-upload-privacy">
+            <label><input type="radio" name="m-yts-privacy" value="public" checked> Public</label>
+            <label><input type="radio" name="m-yts-privacy" value="unlisted"> Unlisted</label>
+            <label><input type="radio" name="m-yts-privacy" value="private"> Private</label>
+          </div>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Playlist</span>
+          <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+            <select id="m-yts-playlist" class="m-input"></select>
+            <button class="m-btn m-btn-sm" style="align-self:flex-start"
+                    onclick="mYtsToggleNewPlaylist()">+ New playlist</button>
+            <input id="m-yts-new-playlist" class="m-input" type="text"
+                   placeholder="New playlist name" style="display:none">
+          </div>
+        </div>
+        <div id="m-yts-status" class="m-upload-status" style="margin-top:4px"></div>
+      </div>
+      <div class="m-modal-footer">
+        <button class="m-btn m-btn-green" id="m-yts-upload-btn"
+                onclick="mYtsUpload()">▲ Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- IG Reel Upload modal -->
+  <div id="m-ig-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)mIgClose()">
+    <div class="m-modal" style="width:560px;max-width:96vw">
+      <div class="m-modal-hd">
+        <span class="m-modal-title">▲ Instagram Reel Upload</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="mIgClose()">×</button>
+      </div>
+      <div style="padding:12px 0 4px">
+        <div class="m-upload-row">
+          <span class="m-upload-label">File</span>
+          <span id="m-ig-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
+        </div>
+        <div id="m-ig-token-warn" class="m-upload-status"
+             style="color:var(--yellow);margin-bottom:6px;display:none"></div>
+        <div id="m-ig-cooldown-warn" class="m-upload-status"
+             style="color:var(--yellow);margin-bottom:6px;display:none"></div>
+        <div class="m-upload-row">
+          <span class="m-upload-label">Caption</span>
+          <textarea id="m-ig-caption" class="m-input" rows="8" placeholder="Caption and hashtags…"></textarea>
+        </div>
+        <div id="m-ig-status" class="m-upload-status" style="margin-top:4px"></div>
+      </div>
+      <div class="m-modal-footer">
+        <button class="m-btn m-btn-green" id="m-ig-upload-btn"
+                onclick="mIgUpload()">▲ Upload</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/mode_switcher.js"></script>
   <script src="/js/modern_music.js"></script>
   <script src="/js/modern_analyze.js"></script>
   <script src="/js/modern_shorts.js"></script>
   <script src="/js/modern.js"></script>
+  <script src="/js/modern_uploads.js"></script>
 </body>
 </html>

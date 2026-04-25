@@ -214,6 +214,17 @@ async function analyzeAddCam() {
 }
 window.analyzeAddCam = analyzeAddCam;
 
+async function analyzeRefreshCams(dir) {
+  if (!dir) return;
+  const camList = document.getElementById('m-analyze-cam-list');
+  if (!camList || camList.querySelectorAll('.m-analyze-cam-row').length) return;
+  _analyzeSubdirs = await _fetchAnalyzeSubdirs(dir);
+  camList.innerHTML = '';
+  for (const cam of _analyzeSubdirs.slice(0, 2))
+    _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs);
+}
+window.analyzeRefreshCams = analyzeRefreshCams;
+
 // ── Run analyze ───────────────────────────────────────────────────────────────
 async function runAnalyze() {
   const dir = document.getElementById('m-analyze-dir').value.trim();
@@ -301,10 +312,12 @@ async function _loadSettingsPanel() {
     const el = document.getElementById(id);
     if (el && val != null) el.value = val;
   };
-  set('m-settings-music-dir', cfg.music_dir);
-  set('m-settings-clip-dur',  cfg.clip_scan_clip_dur);
-  set('m-settings-positive',  cfg.positive);
-  set('m-settings-negative',  cfg.negative);
+  set('m-settings-music-dir',   cfg.music_dir);
+  set('m-settings-clip-dur',    cfg.clip_scan_clip_dur);
+  set('m-settings-description', job.params.description ?? cfg.description ?? '');
+  set('m-settings-positive',    cfg.positive);
+  set('m-settings-negative',    cfg.negative);
+  document.getElementById('m-settings-gen-status').textContent = '';
 }
 
 async function saveSettings() {
@@ -314,29 +327,76 @@ async function saveSettings() {
   const job = await window._modernApi.get(`/api/jobs/${_jobId}`);
   if (!job?.params?.work_dir) return;
 
-  const musicDir = document.getElementById('m-settings-music-dir')?.value.trim() || null;
-  const clipDur  = parseFloat(document.getElementById('m-settings-clip-dur')?.value) || null;
-  const positive = document.getElementById('m-settings-positive')?.value.trim()  || null;
-  const negative = document.getElementById('m-settings-negative')?.value.trim()  || null;
-
-  const payload = {
-    work_dir: job.params.work_dir,
-    music_dir:          musicDir,
-    clip_scan_clip_dur: clipDur,
-    positive,
-    negative,
-  };
+  const musicDir    = document.getElementById('m-settings-music-dir')?.value.trim() || null;
+  const clipDur     = parseFloat(document.getElementById('m-settings-clip-dur')?.value) || null;
+  const description = document.getElementById('m-settings-description')?.value.trim() || null;
+  const positive    = document.getElementById('m-settings-positive')?.value.trim()  || null;
+  const negative    = document.getElementById('m-settings-negative')?.value.trim()  || null;
 
   const status = document.getElementById('m-settings-status');
-  const r = await fetch('/api/job-config', {
+
+  const cfgR = await fetch('/api/job-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      work_dir: job.params.work_dir,
+      music_dir:          musicDir,
+      clip_scan_clip_dur: clipDur,
+      positive,
+      negative,
+    }),
   });
-  if (!r.ok) {
+  if (!cfgR.ok) {
     if (status) status.textContent = '✗ Save failed';
     return;
   }
+
+  const promptsR = await fetch(`/api/jobs/${_jobId}/save-prompts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description, positive, negative }),
+  });
+  if (!promptsR.ok) {
+    if (status) status.textContent = '✗ Prompts save failed';
+    return;
+  }
+
   closeSettingsModal();
 }
 window.saveSettings = saveSettings;
+
+async function generateSettingsPrompts() {
+  if (typeof _jobId === 'undefined' || !_jobId) {
+    alert('No project selected.'); return;
+  }
+  const job = await window._modernApi.get(`/api/jobs/${_jobId}`);
+  if (!job?.params?.work_dir) return;
+
+  const description = document.getElementById('m-settings-description')?.value.trim() || '';
+  const btn    = document.getElementById('m-settings-gen-btn');
+  const gstatus = document.getElementById('m-settings-gen-status');
+  if (btn) btn.disabled = true;
+  if (gstatus) gstatus.textContent = 'Generating…';
+
+  let data = null;
+  try {
+    const r = await fetch('/api/about', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, work_dir: job.params.work_dir }),
+    });
+    data = r.ok ? await r.json() : null;
+  } catch { data = null; }
+
+  if (btn) btn.disabled = false;
+  if (!data?.ok) {
+    if (gstatus) gstatus.textContent = '✗ Failed';
+    return;
+  }
+  if (gstatus) gstatus.textContent = '✓ Done';
+  const pos = document.getElementById('m-settings-positive');
+  const neg = document.getElementById('m-settings-negative');
+  if (pos && data.positive) pos.value = data.positive;
+  if (neg && data.negative) neg.value = data.negative;
+}
+window.generateSettingsPrompts = generateSettingsPrompts;

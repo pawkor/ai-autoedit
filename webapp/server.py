@@ -8,7 +8,7 @@ import asyncio
 import json
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from webapp.state import (
@@ -29,6 +29,18 @@ from webapp.routers import jobs as jobs_router
 
 app = FastAPI(title="autoframe")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+# ── Static routes ─────────────────────────────────────────────────────────────
+
+@app.get("/")
+@app.get("/index.html")
+async def serve_index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+@app.get("/modern.html")
+async def serve_modern():
+    return FileResponse(STATIC_DIR / "modern.html")
 
 
 # ── Middleware ─────────────────────────────────────────────────────────────────

@@ -74,8 +74,12 @@ async function openJob(jobId) {
   _closeJobWs();
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer=null; }
   if (_proxyPollTimer) { clearInterval(_proxyPollTimer); _proxyPollTimer=null; }
+  
+  // Fetch latest job status to ensure phase is up-to-date before UI logic runs
+  const jobData = await api.get(`/api/jobs/${jobId}`);
+
   currentJobId = jobId;
-  jobPhase = null;
+  jobPhase = jobData?.phase || null;
   analyzeResult = null;
   pinnedTrack = null;
   _suggestedTrack = null; _rerollIdx = 0;
@@ -130,7 +134,7 @@ async function openJob(jobId) {
   document.getElementById('jh-elapsed').textContent = '';
   resetSteps();
 
-  const job = await api.get(`/api/jobs/${jobId}`);
+  const job = jobData; // Use the freshly fetched job data
   if (!job) return;
 
   jobPhase = job.phase || 'done';

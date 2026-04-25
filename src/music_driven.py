@@ -24,6 +24,7 @@ import csv
 import json as _json
 import os
 import random
+import shutil
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -308,6 +309,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
     """
     import collections
     used: set[str] = set()
+    reuse_used: set[str] = set()   # rotates through clips when pool exhausted
     edit: list[dict] = []
 
     num_sources  = len({_clip_source(c["scene"]) for c in clips})
@@ -369,13 +371,32 @@ def match_clips(schedule: list[dict], clips: list[dict],
         if not pool: pool = _pool(relax_dur=True, camera_filter=False)
         if not pool:
             pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in used]
-        # Pool exhausted — allow reuse rather than leaving slots empty
+        # Pool exhausted — allow reuse rather than leaving slots empty,
+        # but rotate through clips so the same clip isn't repeated consecutively.
+        # IMPORTANT: only clear reuse_used when clips that MEET the duration
+        # requirement have all been used.  When NO clip meets the duration
+        # (e.g. CLIP_DUR_SEC shorter than the music slot), do NOT clear here —
+        # fall through to the duration-relaxed second block which tracks its own
+        # rotation via the same reuse_used set.
         _reusing = False
         if not pool:
-            pool = [c for c in clips if c["duration"] >= dur]
+            reuse_pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in reuse_used]
+            if not reuse_pool:
+                _dur_eligible = [c for c in clips if c["duration"] >= dur]
+                if _dur_eligible:
+                    # There are clips with enough duration — rotation completed, reset.
+                    reuse_used.clear()
+                    reuse_pool = _dur_eligible
+                # else: no clip meets duration constraint — leave reuse_used intact,
+                # fall through to the relaxed-duration block below.
+            pool = reuse_pool
             _reusing = bool(pool)
         if not pool:
-            pool = list(clips)  # last resort: any clip (will be trimmed)
+            reuse_pool = [c for c in clips if c["scene"] not in reuse_used]
+            if not reuse_pool:
+                reuse_used.clear()
+                reuse_pool = list(clips)
+            pool = reuse_pool
             _reusing = bool(pool)
         if not pool:
             continue
@@ -393,6 +414,8 @@ def match_clips(schedule: list[dict], clips: list[dict],
         best = max(pool, key=rank)
         if not _reusing:
             used.add(best["scene"])
+        else:
+            reuse_used.add(best["scene"])
         recent_sources.append(_clip_source(best["scene"]))
         _slot_idx += 1
 
@@ -435,7 +458,9 @@ def match_clips(schedule: list[dict], clips: list[dict],
 
 def render(edit: list[dict], music_path: Path, music_ss: float,
            output: Path, ffmpeg: str, nvenc: bool = True,
-           resolution: str = "", framerate: str = "60") -> None:
+           resolution: str = "", framerate: str = "60",
+           blur_speed_cams: list[str] | None = None,
+           blur_plates: bool = False) -> None:
     """
     Trim each clip to its slot duration, concat, overlay music.
     Uses NVENC if available (detected by nvenc flag).
@@ -443,9 +468,9 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
     """
     enc_v = (
         ["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "18", "-preset", "p4",
-         "-profile:v", "high", "-pix_fmt", "yuv420p"]
+         "-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "0"]
         if nvenc else
-        ["-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p"]
+        ["-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p", "-bf", "0"]
     )
 
     # Build -vf filter: normalise resolution + fps so all clips are compatible for concat
@@ -463,22 +488,75 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
 
         _fps_int = int(framerate) if framerate else 60
 
+        # ── Privacy pre-pass (single-threaded, GPU detection) ────────────────
+        # Detect speedometer + license plate regions before parallel encoding
+        # so GPU is not contended between detection inference and NVENC.
+        _privacy_regions: dict[int, list[dict]] = {}
+        _need_privacy = (blur_speed_cams or blur_plates)
+        if _need_privacy:
+            try:
+                # blur_speed_cams might be a string "helmet,rear" or already a list/None
+                _speed_cam_set = set()
+                if isinstance(blur_speed_cams, str):
+                    _speed_cam_set = {c.strip() for c in blur_speed_cams.split(",") if c.strip()}
+                elif blur_speed_cams:
+                    _speed_cam_set = set(blur_speed_cams)
+
+                from privacy import detect_clip_regions, blur_vf as _blur_vf_fn
+                print(f"  Privacy: detecting regions ({len(edit)} clips)…", flush=True)
+                for _pi, _entry in enumerate(edit):
+                    _cam = _entry.get("camera", "")
+                    _do_speed  = _cam in _speed_cam_set
+                    _do_plates = blur_plates
+                    if not _do_speed and not _do_plates:
+                        continue
+                    _regs = detect_clip_regions(
+                        Path(_entry["clip_path"]), _entry["clip_ss"], _entry["duration"],
+                        ffmpeg=ffmpeg, detect_speed=_do_speed, detect_plates=_do_plates,
+                    )
+                    if _regs:
+                        _privacy_regions[_pi] = _regs
+                n_with = sum(1 for r in _privacy_regions.values() if r)
+                print(f"  Privacy: {n_with}/{len(edit)} clips have regions to blur", flush=True)
+            except Exception as _pe:
+                print(f"  Privacy detection error (skipping): {_pe}", flush=True)
+
         def _trim_one(args):
             i, entry = args
             out = tmp / f"s{i:04d}.mp4"
             # Snap duration to frame boundary to prevent accumulation of rounding drift
             dur = round(entry["duration"] * _fps_int) / _fps_int
+
+            # Build filter: privacy blur FIRST (in original coords), then scale/fps
+            # IMPORTANT: detection coords are in original-resolution space, so blur
+            # must be applied before any scale filter that changes frame dimensions.
+            _prv_regs = _privacy_regions.get(i, [])
+            if _prv_regs:
+                from privacy import blur_vf as _blur_vf_fn
+                _prv_filter = _blur_vf_fn(_prv_regs, dur)  # [0:v] → [privacy_out]
+                if resolution:
+                    # privacy on original → [privacy_out] → scale/fps → [out]
+                    _fc = _prv_filter + f";[privacy_out]{_vf}[out]"
+                    vf_final = ["-filter_complex", _fc, "-map", "[out]"]
+                else:
+                    vf_final = ["-filter_complex", _prv_filter, "-map", "[privacy_out]"]
+            else:
+                vf_final = vf_args
+
             cmd = [
                 ffmpeg, "-y",
                 "-ss", str(entry["clip_ss"]),
                 "-t",  str(dur),
+                "-avoid_negative_ts", "make_zero",
                 "-i",  entry["clip_path"],
-                *enc_v, *vf_args,
-                "-an",
+                *enc_v, *vf_final,
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                "-map_metadata", "-1",
                 str(out)
             ]
-            r = subprocess.run(cmd, capture_output=True)
+            r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0 or not out.exists():
+                print(f"  WARN: trim failed for {entry['scene']}\n{r.stderr}", flush=True)
                 return (i, None, 0.0)
             # Probe actual encoded duration — used in concat list to prevent freeze frames.
             # (target dur vs actual dur mismatch causes concat demuxer to hold last frame.)
@@ -516,11 +594,13 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
 
         # Concat video-only
         clist = tmp / "list.txt"
-        # Use probed actual duration — NOT the target. Target vs actual mismatch
-        # causes the concat demuxer to hold the last frame (freeze) to fill the gap.
+        # No 'duration' directive — clips are re-encoded with frame-snapped durations
+        # so PTS is clean. The directive would cause freeze frames because ffprobe's
+        # format=duration includes container overhead and is larger than the last
+        # packet PTS, making the concat demuxer hold the last frame to fill the gap.
         clist_lines = []
-        for p, actual_dur in trimmed:
-            clist_lines.append(f"file '{p}'\nduration {actual_dur:.6f}")
+        for p, _dur in trimmed:
+            clist_lines.append(f"file '{p}'")
         clist.write_text("\n".join(clist_lines))
         vid = tmp / "vid.mp4"
         subprocess.run(
@@ -537,17 +617,8 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         )
         video_dur = float(r.stdout.strip()) if r.stdout.strip() else sum(e["duration"] for e in edit)
 
-        # Mux silent audio into the output so apply_postprocess concat gets
-        # consistent streams (intro/outro have audio; mismatched streams break concat).
-        # Music is mixed in apply_postprocess after intro/outro are added.
-        subprocess.run([
-            ffmpeg, "-y",
-            "-i", str(vid),
-            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
-            "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2",
-            "-shortest",
-            str(output)
-        ], check=True, capture_output=True)
+        # Output the concatenated video as is (now contains audio)
+        shutil.move(str(vid), str(output))
 
     print(f"  → {output.name}  ({video_dur:.1f}s  {len(trimmed)} shots)")
 
@@ -594,6 +665,9 @@ def assemble(
                 pass
     _framerate   = _cp.get("video",        "framerate",   fallback="60")
     _cam_pattern = _cp.get("music_driven", "cam_pattern", fallback="")
+    # Privacy: blur speedometer + license plates
+    _blur_speed_cams = [c.strip() for c in _cp.get("privacy", "blur_speedometer_cams", fallback="").split(",") if c.strip()]
+    _blur_plates     = _cp.getboolean("privacy", "blur_plates", fallback=False)
     # Camera order from config: cam_a = 'a', cam_b = 'b' in pattern.
     # Falls back to alphabetical if not configured.
     _cam_a = _cp.get("job", "cam_a", fallback="")
@@ -1064,7 +1138,8 @@ def assemble(
         output = auto_dir / "highlight_music_driven.mp4"
 
     render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
-           resolution=_resolution, framerate=_framerate)
+           resolution=_resolution, framerate=_framerate,
+           blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates)
 
     # Write music info so apply_postprocess() can mix music over the final video
     # (after intro/outro are added), ensuring the fade covers the outro too.

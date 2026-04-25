@@ -280,8 +280,9 @@ async def apply_postprocess(
                 "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
                 "-t", intro_dur, "-vf", vf_intro,
                 "-map", "0:v", "-map", "1:a",
+                "-avoid_negative_ts", "make_zero",
                 "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-r", framerate,
-                "-c:a", "aac", "-ar", "48000", "-ac", "2",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-map_metadata", "-1",
                 str(intro_mp4), "-y", "-loglevel", "quiet",
             ])
 
@@ -290,8 +291,9 @@ async def apply_postprocess(
             await _run([
                 ffmpeg, *hwaccel, "-i", str(highlight),
                 "-vf", f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_hl:.3f}:d={fade_dur}",
+                "-avoid_negative_ts", "make_zero",
                 "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-ar", "48000", "-b:a", "192k",
+                "-c:a", "aac", "-ar", "48000", "-b:a", "192k", "-map_metadata", "-1",
                 str(hl_faded), "-y", "-loglevel", "quiet",
             ])
 
@@ -307,8 +309,10 @@ async def apply_postprocess(
                 "-i", f"color=c=black:s={w}x{h}:d={intro_dur}:r={framerate}",
                 "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
                 "-vf", vf_outro, "-map", "0:v", "-map", "1:a",
+                "-avoid_negative_ts", "make_zero",
                 "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p", "-r", framerate,
                 "-c:a", "aac", "-ar", "48000", "-ac", "2", "-t", intro_dur,
+                "-map_metadata", "-1",
                 str(outro_mp4), "-y", "-loglevel", "quiet",
             ])
 
@@ -333,8 +337,6 @@ async def apply_postprocess(
     # Rename to output name (work_dir/YYYY-MM-Place-DD-vNN.mp4)
     src = final or highlight
     if src and src.exists():
-        # Mix music over the final video (including intro/outro) so the fade
-        # covers the outro rather than ending at the highlight clip boundary.
         _music_info_path = auto_dir / "music_info.json"
         if _music_info_path.exists():
             try:
@@ -342,22 +344,37 @@ async def apply_postprocess(
                 _mpath    = _mi.get("music_path", "")
                 _mss      = float(_mi.get("music_ss", 0))
                 _mvol     = float(_mi.get("music_vol", 0.7))
+                
+                # Load actual volume settings from config
+                _orig_vol = _f(cp, "music", "original_volume", 0.25)
+                # Ensure values are within sanity range
+                _mvol     = max(0.0, min(2.0, _mvol))
+                _orig_vol = max(0.0, min(2.0, _orig_vol))
+
                 if _mpath and Path(_mpath).exists():
                     yield ""
-                    yield "Mixing music..."
+                    yield f"Mixing music (music={_mvol:.2f}, cam={_orig_vol:.2f})..."
                     _vdur      = await _probe_duration(src, ffprobe) or 0.0
-                    _outro_dur = float(intro_dur)  # outro has same duration as intro card
+                    _outro_dur = float(intro_dur)
                     _fst       = max(0.0, _vdur - _outro_dur - 3.0)
-                    _mout   = src.with_name(src.stem + "_withmusic.mp4")
+                    _mout      = src.with_name(src.stem + "_withmusic.mp4")
+                    
+                    # amix filter: inputs are [0:a] (camera) and [1:a] (music)
+                    # We apply volume to each before mixing.
+                    _af_mix = (
+                        f"[0:a]volume={_orig_vol}[a_cam];"
+                        f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d=3.0[a_mus];"
+                        f"[a_cam][a_mus]amix=inputs=2:duration=first:dropout_transition=3[aout]"
+                    )
+
                     _mix_ret, _mix_err = await _run([
                         ffmpeg, "-y",
                         "-i", str(src),
                         "-ss", str(_mss), "-t", str(_vdur + 0.5),
                         "-i", _mpath,
-                        "-filter_complex",
-                        f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d=3.0[aout]",
+                        "-filter_complex", _af_mix,
                         "-map", "0:v", "-map", "[aout]",
-                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                         "-t", str(_vdur),
                         str(_mout),
                     ])
@@ -905,9 +922,9 @@ async def run(params: dict, work_dir: Path,
         # ── CLIP-first mode: dense scan → peaks → clip extraction ─────────────
         yield ""
         yield "[2/6] CLIP-first scan (interval={:.0f}s, clip={:.0f}s, gap={:.0f}s)...".format(
-            float(params.get("clip_scan_interval", 3)),
-            float(params.get("clip_scan_clip_dur", 8)),
-            float(params.get("clip_scan_min_gap",  30)),
+            float(params.get("clip_scan_interval") or 3),
+            float(params.get("clip_scan_clip_dur") or 8),
+            float(params.get("clip_scan_min_gap")  or 30),
         )
         # Clear stale clips and frames from previous runs (both scenedetect and old clip-first)
         _stale_clips  = (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
@@ -935,9 +952,9 @@ async def run(params: dict, work_dir: Path,
             "OUTPUT_CSV_ALLCAM":     str(auto_dir / "scene_scores_allcam.csv"),
             "CAM_SOURCES":           str(auto_dir / "camera_sources.csv"),
             "AUDIO_CAM":             cam_a,
-            "CLIP_SCAN_INTERVAL_SEC":str(params.get("clip_scan_interval", 3)),
-            "CLIP_SCAN_CLIP_DUR_SEC":str(params.get("clip_scan_clip_dur",  8)),
-            "CLIP_SCAN_MIN_GAP_SEC": str(params.get("clip_scan_min_gap",  30)),
+            "CLIP_SCAN_INTERVAL_SEC":str(params.get("clip_scan_interval") or 3),
+            "CLIP_SCAN_CLIP_DUR_SEC":str(params.get("clip_scan_clip_dur")  or 8),
+            "CLIP_SCAN_MIN_GAP_SEC": str(params.get("clip_scan_min_gap")   or 30),
             **({"CLIP_BATCH_SIZE":  str(params["batch_size"])}  if params.get("batch_size")  else {}),
             **({"CLIP_NUM_WORKERS": str(params["clip_workers"])} if params.get("clip_workers") else {}),
         }

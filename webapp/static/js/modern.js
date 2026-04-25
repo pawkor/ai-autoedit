@@ -8,6 +8,8 @@ let _overrides   = {};     // {scene: 'ban'}
 let _removedScenes = new Set(); // dragged from timeline to pool — dashed red, not yet banned
 let _pinnedTrack = null;   // music file path (set by modern_music.js)
 let _browseRoot  = '';     // stripped from work_dir paths for display
+let _timelineMusic = null; // music path from last dry-run (for preview playback)
+let _workDir     = '';     // current job work_dir (for clip_path reconstruction)
 
 // ── Timeline persistence (backend) ───────────────────────────────────────────
 let _saveTlTimer = null;
@@ -87,6 +89,7 @@ async function openProject(id) {
 
   const job = await api.get(`/api/jobs/${id}`);
   if (!job) return;
+  _workDir = job.params?.work_dir || '';
   _loadTimeline(job);  // restore from backend params before loadMusicList runs
   const name = trimPath(job.params?.work_dir) || id;
   document.getElementById('m-project-name').textContent = name;
@@ -189,6 +192,7 @@ async function rebuildTimeline() {
     return;
   }
   _timeline = data.sequence;
+  _timelineMusic = data.music || null;
   _overrides = {};
   _removedScenes.clear();
   _saveTimeline(_jobId);
@@ -222,7 +226,9 @@ function drawTimeline() {
   const trackObj = _pinnedTrackObj();
   const musicDur = trackObj?.duration || 0;
 
-  // Use percentage widths so clips + music bar always fit the container exactly.
+  // Clips use % of clip track width; music bar uses px based on same width.
+  // Measuring BEFORE clear so offsetWidth is non-zero.
+  const trackW = clipTrack.offsetWidth || Math.max(200, window.innerWidth - 500);
   const refDur = Math.max(musicDur || 0, totalDur || 0) || 1;
   const pctPerSec = 100 / refDur;
 
@@ -235,10 +241,10 @@ function drawTimeline() {
       meta.textContent = `${_timeline.length} clips · ${fmtSec(totalDur)}`;
   }
 
-  // Music bar: percentage width so it aligns with the clip track.
+  // Music bar: px width matching clip track width so it never bleeds past #m-panel.
   if (musicBar) {
-    const musicPct = musicDur > 0 ? (musicDur * pctPerSec).toFixed(4) + '%' : '100%';
-    musicBar.style.width    = musicPct;
+    const musicW = musicDur > 0 ? Math.round(musicDur / refDur * trackW) : trackW;
+    musicBar.style.width    = musicW + 'px';
     musicBar.style.minWidth = '';
     musicBar.style.flex     = 'none';
     const name = trackObj?.title || (_pinnedTrack?.split('/').pop() || '');
@@ -359,6 +365,8 @@ function handleInsert(insertIdx) {
     _timeline.splice(insertIdx, 0, {
       scene: frame.scene, duration: frame.duration,
       clip_score: frame.score, frame_url: frame.frame_url || null, energy: 0.5,
+      clip_path: _workDir ? _workDir + '/_autoframe/autocut/' + frame.scene + '.mp4' : '',
+      clip_ss: 0,
     });
   } else {
     const from = _drag.idx;
@@ -562,27 +570,29 @@ function clearLog() {
 }
 window.clearLog = clearLog;
 
-// ── Preview ───────────────────────────────────────────────────────────────────
+// ── Preview (NVENC stream) ────────────────────────────────────────────────────
 async function previewTimeline() {
   if (!_jobId) return;
   const btn = document.getElementById('m-btn-preview');
-  if (btn) { btn.disabled = true; btn.textContent = '▶ Generating…'; }
 
-  const data = await api.post(`/api/jobs/${_jobId}/preview-render`);
+  // If no timeline yet, run dry-run to generate preview_sequence.json
+  if (!_timeline?.length) {
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Sequencing…'; }
+    const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+    if (!data?.sequence?.length) { alert('Preview failed — check server log.'); return; }
+    _timeline = data.sequence;
+    _timelineMusic = data.music || null;
+  }
 
-  if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
-  if (!data?.url) { alert('Preview render failed — check server log.'); return; }
-
-  // Open results modal with the draft preview
   const video = document.getElementById('m-results-video');
   const info  = document.getElementById('m-results-playing-info');
   if (video) {
-    const src = data.url.startsWith('/data/') ? data.url : '/api/file?path=' + encodeURIComponent(data.url);
-    video.src = src;
+    video.src = `/api/jobs/${_jobId}/preview-stream?t=${Date.now()}`;
     video.load();
     video.play().catch(() => {});
   }
-  if (info) info.textContent = 'Preview draft (no intro/outro)';
+  if (info) info.textContent = 'Streaming preview (GPU)…';
   openResultsModal();
 }
 window.previewTimeline = previewTimeline;
@@ -617,7 +627,6 @@ async function cancelRender() {
 }
 window.cancelRender = cancelRender;
 
-window.previewTimeline = () => alert('Preview not available in v1 — use Legacy UI Preview tab.');
 
 // ── Results modal ─────────────────────────────────────────────────────────────
 let _resultsVideo = null;
@@ -655,6 +664,7 @@ function _renderResultsList() {
 
   const active = _resultsTab === 'shorts' ? shorts : highlights;
   const total  = entries.length;
+  const hasMainYt = highlights.some(([, i]) => i.yt_url);
   if (meta) meta.textContent = `${total} file${total !== 1 ? 's' : ''}`;
 
   list.innerHTML = '';
@@ -712,6 +722,41 @@ function _renderResultsList() {
     dlLink.download = name;
     dlLink.onclick = e => e.stopPropagation();
 
+    const isShort   = /short/i.test(name);
+    const filePath  = info.url;
+    const rfActions = document.createElement('div');
+    rfActions.className = 'm-rf-actions';
+
+    if (!isShort) {
+      const ytBtn = document.createElement('button');
+      ytBtn.className = 'm-rf-yt' + (info.yt_url ? ' linked' : '');
+      ytBtn.textContent = info.yt_url ? '✓ YT' : '▲ YT';
+      ytBtn.title = info.yt_url ? 'Uploaded: ' + info.yt_url : 'Upload to YouTube';
+      ytBtn.onclick = e => { e.stopPropagation(); mYtOpen(filePath, name, info.yt_url || '', _jobId, _workDir); };
+      rfActions.appendChild(ytBtn);
+    } else {
+      const ytsBtn = document.createElement('button');
+      ytsBtn.className = 'm-rf-yt' + (info.yt_url ? ' linked' : '');
+      ytsBtn.textContent = info.yt_url ? '✓ YT' : '▲ YT';
+      if (!hasMainYt && !info.yt_url) {
+        ytsBtn.disabled = true;
+        ytsBtn.title = 'Upload main video to YouTube first';
+      } else {
+        ytsBtn.title = info.yt_url ? 'Uploaded: ' + info.yt_url : 'Upload Short to YouTube';
+      }
+      ytsBtn.onclick = e => { e.stopPropagation(); mYtsOpen(filePath, name, _jobId, _workDir); };
+      rfActions.appendChild(ytsBtn);
+
+      if (info.is_ncs) {
+        const igBtn = document.createElement('button');
+        igBtn.className = 'm-rf-ig' + (info.ig_url ? ' linked' : '');
+        igBtn.textContent = info.ig_url ? '✓ IG' : '▲ IG';
+        igBtn.title = info.ig_url ? 'Uploaded to Instagram' : 'Upload Reel to Instagram';
+        igBtn.onclick = e => { e.stopPropagation(); mIgOpen(filePath, name, info.ncs_attr || null, _jobId); };
+        rfActions.appendChild(igBtn);
+      }
+    }
+
     row.appendChild(rfName);
     if (info.music) {
       const rfMusic = document.createElement('div');
@@ -722,6 +767,7 @@ function _renderResultsList() {
     }
     row.appendChild(rfMeta);
     row.appendChild(dlLink);
+    row.appendChild(rfActions);
     list.appendChild(row);
   });
 }
@@ -753,7 +799,7 @@ window.openResultsModal = openResultsModal;
 function closeResultsModal() {
   document.getElementById('m-results-modal').style.display = 'none';
   const video = document.getElementById('m-results-video');
-  if (video) { video.pause(); }
+  if (video) { video.pause(); video.src = ''; }
 }
 window.closeResultsModal = closeResultsModal;
 

@@ -1,0 +1,47 @@
+/* modern_music.css */
+
+#music-view {
+    padding: 20px;
+}
+
+.music-track-item {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid var(--studio-border);
+    gap: 16px;
+}
+
+.music-track-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.music-track-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.music-track-title {
+    font-weight: 600;
+}
+
+.music-track-details {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+}
+
+.music-track-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.music-track-item.selected {
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.music-track-item.pinned {
+    border-left: 3px solid var(--studio-accent);
+    background: rgba(99, 102, 241, 0.15);
+}
