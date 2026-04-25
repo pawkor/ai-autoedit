@@ -222,12 +222,9 @@ function drawTimeline() {
   const trackObj = _pinnedTrackObj();
   const musicDur = trackObj?.duration || 0;
 
-  // Scale clips and music bar together so they share the same px/sec ruler.
-  // Reference = max(musicDur, totalDur) so neither overflows the other.
+  // Use percentage widths so clips + music bar always fit the container exactly.
   const refDur = Math.max(musicDur || 0, totalDur || 0) || 1;
-  // Measure BEFORE clearing so offsetWidth is non-zero
-  const availW = clipTrack.offsetWidth || Math.max(200, window.innerWidth - 500);
-  const PX = Math.max(4, Math.floor(availW / refDur));
+  const pctPerSec = 100 / refDur;
 
   clipTrack.innerHTML = '';
 
@@ -238,11 +235,11 @@ function drawTimeline() {
       meta.textContent = `${_timeline.length} clips · ${fmtSec(totalDur)}`;
   }
 
-  // Music bar: explicit pixel width so it scrolls in sync with the clip track.
+  // Music bar: percentage width so it aligns with the clip track.
   if (musicBar) {
-    const musicW = musicDur > 0 ? Math.round(musicDur * PX) : availW;
-    musicBar.style.width    = musicW + 'px';
-    musicBar.style.minWidth = musicW + 'px';
+    const musicPct = musicDur > 0 ? (musicDur * pctPerSec).toFixed(4) + '%' : '100%';
+    musicBar.style.width    = musicPct;
+    musicBar.style.minWidth = '';
     musicBar.style.flex     = 'none';
     const name = trackObj?.title || (_pinnedTrack?.split('/').pop() || '');
     if (musicLabel) musicLabel.textContent = name
@@ -261,7 +258,7 @@ function drawTimeline() {
 
   clipTrack.appendChild(makeInsert(0));
   _timeline.forEach((slot, idx) => {
-    const w = Math.max(24, Math.round(slot.duration * PX));
+    const w = (slot.duration * pctPerSec).toFixed(4) + '%';
     const scoreColor = slot.clip_score >= 0.85 ? '#22c55e'
                      : slot.clip_score >= 0.70 ? '#4ade80'
                      : slot.clip_score >= 0.50 ? '#facc15' : '#475569';
@@ -271,7 +268,8 @@ function drawTimeline() {
 
     const div = document.createElement('div');
     div.className = 'm-clip';
-    div.style.width = w + 'px';
+    div.style.flex  = '0 0 ' + w;
+    div.style.width = w;
     div.dataset.idx = idx;
     div.dataset.scene = slot.scene;
     div.draggable = true;
@@ -470,6 +468,23 @@ function _connectJobProgress(jobId) {
         }
         _showStatus('rendering', label, pct, 'running');
       }
+    } else if (msg.type === 'shorts_status') {
+      if (msg.running) {
+        _showStatus('shorts', 'Generating short…', null, 'running');
+        _setShortsRenderBusy(true);
+      } else {
+        _setShortsRenderBusy(false);
+        if (msg.status === 'done') {
+          _showStatus('shorts', '✓ Short ready', 100, 'done');
+          setTimeout(_hideStatus, 3000);
+          loadResults();
+        } else {
+          _showStatus('shorts', '✗ Shorts failed', 100, 'error');
+          setTimeout(_hideStatus, 4000);
+        }
+      }
+    } else if (msg.type === 'shorts_batch_progress') {
+      _showStatus('shorts', `Short ${msg.done}/${msg.total}`, msg.pct, 'running');
     }
   };
   ws.onclose = () => { if (_jobWs === ws) _jobWs = null; };
@@ -483,6 +498,13 @@ function _setRenderBusy(busy) {
     el.disabled = busy;
     el.textContent = busy ? 'Rendering…' : '⬡ Render';
   });
+}
+
+function _setShortsRenderBusy(busy) {
+  const el = document.getElementById('m-btn-shorts');
+  if (!el) return;
+  el.disabled = busy;
+  el.textContent = busy ? 'Generating…' : '▶ Shorts';
 }
 
 // ── Log panel ─────────────────────────────────────────────────────────────────
@@ -742,8 +764,8 @@ function fmtSec(s) {
 }
 
 function enableActions(on) {
-  ['m-btn-preview', 'm-btn-render', 'm-render-btn', 'm-btn-rebuild']
-    .forEach(id => { const el = document.getElementById(id); if (el) el.disabled = !on; });
+  ['m-btn-rebuild', 'm-btn-preview', 'm-btn-render', 'm-btn-shorts'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.disabled = !on; });
 }
 
 // ── Inline clip preview ───────────────────────────────────────────────────────

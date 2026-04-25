@@ -114,6 +114,9 @@
       <div class="m-panel-section">
         <button class="m-btn m-btn-ghost m-btn-full" onclick="openSettingsModal()">⚙ Settings</button>
       </div>
+      <div class="m-panel-section">
+        <button id="m-btn-shorts" class="m-btn m-btn-ghost m-btn-full" onclick="openShortsModal()" disabled>▶ Shorts</button>
+      </div>
       <div class="m-panel-section" style="margin-top:auto;padding-top:8px">
         <button class="m-btn m-btn-ghost m-btn-full m-btn-sm"
                 onclick="location.href='index.html'+location.search"
@@ -218,7 +221,7 @@
   <!-- Settings modal -->
   <div id="m-settings-modal" class="m-modal-overlay" style="display:none"
        onclick="if(event.target===this)closeSettingsModal()">
-    <div class="m-modal" style="max-width:480px;width:100%">
+    <div class="m-modal" style="max-width:640px;width:100%">
       <div class="m-modal-hd">
         <span class="m-modal-title">⚙ Settings</span>
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeSettingsModal()">×</button>
@@ -235,21 +238,77 @@
                  type="number" min="2" max="30" step="0.5" style="width:64px">
           <span class="m-section-meta" style="margin-left:4px">s</span>
         </div>
-        <div class="m-settings-row" style="align-items:flex-start">
+        <div class="m-settings-row" style="align-items:flex-start;margin-top:8px">
+          <span class="m-settings-label" style="padding-top:4px">Description</span>
+          <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+            <textarea id="m-settings-description" class="m-input m-settings-textarea"
+                      rows="4" placeholder="Describe the footage (location, activity, mood)…"
+                      style="width:100%;box-sizing:border-box"></textarea>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button class="m-btn m-btn-ghost m-btn-sm" onclick="generateSettingsPrompts()"
+                      id="m-settings-gen-btn">✦ Generate</button>
+              <span id="m-settings-gen-status" class="m-section-meta"></span>
+            </div>
+          </div>
+        </div>
+        <div class="m-settings-row" style="align-items:flex-start;margin-top:4px">
           <span class="m-settings-label" style="padding-top:4px">Positive</span>
           <textarea id="m-settings-positive" class="m-input m-settings-textarea"
-                    rows="3" placeholder="Positive CLIP prompts (comma-separated)…"></textarea>
+                    rows="4" placeholder="Positive CLIP prompts (comma-separated)…"
+                    style="width:100%;box-sizing:border-box"></textarea>
         </div>
         <div class="m-settings-row" style="align-items:flex-start">
           <span class="m-settings-label" style="padding-top:4px">Negative</span>
           <textarea id="m-settings-negative" class="m-input m-settings-textarea"
-                    rows="3" placeholder="Negative CLIP prompts (comma-separated)…"></textarea>
+                    rows="4" placeholder="Negative CLIP prompts (comma-separated)…"
+                    style="width:100%;box-sizing:border-box"></textarea>
         </div>
       </div>
       <div class="m-modal-footer">
         <span id="m-settings-status" class="m-section-meta"></span>
         <button class="m-btn m-btn-blue" onclick="saveSettings()"
                 style="margin-left:auto">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shorts modal -->
+  <div id="m-shorts-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)closeShortsModal()">
+    <div class="m-modal" style="max-width:400px;width:100%">
+      <div class="m-modal-hd">
+        <span class="m-modal-title">▶ Shorts</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeShortsModal()">×</button>
+      </div>
+      <div style="padding:10px 0 4px">
+        <div class="m-shorts-count-row">
+          <span class="m-settings-label">Count</span>
+          <input id="m-shorts-count" class="m-input" type="number"
+                 min="1" max="9" step="1" value="1" style="width:56px">
+        </div>
+        <div class="m-analyze-opts" style="margin-top:10px">
+          <label class="m-analyze-check">
+            <input type="checkbox" id="m-shorts-text">
+            <span>Text overlays</span>
+          </label>
+          <label class="m-analyze-check" id="m-shorts-multicam-row">
+            <input type="checkbox" id="m-shorts-multicam">
+            <span>Multicam</span>
+          </label>
+          <label class="m-analyze-check">
+            <input type="checkbox" id="m-shorts-beat">
+            <span>Beat sync</span>
+          </label>
+          <label class="m-analyze-check">
+            <input type="checkbox" id="m-shorts-best">
+            <span>Best of best</span>
+          </label>
+        </div>
+      </div>
+      <div class="m-modal-footer">
+        <span id="m-shorts-status" class="m-section-meta"></span>
+        <button class="m-btn m-btn-green" id="m-shorts-btn"
+                onclick="renderShorts()" style="margin-left:auto">⬡ Make Shorts</button>
       </div>
     </div>
   </div>
@@ -278,6 +337,7 @@
   <script src="/js/mode_switcher.js"></script>
   <script src="/js/modern_music.js"></script>
   <script src="/js/modern_analyze.js"></script>
+  <script src="/js/modern_shorts.js"></script>
   <script src="/js/modern.js"></script>
 </body>
 </html>

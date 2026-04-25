@@ -90,6 +90,9 @@ _JOB_CONFIG_MAP = {
     "beats_slow":          ("music_driven", "beats_slow"),
     "cam_pattern":         ("music_driven", "cam_pattern"),
     "gps_weight":          ("scene_selection", "gps_weight"),
+    "blur_speedometer_cams": ("privacy", "blur_speedometer_cams"),
+    "blur_plates":           ("privacy", "blur_plates"),
+    "consensus_min":         ("privacy", "consensus_min"),
 }
 
 
@@ -304,6 +307,9 @@ class JobParams(BaseModel):
     clip_scan_interval: Optional[float] = None
     clip_scan_clip_dur: Optional[float] = None
     clip_scan_min_gap:  Optional[float] = None
+    blur_plates:        bool = True
+    blur_speedometer_cams: Optional[str] = None
+    consensus_min:      Optional[int] = None
 
 
 class RenderParams(BaseModel):
@@ -1046,6 +1052,84 @@ async def preview_sequence(job_id: str):
     return data
 
 
+@router.post("/api/jobs/{job_id}/preview-render")
+async def preview_render(job_id: str):
+    """Render a low-quality preview from preview_sequence.json (NVENC 1080p + music)."""
+    import tempfile
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status == "running":
+        raise HTTPException(409, "Job is running — wait for it to finish")
+
+    auto_dir = job.auto_dir()
+    seq_path = auto_dir / "preview_sequence.json"
+    if not seq_path.exists():
+        raise HTTPException(400, "Run 'Build Timeline' first")
+
+    data = json.loads(seq_path.read_text())
+    sequence = data.get("sequence", [])
+    if not sequence:
+        raise HTTPException(400, "Empty sequence")
+
+    # Music: prefer job param, fall back to sequence metadata
+    music_path_str = (
+        job.params.get("selected_track") or
+        job.params.get("music_file") or
+        data.get("music", "")
+    )
+    music_ss = sequence[0].get("music_start", 0.0)
+
+    output = auto_dir / "preview_draft.mp4"
+    concat_path = auto_dir / "preview_concat.txt"
+
+    # Build ffconcat file — inpoint + outpoint per slot
+    lines = ["ffconcat version 1.0"]
+    for slot in sequence:
+        cp = slot.get("clip_path", "")
+        if not cp or not Path(cp).exists():
+            continue
+        ss   = float(slot.get("clip_ss", 0))
+        dur  = float(slot.get("duration", 0))
+        lines.append(f"file '{cp}'")
+        lines.append(f"inpoint {ss:.4f}")
+        lines.append(f"outpoint {ss + dur:.4f}")
+    concat_path.write_text("\n".join(lines))
+
+    # FFMPEG: concat → scale 1080p → NVENC; add music if available
+    _vf = ("scale=1920:1080:force_original_aspect_ratio=decrease,"
+           "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0", "-i", str(concat_path),
+    ]
+    has_music = bool(music_path_str and Path(music_path_str).exists())
+    if has_music:
+        cmd += ["-ss", f"{music_ss:.4f}", "-i", music_path_str]
+
+    cmd += ["-vf", _vf, "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "28"]
+    if has_music:
+        cmd += ["-c:a", "aac", "-b:a", "160k", "-shortest"]
+    else:
+        cmd += ["-an"]
+    cmd.append(str(output))
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
+        if proc.returncode != 0:
+            raise HTTPException(500,
+                f"Preview render failed:\n{stdout.decode(errors='replace')[-2000:]}")
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Preview render timed out (>180s)")
+
+    return {"url": str(output)}
+
+
 @router.post("/api/jobs/{job_id}/render-music-driven")
 async def render_music_driven(job_id: str, data: dict = Body(default={})):
     job = jobs.get(job_id)
@@ -1284,10 +1368,12 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v
+    if "selected_track" in data:
+        job.selected_track = data["selected_track"] or None
     job.save()
     return {"ok": True}
 
