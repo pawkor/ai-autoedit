@@ -11,13 +11,27 @@ between detections across SAMPLE_COUNT frames, ensuring a much tighter and
 cleaner look.
 """
 
+import os
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+# ── Suppress ultralytics GitHub rate-limit check (once per day max) ───────────
+_YOLO_STAMP = Path.home() / '.cache' / 'ultralytics_online_check'
+try:
+    _last_check = _YOLO_STAMP.stat().st_mtime if _YOLO_STAMP.exists() else 0
+    if time.time() - _last_check < 86400:
+        os.environ.setdefault('YOLO_OFFLINE', '1')
+    else:
+        _YOLO_STAMP.parent.mkdir(parents=True, exist_ok=True)
+        _YOLO_STAMP.touch()
+except Exception:
+    os.environ.setdefault('YOLO_OFFLINE', '1')
 
 # ── Tuning knobs ──────────────────────────────────────────────────────────────
 # Defaults — can be overridden in config.ini [privacy]
@@ -27,12 +41,16 @@ LOWER_FRAC     = 0.50   # speedometer lives in lower half of frame
 SPEED_MIN_H    = 35     # min digit bbox height in detection-scale pixels (35 @ 1920×1080)
 SPEED_MIN_CONF = 0.7    # min OCR confidence for speedometer reading
 LP_MIN_W       = 50     # min LP width in detection-scale pixels
+LP_MIN_CONF    = 0.85   # min YOLO confidence for plate detection (high: model over-detects logos)
+LP_MIN_ASPECT  = 2.0    # min width/height ratio (EU plates ~4.7:1, US ~2:1; logos/gloves fail)
+LP_MAX_W_FRAC  = 0.22   # max plate width as fraction of frame (plates small vs logos on helmet)
 PAD_SPEED      = 30     # padding around speedometer region (detect-scale px)
 PAD_LP         = 15     # padding around LP region (detect-scale px)
 PIX_BLOCK      = 20     # pixelation block size (original-scale px)
 CONSENSUS_MIN  = 3      # min detections across SAMPLE_COUNT frames to accept a region
 
-# ── Model singletons ──────────────────────────────────────────────────────────
+# ── Model singletons ─────────────────────────────────────────────────────────
+# None = not yet tried; False = tried and unavailable; YOLO instance = loaded
 _ocr   = None
 _yolo  = None
 
@@ -49,23 +67,14 @@ def _get_yolo():
     global _yolo
     if _yolo is None:
         from ultralytics import YOLO
-        # YOLOv11n is much faster and more accurate than YOLOv8n.
-        # We try to load a specialized plate detector if it exists,
-        # otherwise fall back to a generic v11 nano model which can
-        # still be fine-tuned or used for general vehicle detection.
+        # Only use a specialized license plate model — generic COCO models
+        # (yolov8n, yolo11n) have class 0 = person, not plate, and produce
+        # false positives without a reliable class filter.
         try:
-            _yolo = YOLO("yolo11n-license-plate.pt") # Custom or community v11 model
+            _yolo = YOLO("yolo11n-license-plate.pt")
         except Exception:
-            try:
-                # Fallback to standard yolo11n which is natively supported in ultralytics 8.3.0+
-                _yolo = YOLO("yolo11n.pt") 
-            except Exception:
-                # Last resort: older v8 model if v11 is somehow unavailable
-                try:
-                    _yolo = YOLO("yolov8n.pt")
-                except Exception:
-                    _yolo = None
-    return _yolo
+            _yolo = False  # sentinel: tried, unavailable — do not retry
+    return _yolo if _yolo else None
 
 
 # ── Config loading ────────────────────────────────────────────────────────────
@@ -159,18 +168,28 @@ _LP_PATTERN = re.compile(r'^[A-Z0-9]{4,8}$')
 
 
 def _detect_plates(frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
-    """Detect license plates via YOLOv8 or EasyOCR."""
+    """Detect license plates via specialized YOLO model or EasyOCR fallback."""
     yolo = _get_yolo()
     if yolo:
         results = yolo(frame_bgr, verbose=False)
         boxes = []
         for r in results:
             for box in r.boxes:
-                if hasattr(box, 'cls') and int(box.cls[0]) == 0:
-                    b = box.xyxy[0].cpu().numpy()
-                    bx, by, bx2, by2 = map(int, b)
-                    boxes.append((bx, by, bx2 - bx, by2 - by))
-        if boxes: return boxes
+                conf = float(box.conf[0])
+                if conf < LP_MIN_CONF:
+                    continue
+                b = box.xyxy[0].cpu().numpy()
+                bx, by, bx2, by2 = map(int, b)
+                bw, bh = bx2 - bx, by2 - by
+                if bw < LP_MIN_W:
+                    continue
+                if bh > 0 and bw / bh < LP_MIN_ASPECT:
+                    continue
+                if bw > frame_bgr.shape[1] * LP_MAX_W_FRAC:
+                    continue
+                boxes.append((bx, by, bw, bh))
+        if boxes:
+            return boxes
 
     ocr = _get_ocr()
     results = ocr.readtext(frame_bgr, detail=1, paragraph=False)
@@ -178,11 +197,14 @@ def _detect_plates(frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
     for (bbox, text, conf) in results:
         text_clean = re.sub(r'[^A-Z0-9]', '', text.upper())
         if not _LP_PATTERN.match(text_clean): continue
+        if not re.search(r'\d', text_clean): continue  # brand names (SHOEI, AIROH, ARAI) have no digits
         if conf < 0.4: continue
         xs, ys = [p[0] for p in bbox], [p[1] for p in bbox]
         bx, by = int(min(xs)), int(min(ys))
         bw, bh = int(max(xs) - min(xs)), int(max(ys) - min(ys))
-        if bw < LP_MIN_W or (bh > 0 and bw / bh < 1.2): continue
+        if bw < LP_MIN_W or (bh > 0 and bw / bh < LP_MIN_ASPECT): continue
+        fw = frame_bgr.shape[1]
+        if bw > fw * LP_MAX_W_FRAC: continue
         boxes.append((bx, by, bw, bh))
     return boxes
 
@@ -251,11 +273,18 @@ def detect_clip_regions(
     final_clusters = []
     if len(speed_cluster["detections"]) >= CONSENSUS_MIN:
         final_clusters.append(speed_cluster)
-    
+
     for pc in plate_clusters:
         if len(pc["detections"]) >= max(2, CONSENSUS_MIN - 1):
             final_clusters.append(pc)
-            
+
+    # Store original-resolution frame dimensions so blur_vf can compute
+    # numeric crop bounds (ffmpeg's crop filter doesn't support main_w/main_h).
+    orig_w, orig_h = fw * DETECT_SCALE, fh * DETECT_SCALE
+    for c in final_clusters:
+        c["frame_w"] = orig_w
+        c["frame_h"] = orig_h
+
     return final_clusters
 
 
@@ -302,10 +331,17 @@ def blur_vf(clusters: list[dict], duration: float, pix_block: int = PIX_BLOCK) -
                 expr_x = f"if({cond},{lx},{expr_x if expr_x else pts[j][1]})"
                 expr_y = f"if({cond},{ly},{expr_y if expr_y else pts[j][2]})"
             
-        # Final offset: center minus half-width
-        # Use clip() to ensure crop/overlay stays within frame boundaries
-        final_x = f"clip({expr_x}-{bw/2},0,main_w-{bw})"
-        final_y = f"clip({expr_y}-{bh/2},0,main_h-{bh})"
+        # Final offset: center minus half-width, clamped to frame boundaries.
+        # ffmpeg crop filter doesn't have main_w/main_h (overlay-only variables),
+        # so use numeric bounds from stored frame dimensions when available.
+        _fw = cluster.get("frame_w", 0)
+        _fh = cluster.get("frame_h", 0)
+        if _fw > 0 and _fh > 0:
+            final_x = f"clip({expr_x}-{bw/2:.1f},0,{max(0, _fw - bw)})"
+            final_y = f"clip({expr_y}-{bh/2:.1f},0,{max(0, _fh - bh)})"
+        else:
+            final_x = f"clip({expr_x}-{bw/2:.1f},0,iw-{bw})"
+            final_y = f"clip({expr_y}-{bh/2:.1f},0,ih-{bh})"
 
         pix_w, pix_h = max(1, bw // pix_block), max(1, bh // pix_block)
         is_last = i == len(clusters) - 1
@@ -313,9 +349,9 @@ def blur_vf(clusters: list[dict], duration: float, pix_block: int = PIX_BLOCK) -
         
         parts.append(
             f"[{prev}]split[base{i}][tmp{i}];"
-            f"[tmp{i}]crop={bw}:{bh}:{final_x}:{final_y},"
+            f"[tmp{i}]crop={bw}:{bh}:x='{final_x}':y='{final_y}',"
             f"scale={pix_w}:{pix_h},scale={bw}:{bh}:flags=neighbor[pix{i}];"
-            f"[base{i}][pix{i}]overlay={final_x}:{final_y}:shortest=1"
+            f"[base{i}][pix{i}]overlay=x='{final_x}':y='{final_y}':shortest=1"
             f"[{out_label}]"
         )
         prev = out_label

@@ -94,6 +94,7 @@ _JOB_CONFIG_MAP = {
     "blur_speedometer_cams": ("privacy", "blur_speedometer_cams"),
     "blur_plates":           ("privacy", "blur_plates"),
     "consensus_min":         ("privacy", "consensus_min"),
+    "photos_dir":            ("photos", "dir"),
 }
 
 
@@ -308,6 +309,7 @@ class JobParams(BaseModel):
     clip_scan_interval: Optional[float] = None
     clip_scan_clip_dur: Optional[float] = None
     clip_scan_min_gap:  Optional[float] = None
+    score_all_cams:    bool             = True
     blur_plates:        bool = True
     blur_speedometer_cams: Optional[str] = None
     consensus_min:      Optional[int] = None
@@ -414,8 +416,13 @@ async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> b
         if job.params.get("shorts_ncs"):       cmd.append("--ncs")
         if job.params.get("shorts_best"):      cmd.append("--best")
         if job.params.get("shorts_beat_sync"): cmd.append("--beat-sync")
-        _smd = job.params.get("shorts_music_dir", "").strip()
-        if _smd:                             cmd += ["--music-dir", _smd]
+        _smds = job.params.get("shorts_music_dirs") or []
+        if isinstance(_smds, str): _smds = [s.strip() for s in _smds.split(",") if s.strip()]
+        if not _smds:
+            _smd = job.params.get("shorts_music_dir", "").strip()
+            if _smd: _smds = [_smd]
+        for _d in _smds:
+            if _d.strip(): cmd += ["--music-dir", _d.strip()]
         if version:                          cmd += ["--version", version]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -1013,6 +1020,22 @@ async def preview_sequence(job_id: str):
 
     save_job_config(Path(job.params["work_dir"]), job.params)
 
+    # Manual timeline takes priority — skip dry-run
+    manual_tl = job.params.get("manual_timeline")
+    if manual_tl and isinstance(manual_tl, list) and len(manual_tl) > 0:
+        seq_data = {"sequence": manual_tl, "music": music_path_str}
+        seq_path.write_text(json.dumps(seq_data))
+        for slot in manual_tl:
+            fp = slot.get("frame_path")
+            slot["frame_url"] = ("/" + Path(fp).relative_to("/").as_posix()) if fp else None
+        return {"sequence": manual_tl, "music": music_path_str}
+
+    # Write photo_selection.json so dry-run can weave photo slots
+    _sel_photos = job.params.get("selected_photos") or []
+    _photo_sel_path = Path(job.params["work_dir"]) / "_autoframe" / "photo_selection.json"
+    _photo_sel_path.parent.mkdir(parents=True, exist_ok=True)
+    _photo_sel_path.write_text(json.dumps({"photos": _sel_photos}))
+
     cmd = [sys.executable, str(SCRIPT_DIR / "music_driven.py"),
            job.params["work_dir"], "--dry-run"]
     if music_path_str:
@@ -1163,43 +1186,46 @@ async def preview_stream(job_id: str):
     )
     music_ss = float(sequence[0].get("music_start", 0.0))
 
-    # Write temp concat file
-    cf = _tmp.NamedTemporaryFile(
-        suffix=".txt", mode="w", delete=False, prefix="pvs_concat_"
-    )
-    try:
-        cf.write("ffconcat version 1.0\n")
-        for slot in sequence:
-            cp = slot.get("clip_path", "")
-            if not cp or not Path(cp).exists():
-                continue
-            ss  = float(slot.get("clip_ss", 0))
-            dur = float(slot.get("duration", 0))
-            cf.write(f"file '{cp}'\ninpoint {ss:.4f}\noutpoint {ss + dur:.4f}\n")
-        cf.close()
+    # DJI clips = H264, VID/helmet clips = HEVC — ffconcat uses a single decoder and
+    # cannot switch codecs mid-stream → freeze at every cam switch.
+    # Fix: one -i per slot with -ss clip_ss -t duration (fast seek, ~1 extra frame at most
+    # because both camera types have keyframes every 0.3-0.5s), then filter_complex concat.
+    # Each input gets its own decoder instance so H264/HEVC mix is handled correctly.
+    valid_slots = [
+        (slot, float(slot.get("clip_ss", 0)), float(slot.get("duration", 0)))
+        for slot in sequence
+        if slot.get("clip_path") and Path(slot["clip_path"]).exists()
+        and float(slot.get("duration", 0)) > 0
+    ]
 
+    cf = _tmp.NamedTemporaryFile(suffix=".txt", mode="w", delete=False, prefix="pvs_dummy_")
+    cf.close()
+    concat_name = cf.name
+
+    try:
         has_music = bool(music_path_str and Path(music_path_str).exists())
-        cmd = [
-            ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-            "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
-            "-f", "concat", "-safe", "0", "-i", cf.name,
-        ]
+
+        inputs = []
+        filter_parts = []
+        for i, (slot, ss, dur) in enumerate(valid_slots):
+            inputs += ["-ss", f"{ss:.4f}", "-t", f"{dur:.4f}", "-i", slot["clip_path"]]
+            filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+        n = len(valid_slots)
+        concat_in = "".join(f"[v{i}]" for i in range(n))
+        filter_parts.append(f"{concat_in}concat=n={n}:v=1:a=0[vout]")
+        filter_parts.append("[vout]fps=fps=30,scale=1280:-2[out]")
+
+        cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
+        cmd += inputs
         if has_music:
             cmd += ["-ss", f"{music_ss:.4f}", "-i", music_path_str]
-
-        cmd += [
-            "-map", "0:v:0",
-            "-vf", "scale_cuda=1280:-2",
-            "-r", "30",
-            "-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30",
-        ]
+        cmd += ["-filter_complex", ";".join(filter_parts), "-map", "[out]"]
+        cmd += ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30"]
         if has_music:
-            cmd += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
+            cmd += ["-map", f"{n}:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
         else:
             cmd += ["-an"]
         cmd += ["-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
-
-        concat_name = cf.name
 
         async def _stream():
             proc = await asyncio.create_subprocess_exec(
@@ -1288,6 +1314,12 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                 # the latest cam_pattern / beats_* / gps_weight even when the
                 # frontend PUT /api/job-config was still in-flight at render time.
                 save_job_config(Path(job.params["work_dir"]), job.params)
+
+                # Write photo_selection.json so render can weave photo slots
+                _sel_photos = job.params.get("selected_photos") or []
+                _photo_sel_path = Path(job.params["work_dir"]) / "_autoframe" / "photo_selection.json"
+                _photo_sel_path.parent.mkdir(parents=True, exist_ok=True)
+                _photo_sel_path.write_text(json.dumps({"photos": _sel_photos}))
 
                 cmd = [sys.executable, str(SCRIPT_DIR / "music_driven.py"),
                        job.params["work_dir"]]
@@ -1472,7 +1504,7 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_music_dir", "shorts_music_dirs", "selected_photos"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v
@@ -1650,7 +1682,8 @@ async def job_frames(job_id: str):
     if not job:
         raise HTTPException(404)
 
-    scores_csv = job.auto_dir() / "scene_scores.csv"
+    allcam_csv = job.auto_dir() / "scene_scores_allcam.csv"
+    scores_csv = allcam_csv if allcam_csv.exists() else job.auto_dir() / "scene_scores.csv"
     frames_dir = job.auto_dir() / "frames"
     csv_dir    = job.auto_dir() / "csv"
     if not scores_csv.exists():
@@ -1954,6 +1987,66 @@ async def generate_preview(job_id: str, filename: str = Query(...)):
             raise HTTPException(500, "Preview generation failed")
 
     return {"preview_url": str(preview)}
+
+
+def _get_photo_ts(path: Path) -> float:
+    try:
+        from PIL import Image
+        from PIL.ExifTags import TAGS
+        import datetime as _dt
+        img = Image.open(path)
+        exif = img._getexif()
+        if exif:
+            for tag, val in exif.items():
+                if TAGS.get(tag) == 'DateTimeOriginal':
+                    return _dt.datetime.strptime(val, '%Y:%m:%d %H:%M:%S').timestamp()
+    except Exception:
+        pass
+    return path.stat().st_mtime
+
+
+def _make_photo_thumb(src: Path, dst: Path):
+    try:
+        from PIL import Image
+        img = Image.open(src)
+        img.thumbnail((320, 240), Image.LANCZOS)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        img.save(dst, 'JPEG', quality=80)
+    except Exception:
+        pass
+
+
+@router.get("/api/jobs/{job_id}/photos")
+async def get_photos(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    cfg = read_job_config(job.work_dir())
+    photos_dir = job.params.get("photos_dir") or cfg.get("photos_dir") or str(job.work_dir() / "photos")
+    if not photos_dir:
+        return {"photos": []}
+    pd = Path(photos_dir)
+    if not pd.exists() or not pd.is_dir():
+        return {"photos": []}
+    exts = {'.jpg', '.jpeg', '.png', '.heic', '.webp'}
+    photo_files = [p for p in pd.iterdir() if p.suffix.lower() in exts]
+    thumb_dir = job.auto_dir() / "photo_thumbs"
+    selected = set(job.params.get("selected_photos") or [])
+    result = []
+    for p in photo_files:
+        ts = _get_photo_ts(p)
+        thumb = thumb_dir / p.name
+        if not thumb.exists():
+            _make_photo_thumb(p, thumb)
+        result.append({
+            "path":      str(p),
+            "filename":  p.name,
+            "timestamp": ts,
+            "thumb_url": f"/api/file?path={thumb}",
+            "selected":  str(p) in selected,
+        })
+    result.sort(key=lambda x: x["timestamp"])
+    return {"photos": result}
 
 
 @router.delete("/api/jobs/{job_id}/result-file")

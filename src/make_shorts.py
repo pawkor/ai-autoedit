@@ -473,7 +473,7 @@ def main():
     ap.add_argument("--shot",       type=float, default=1.5,  help="Seconds per shot (default 1.5)")
     ap.add_argument("--top",        type=int,   default=0,    help="Force top N scenes (0=auto)")
     ap.add_argument("--music",      default="",               help="Path to music file (auto-pick if omitted)")
-    ap.add_argument("--music-dir",  default="",               help="Root dir for music index search")
+    ap.add_argument("--music-dir",  action="append", default=[], dest="music_dirs", help="Root dir for music search (repeatable)")
     ap.add_argument("--transition", default="",               help="Force one xfade transition for all")
     ap.add_argument("--xfade-dur",  type=float, default=XFADE_DUR)
     ap.add_argument("--width",      type=int,   default=1080)
@@ -584,8 +584,9 @@ def main():
     music_file: Path | None = Path(args.music) if args.music else None
     if not music_file:
         search_roots = []
-        if args.music_dir:
-            search_roots.append(Path(args.music_dir))
+        for _md in args.music_dirs:
+            if _md.strip():
+                search_roots.append(Path(_md.strip()))
         try:
             import configparser
             cp = configparser.ConfigParser()

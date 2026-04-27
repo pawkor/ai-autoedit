@@ -71,6 +71,21 @@ def _wcfg_music(key: str, default: str) -> str:
     return cp.get("music", key, fallback=default)
 
 
+@router.get("/api/hw-info")
+async def hw_info():
+    import psutil
+    cpu_count = os.cpu_count() or 1
+    ram_gb = round(psutil.virtual_memory().total / (1024 ** 3), 1)
+    vram_mb = 0
+    try:
+        import torch
+        if torch.cuda.is_available():
+            vram_mb = round(torch.cuda.get_device_properties(0).total_memory / (1024 ** 2))
+    except Exception:
+        pass
+    return {"cpu_count": cpu_count, "ram_gb": ram_gb, "vram_mb": vram_mb}
+
+
 @router.get("/api/settings")
 async def get_settings():
     orig_pct  = round(float(_wcfg_music("original_volume", "0.25")) * 100)

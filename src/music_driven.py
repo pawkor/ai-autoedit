@@ -95,22 +95,31 @@ def analyze_music(music_path: Path) -> dict:
 def build_schedule(
     beat_times: list[float],
     beat_energy: list[float],
+    beats_ultra_fast: int = 2,
     beats_fast: int = 3,
     beats_mid: int = 4,
     beats_slow: int = 6,
 ) -> list[dict]:
     """
     Group consecutive beats into shot slots.
-    High energy  (>0.65) → beats_fast beats/shot  (~chorus)
-    Medium energy         → beats_mid  beats/shot
-    Low energy   (<0.35) → beats_slow beats/shot  (~verse/scenic)
+    Very high energy (>0.85) → beats_ultra_fast beats/shot  (~peak chorus hit)
+    High energy      (>0.65) → beats_fast beats/shot        (~chorus)
+    Medium energy             → beats_mid  beats/shot
+    Low energy       (<0.35) → beats_slow beats/shot        (~verse/scenic)
     """
     schedule: list[dict] = []
     n = len(beat_times)
     i = 0
     while i < n - 1:
         energy = beat_energy[i]
-        n_beats = beats_fast if energy > 0.65 else (beats_slow if energy < 0.35 else beats_mid)
+        if energy > 0.85:
+            n_beats = beats_ultra_fast
+        elif energy > 0.65:
+            n_beats = beats_fast
+        elif energy < 0.35:
+            n_beats = beats_slow
+        else:
+            n_beats = beats_mid
         end_i = min(i + n_beats, n - 1)
         dur = beat_times[end_i] - beat_times[i]
         if dur >= 0.4:
@@ -123,11 +132,13 @@ def build_schedule(
             })
         i = end_i
 
-    n_fast = sum(1 for s in schedule if s["n_beats"] == beats_fast)
-    n_mid  = sum(1 for s in schedule if s["n_beats"] == beats_mid)
-    n_slow = sum(1 for s in schedule if s["n_beats"] == beats_slow)
+    n_ultra = sum(1 for s in schedule if s["n_beats"] == beats_ultra_fast)
+    n_fast  = sum(1 for s in schedule if s["n_beats"] == beats_fast)
+    n_mid   = sum(1 for s in schedule if s["n_beats"] == beats_mid)
+    n_slow  = sum(1 for s in schedule if s["n_beats"] == beats_slow)
     print(f"  Schedule: {len(schedule)} slots  "
-          f"fast={n_fast}({beats_fast}b)  mid={n_mid}({beats_mid}b)  slow={n_slow}({beats_slow}b)  "
+          f"ultra={n_ultra}({beats_ultra_fast}b)  fast={n_fast}({beats_fast}b)  "
+          f"mid={n_mid}({beats_mid}b)  slow={n_slow}({beats_slow}b)  "
           f"total={schedule[-1]['end']:.1f}s")
     return schedule
 
@@ -334,11 +345,15 @@ def match_clips(schedule: list[dict], clips: list[dict],
     _src_window = max(4, num_sources * 2)
     recent_sources: collections.deque = collections.deque(maxlen=_src_window)
 
-    # Camera pattern (cyclic). Empty = no camera preference (pure score-driven).
+    # Camera pattern (cyclic). Empty = default group-based interleaving when multicam.
     _resolved_pattern = _parse_cam_pattern(cam_pattern, cameras)
     if _resolved_pattern:
         print(f"  Camera pattern: '{cam_pattern}' → {_resolved_pattern[:8]}… "
               f"(repeating every {len(_resolved_pattern)} slots)")
+    elif num_cameras >= 2:
+        # Default: 2 slots per camera then switch (e.g. [A,A,B,B] repeating)
+        _resolved_pattern = [cam for cam in cameras for _ in range(2)]
+        print(f"  Camera pattern: default group-2 → {_resolved_pattern} (repeating)")
     else:
         print(f"  Camera pattern: none (score-driven, {num_cameras} camera(s))")
     _slot_idx = 0   # counts placed slots (for pattern indexing)
@@ -409,6 +424,9 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 return (c["score"] * 0.50
                         + motion_match  * 0.30
                         + chron_match   * _chron_w)
+            # High-energy slots: favor motion over CLIP score for more dynamic feel
+            if energy > 0.65:
+                return c["score"] * 0.45 + motion_match * 0.55
             return c["score"] * 0.60 + motion_match * 0.40
 
         best = max(pool, key=rank)
@@ -488,6 +506,20 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
 
         _fps_int = int(framerate) if framerate else 60
 
+        # Pre-compute frame-snapped durations using cumulative correction.
+        # Independent per-clip rounding (round(dur*fps)/fps) accumulates ±0.5-frame
+        # errors across 50+ clips → up to 400ms drift. Cumulative approach keeps
+        # total frame count exact: each clip gets exactly the frames needed so the
+        # running total matches round(cumulative_target * fps).
+        _accum_frames = 0
+        _cumul_target = 0.0
+        for _e in edit:
+            _cumul_target += _e["duration"]
+            _ideal_total = round(_cumul_target * _fps_int)
+            _this_frames = max(1, _ideal_total - _accum_frames)
+            _e["_snapped_dur"] = _this_frames / _fps_int
+            _accum_frames = _ideal_total
+
         # ── Privacy pre-pass (single-threaded, GPU detection) ────────────────
         # Detect speedometer + license plate regions before parallel encoding
         # so GPU is not contended between detection inference and NVENC.
@@ -505,6 +537,8 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                 from privacy import detect_clip_regions, blur_vf as _blur_vf_fn
                 print(f"  Privacy: detecting regions ({len(edit)} clips)…", flush=True)
                 for _pi, _entry in enumerate(edit):
+                    if _entry.get("type") == "photo":
+                        continue
                     _cam = _entry.get("camera", "")
                     _do_speed  = _cam in _speed_cam_set
                     _do_plates = blur_plates
@@ -524,8 +558,40 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         def _trim_one(args):
             i, entry = args
             out = tmp / f"s{i:04d}.mp4"
-            # Snap duration to frame boundary to prevent accumulation of rounding drift
-            dur = round(entry["duration"] * _fps_int) / _fps_int
+            dur = entry.get("_snapped_dur", round(entry["duration"] * _fps_int) / _fps_int)
+
+            # Photo slot: still image → video with fade in/out
+            if entry.get("type") == "photo":
+                fade_dur = min(0.4, dur * 0.2)
+                if resolution:
+                    w, h = resolution.split(":")
+                    _photo_vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+                                 f"fps={framerate},"
+                                 f"fade=t=in:st=0:d={fade_dur},"
+                                 f"fade=t=out:st={dur - fade_dur:.3f}:d={fade_dur}")
+                else:
+                    _photo_vf = (f"fps={framerate},"
+                                 f"fade=t=in:st=0:d={fade_dur},"
+                                 f"fade=t=out:st={dur - fade_dur:.3f}:d={fade_dur}")
+                cmd = [
+                    ffmpeg, "-y",
+                    "-loop", "1", "-t", str(dur),
+                    "-i", entry["path"],
+                    "-f", "lavfi", "-i", f"anullsrc=r=48000:cl=stereo",
+                    "-t", str(dur),
+                    "-vf", _photo_vf,
+                    *enc_v,
+                    "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                    "-map", "0:v", "-map", "1:a",
+                    "-map_metadata", "-1",
+                    str(out)
+                ]
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                if r.returncode != 0 or not out.exists():
+                    print(f"  WARN: photo encode failed for {entry['path']}\n{r.stderr}", flush=True)
+                    return (i, None, 0.0)
+                return (i, out, dur)
 
             # Build filter: privacy blur FIRST (in original coords), then scale/fps
             # IMPORTANT: detection coords are in original-resolution space, so blur
@@ -558,15 +624,9 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
             if r.returncode != 0 or not out.exists():
                 print(f"  WARN: trim failed for {entry['scene']}\n{r.stderr}", flush=True)
                 return (i, None, 0.0)
-            # Probe actual encoded duration — used in concat list to prevent freeze frames.
-            # (target dur vs actual dur mismatch causes concat demuxer to hold last frame.)
-            _pr = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-                 "-of", "csv=p=0", str(out)],
-                capture_output=True, text=True
-            )
-            actual_dur = float(_pr.stdout.strip()) if _pr.stdout.strip() else dur
-            return (i, out, actual_dur)
+            # Use _snapped_dur (= n_frames/fps) as duration — NOT probed format=duration
+            # which includes container overhead > last PTS → freeze frame in concat.
+            return (i, out, dur)
 
         # Limit NVENC parallel encodes — GPU encoder has a session cap (typically 3-5)
         trim_workers = 3 if nvenc else _WORKERS
@@ -594,20 +654,29 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
 
         # Concat video-only
         clist = tmp / "list.txt"
-        # No 'duration' directive — clips are re-encoded with frame-snapped durations
-        # so PTS is clean. The directive would cause freeze frames because ffprobe's
-        # format=duration includes container overhead and is larger than the last
-        # packet PTS, making the concat demuxer hold the last frame to fill the gap.
+        # duration directive uses _snapped_dur (n_frames/fps) — prevents timestamp drift
+        # across 50+ clips. Must NOT use probed format=duration (container overhead > PTS).
         clist_lines = []
         for p, _dur in trimmed:
             clist_lines.append(f"file '{p}'")
+            clist_lines.append(f"duration {_dur:.6f}")
         clist.write_text("\n".join(clist_lines))
         vid = tmp / "vid.mp4"
-        subprocess.run(
+        _cr = subprocess.run(
             [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(clist),
              "-c", "copy", str(vid)],
-            check=True, capture_output=True
+            capture_output=True, text=True
         )
+        if _cr.returncode != 0:
+            print(f"  WARN: concat copy failed (rc={_cr.returncode}), retrying with re-encode\n{_cr.stderr[-2000:]}", flush=True)
+            _cr2 = subprocess.run(
+                [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(clist),
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                 "-c:a", "aac", "-b:a", "192k", str(vid)],
+                capture_output=True, text=True
+            )
+            if _cr2.returncode != 0:
+                raise RuntimeError(f"concat failed (rc={_cr2.returncode}):\n{_cr2.stderr[-2000:]}")
 
         # Probe actual duration
         r = subprocess.run(
@@ -621,6 +690,32 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         shutil.move(str(vid), str(output))
 
     print(f"  → {output.name}  ({video_dur:.1f}s  {len(trimmed)} shots)")
+
+
+# ── Photo slot insertion ──────────────────────────────────────────────────────
+
+def _insert_photos(edit: list[dict], photo_paths: list[str]) -> list[dict]:
+    """Evenly distribute photo stills through the edit list and recalculate music_start."""
+    if not photo_paths or not edit:
+        return edit
+    n = len(edit)
+    result = list(edit)
+    positions = [int((i + 1) * n / (len(photo_paths) + 1)) for i in range(len(photo_paths))]
+    for pos, path in sorted(zip(positions, photo_paths), key=lambda x: x[0], reverse=True):
+        result.insert(pos, {
+            "type":       "photo",
+            "path":       path,
+            "duration":   2.5,
+            "energy":     0.5,
+            "clip_score": 1.0,
+            "music_start": 0.0,
+            "scene":      f"photo_{pos}",
+        })
+    t = 0.0
+    for slot in result:
+        slot["music_start"] = round(t, 3)
+        t += slot["duration"]
+    return result
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -837,44 +932,63 @@ def assemble(
     beat_times  = [t - music_ss for t in beat_times[start_idx:]]
     beat_energy = beat_energy[start_idx:]
 
+    # Read intro card duration early — needed for beat-alignment below.
+    _no_intro = _cp.getboolean("job", "no_intro", fallback=False)
+    _card_dur = _cp.getfloat("intro_outro", "duration", fallback=3.0) if not _no_intro else 0.0
+
     # 2. Build cut schedule (beats per shot configurable via [music_driven] in config.ini)
+    _beats_ultra_fast = int(_cp.get("music_driven", "beats_ultra_fast", fallback="2"))
     _beats_fast = int(_cp.get("music_driven", "beats_fast", fallback="3"))
     _beats_mid  = int(_cp.get("music_driven", "beats_mid",  fallback="4"))
     _beats_slow = int(_cp.get("music_driven", "beats_slow", fallback="6"))
     # BPM-adaptive: ensure minimum clip durations regardless of tempo.
     # At high BPM (e.g. 117) default 3 beats = 1.5s → slideshow.
-    # Targets: fast≥2.5s, mid≥4.0s, slow≥6.0s.
     import math as _math
     _bpm = music_info.get("tempo", 120.0)
     _beat_sec = 60.0 / _bpm
+    _min_ultra = float(_cp.get("music_driven", "min_clip_ultra_sec", fallback="0.8"))
     _min_fast = float(_cp.get("music_driven", "min_clip_fast_sec", fallback="1.5"))
     _min_mid  = float(_cp.get("music_driven", "min_clip_mid_sec",  fallback="2.5"))
     _min_slow = float(_cp.get("music_driven", "min_clip_slow_sec", fallback="4.0"))
-    # Round up to nearest multiple of 4 (bar in 4/4) so cuts land on downbeats.
+    _beats_ultra_fast = max(_beats_ultra_fast, _math.ceil(_min_ultra / _beat_sec))
     _beats_fast = max(_beats_fast, _math.ceil(_min_fast / _beat_sec))
     _beats_mid  = max(_beats_mid,  _math.ceil(_min_mid  / _beat_sec))
     _beats_slow = max(_beats_slow, _math.ceil(_min_slow / _beat_sec))
     print(f"  BPM={_bpm:.0f}  beat={_beat_sec:.2f}s  "
-          f"beats: fast={_beats_fast}({_beats_fast*_beat_sec:.1f}s) "
+          f"beats: ultra={_beats_ultra_fast}({_beats_ultra_fast*_beat_sec:.1f}s) "
+          f"fast={_beats_fast}({_beats_fast*_beat_sec:.1f}s) "
           f"mid={_beats_mid}({_beats_mid*_beat_sec:.1f}s) "
           f"slow={_beats_slow}({_beats_slow*_beat_sec:.1f}s)")
-    schedule = build_schedule(beat_times, beat_energy, _beats_fast, _beats_mid, _beats_slow)
+    schedule = build_schedule(beat_times, beat_energy,
+                              _beats_ultra_fast, _beats_fast, _beats_mid, _beats_slow)
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
 
-    # Align music playback to the first detected beat.
-    # beat_times[0] is rarely exactly 0 — there's a short pre-beat silence.
-    # Without this offset every cut lands beat_times[0] seconds early.
+    # Align music_ss so the first clip cut (after intro card) lands on a beat.
+    # In the final video: [intro card: card_dur] [clip1] [clip2] ...
+    # At the intro→clip1 cut, music is at (music_ss + card_dur) — must be a beat.
+    # Find the beat nearest to (first_beat + card_dur), rebuild schedule from there,
+    # set music_ss so that beat aligns exactly with the intro card end.
     music_ss = schedule[0]["start"]
+    if _card_dur > 0 and beat_times:
+        _target = music_ss + _card_dur
+        _sync_idx = min(range(len(beat_times)), key=lambda _i: abs(beat_times[_i] - _target))
+        _sync_beat = beat_times[_sync_idx]
+        music_ss = max(0.0, _sync_beat - _card_dur)
+        _bt_sync = beat_times[_sync_idx:]
+        _be_sync = list(beat_energy)[_sync_idx:]
+        if len(_bt_sync) > 1:
+            schedule = build_schedule(_bt_sync, _be_sync,
+                                      _beats_ultra_fast, _beats_fast, _beats_mid, _beats_slow)
+            print(f"  Intro sync: music_ss={music_ss:.3f}s  "
+                  f"first_cut_beat={_sync_beat:.3f}s  "
+                  f"card={_card_dur:.1f}s  drift={abs(_sync_beat-_target)*1000:.0f}ms")
+    if not schedule:
+        raise RuntimeError("Could not build cut schedule from music after intro sync")
 
-    # Fill tail: librosa often misses beats in fade-out/outro sections.
-    # Reserve intro+outro card duration so clips don't consume the full track —
-    # apply_postprocess adds the cards AFTER, and music must cover them too.
-    _no_intro   = _cp.getboolean("job", "no_intro", fallback=False)
-    _card_dur   = _cp.getfloat("intro_outro", "duration", fallback=3.0) if not _no_intro else 0.0
-    _reserve    = _card_dur * 2  # intro card + outro card
-    avail_dur   = music_info["duration"] - music_ss - _reserve  # time available for clips
-    # Trim any existing slots that extend past avail_dur (last beat may overshoot)
+    # Reserve intro + outro card time; trim slots that exceed available window.
+    _reserve    = _card_dur * 2
+    avail_dur   = music_info["duration"] - music_ss - _reserve
     schedule = [s for s in schedule if s["start"] < avail_dur]
     if schedule and schedule[-1]["end"] > avail_dur:
         schedule[-1] = {**schedule[-1], "end": avail_dur,
@@ -1107,10 +1221,32 @@ def assemble(
     if not edit:
         raise RuntimeError("Clip matching produced no edit")
 
+    # Inject selected photos (evenly spaced through timeline)
+    _photo_sel_file = auto_dir / "photo_selection.json"
+    if _photo_sel_file.exists():
+        try:
+            _psel = _json.loads(_photo_sel_file.read_text())
+            _photo_paths = [p for p in _psel.get("photos", []) if Path(p).exists()]
+            if _photo_paths:
+                edit = _insert_photos(edit, _photo_paths)
+                print(f"  Photos: inserted {len(_photo_paths)} stills into timeline", flush=True)
+        except Exception as _pe:
+            print(f"  Photos: failed to load selection — {_pe}", flush=True)
+
     # 5a. Dry-run: write sequence JSON and exit without encoding
     if dry_run:
         seq = []
         for e in edit:
+            if e.get("type") == "photo":
+                seq.append({
+                    "type":       "photo",
+                    "path":       e["path"],
+                    "duration":   round(e["duration"], 2),
+                    "music_start": round(e["music_start"], 2),
+                    "frame_path": e["path"],
+                    "frame_url":  "/" + Path(e["path"]).relative_to("/").as_posix(),
+                })
+                continue
             scene = e["scene"]
             frame_path = None
             for suffix in ("_f0.jpg", "_f1.jpg", ".jpg"):

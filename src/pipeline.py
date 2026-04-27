@@ -356,15 +356,14 @@ async def apply_postprocess(
                     yield f"Mixing music (music={_mvol:.2f}, cam={_orig_vol:.2f})..."
                     _vdur      = await _probe_duration(src, ffprobe) or 0.0
                     _outro_dur = float(intro_dur)
-                    _fst       = max(0.0, _vdur - _outro_dur - 3.0)
+                    _fade_dur  = _f(cp, "music", "fade_out_duration", _outro_dur)
+                    _fst       = max(0.0, _vdur - _outro_dur)
                     _mout      = src.with_name(src.stem + "_withmusic.mp4")
-                    
+
                     # amix filter: inputs are [0:a] (camera) and [1:a] (music)
                     # We apply volume to each before mixing.
                     _af_mix = (
-                        f"[0:a]volume={_orig_vol}[a_cam];"
-                        f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d=3.0[a_mus];"
-                        f"[a_cam][a_mus]amix=inputs=2:duration=first:dropout_transition=3[aout]"
+                        f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d={_fade_dur:.1f}[aout]"
                     )
 
                     _mix_ret, _mix_err = await _run([
@@ -664,10 +663,10 @@ async def create_proxy(params: dict, work_dir: Path):
 
     # Build per-camera file lists
     if cameras:
-        cam_files = {cam: sorted(f for f in (work_dir / cam).glob("*.mp4") if _is_source(f))
+        cam_files = {cam: sorted(f for f in (work_dir / cam).iterdir() if _is_source(f))
                      for cam in cameras}
     else:
-        cam_files = {"": sorted(f for f in work_dir.glob("*.mp4") if _is_source(f))}
+        cam_files = {"": sorted(f for f in work_dir.iterdir() if _is_source(f))}
 
     source_files = [f for fs in cam_files.values() for f in fs]
     file_cam     = {f: cam for cam, fs in cam_files.items() for f in fs}
@@ -897,11 +896,11 @@ async def run(params: dict, work_dir: Path,
     if cameras:
         source_files = sorted(
             f for cam in cameras
-            for f in (work_dir / cam).glob("*.mp4")
+            for f in (work_dir / cam).iterdir()
             if _is_source(f)
         )
     else:
-        source_files = sorted(f for f in work_dir.glob("*.mp4") if _is_source(f))
+        source_files = sorted(f for f in work_dir.iterdir() if _is_source(f))
 
     yield f"[1/6] Found {len(source_files)} source files"
 
@@ -1485,6 +1484,7 @@ async def run(params: dict, work_dir: Path,
             prompts_hash_file.write_text(_cur_hash)
 
     # ── GPS annotation (optional, additive — skipped silently if no GPS data) ──
+    _gps_detected = False
     try:
         from gps_index import build_gps_index, annotate_scores_csv as _gps_annotate
         _gps_exiftool = cp.get("paths", "exiftool", fallback="exiftool")
@@ -1502,7 +1502,25 @@ async def run(params: dict, work_dir: Path,
                 ffprobe=ffprobe, cam_offsets=_cam_offsets,
             )
             if _gps_ok:
+                try:
+                    _gdf = pd.read_csv(_gps_csv)
+                    if "gps_speed_max" in _gdf.columns:
+                        _gps_detected = bool((_gdf["gps_speed_max"].fillna(0) > 0).any())
+                except Exception:
+                    pass
                 yield "  GPS scores annotated"
+                if _gps_detected and cp.getfloat("scene_selection", "gps_weight", fallback=0.0) == 0.0:
+                    _GPS_AUTO_WEIGHT = 0.35
+                    _local_cp = configparser.ConfigParser()
+                    _local_cfg = work_dir / "config.ini"
+                    if _local_cfg.exists():
+                        _local_cp.read(str(_local_cfg))
+                    if not _local_cp.has_section("scene_selection"):
+                        _local_cp.add_section("scene_selection")
+                    _local_cp.set("scene_selection", "gps_weight", str(_GPS_AUTO_WEIGHT))
+                    with open(_local_cfg, "w") as _cfg_fh:
+                        _local_cp.write(_cfg_fh)
+                    yield f"  GPS auto-enabled: gps_weight={_GPS_AUTO_WEIGHT} saved to config"
     except Exception as _gps_err:
         yield f"  GPS annotation skipped: {_gps_err}"
 
@@ -1566,6 +1584,7 @@ async def run(params: dict, work_dir: Path,
             "estimated_duration_sec": round(_est_dur, 1) if _est_dur is not None else 0,
             "estimated_main_scenes":  _est_main if _est_main is not None else (_est_scenes or 0),
             "cam_ratio":              _cam_ratio,
+            "gps_detected":           _gps_detected,
         }
         (auto_dir / "analyze_result.json").write_text(json.dumps(_ar, indent=2))
     except Exception as _ar_err:
@@ -1821,11 +1840,9 @@ async def run(params: dict, work_dir: Path,
                     "-i", str(video_to_mix),
                     "-i", str(_st_path),
                     "-filter_complex",
-                    f"[0:a]volume={orig_vol}[orig];"
                     f"[1:a]atrim=0:{vid_dur:.3f},"
                     f"afade=t=out:st={fade_start:.3f}:d={music_fade},"
-                    f"volume={music_vol}[music];"
-                    "[orig][music]amix=inputs=2:duration=first[aout]",
+                    f"volume={music_vol}[aout]",
                     "-map", "0:v", "-map", "[aout]",
                     "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                     "-movflags", "+faststart",
@@ -1919,11 +1936,9 @@ async def run(params: dict, work_dir: Path,
                             "-i", str(video_to_mix),
                             "-i", best_track["file"],
                             "-filter_complex",
-                            f"[0:a]volume={orig_vol}[orig];"
                             f"[1:a]atrim=0:{vid_dur:.3f},"
                             f"afade=t=out:st={fade_start:.3f}:d={music_fade},"
-                            f"volume={music_vol}[music];"
-                            "[orig][music]amix=inputs=2:duration=first[aout]",
+                            f"volume={music_vol}[aout]",
                             "-map", "0:v", "-map", "[aout]",
                             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                             "-movflags", "+faststart",

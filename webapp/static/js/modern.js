@@ -10,9 +10,11 @@ let _pinnedTrack = null;   // music file path (set by modern_music.js)
 let _browseRoot  = '';     // stripped from work_dir paths for display
 let _timelineMusic = null; // music path from last dry-run (for preview playback)
 let _workDir     = '';     // current job work_dir (for clip_path reconstruction)
+let _activeCameras = new Set(); // currently visible cameras in pool filter
 
 // ── Timeline persistence (backend) ───────────────────────────────────────────
 let _saveTlTimer = null;
+let _savePatternTimer = null;
 function _saveTimeline(jobId) {
   if (!jobId) return;
   clearTimeout(_saveTlTimer);
@@ -52,6 +54,12 @@ const api = {
       return r.ok ? r.json() : null;
     } catch { return null; }
   },
+  async del(url) {
+    try {
+      const r = await fetch(url, { method: 'DELETE' });
+      return r.ok;
+    } catch { return false; }
+  },
 };
 window._modernApi = api;
 
@@ -63,15 +71,45 @@ function trimPath(p) {
 }
 
 // ── Project list ──────────────────────────────────────────────────────────────
+let _projSortAsc = false;
+
+function toggleProjectSort() {
+  _projSortAsc = !_projSortAsc;
+  const btn = document.getElementById('m-sort-btn');
+  if (btn) btn.textContent = _projSortAsc ? 'z→a' : 'a→z';
+  refreshProjectList();
+}
+window.toggleProjectSort = toggleProjectSort;
+
+async function deleteProject(id, ev) {
+  ev.stopPropagation();
+  const job = (await api.get('/api/jobs') || []).find(j => j.id === id);
+  const name = trimPath(job?.work_dir) || id;
+  if (!confirm(`Remove project "${name}" from list?\n(Files on disk are not deleted)`)) return;
+  await fetch(`/api/jobs/${id}/remove`, { method: 'POST' });
+  if (_jobId === id) {
+    _jobId = null;
+    document.getElementById('m-project-name').textContent = 'No project selected';
+  }
+  refreshProjectList();
+}
+window.deleteProject = deleteProject;
+
 async function refreshProjectList() {
   const data = await api.get('/api/jobs') || [];
-  const sorted = [...data].sort((a, b) => (b.work_dir || '').localeCompare(a.work_dir || ''));
+  const sorted = [...data].sort((a, b) => {
+    const cmp = (a.work_dir || '').localeCompare(b.work_dir || '');
+    return _projSortAsc ? cmp : -cmp;
+  });
   const list = document.getElementById('m-project-list');
   if (!list) return;
   list.innerHTML = sorted.map(j => {
     const name = trimPath(j.work_dir) || j.id;
     return `<div class="m-proj-item${j.id === _jobId ? ' active' : ''}"
-                 data-id="${j.id}" onclick="openProject('${j.id}')">${name}</div>`;
+                 data-id="${j.id}" onclick="openProject('${j.id}')">
+              <span style="display:block;padding-right:20px;word-break:break-all;line-height:1.4">${name}</span>
+              <button class="m-proj-del" onclick="deleteProject('${j.id}',event)" title="Remove project">✕</button>
+            </div>`;
   }).join('');
 }
 
@@ -83,6 +121,11 @@ async function openProject(id) {
   _overrides = {};
   _pinnedTrack = null;
 
+  // Disconnect previous job WebSocket and reset per-job UI
+  if (_jobWs) { _jobWs.close(); _jobWs = null; }
+  clearLog();
+  _hideStatus();
+
   localStorage.setItem('lastJobId', id);
   document.querySelectorAll('.m-proj-item')
     .forEach(el => el.classList.toggle('active', el.dataset.id === id));
@@ -92,8 +135,21 @@ async function openProject(id) {
   _workDir = job.params?.work_dir || '';
   _loadTimeline(job);  // restore from backend params before loadMusicList runs
   const name = trimPath(job.params?.work_dir) || id;
+
+  // Pattern input
+  const cameras = job.params?.cameras || [];
+  const patInput = document.getElementById('m-cam-pattern');
+  const patRow = document.getElementById('m-pattern-row');
+  if (patInput) patInput.value = job.params?.cam_pattern || '';
+  if (patRow) patRow.style.display = cameras.length >= 2 ? '' : 'none';
+  _updatePatternHint(cameras);
   document.getElementById('m-project-name').textContent = name;
   document.title = `Studio — ${name}`;
+
+  // Reconnect progress if this job is still running
+  if (job.status === 'running' || job.status === 'queued') {
+    _connectJobProgress(id);
+  }
 
   _resultsVideo = null;
   _resultsData  = {};
@@ -103,6 +159,7 @@ async function openProject(id) {
   drawTimeline();
   if (typeof loadMusicList === 'function') await loadMusicList(id);
   loadResults();
+  _checkProxyStatus();
 }
 window.openProject = openProject;
 
@@ -111,9 +168,37 @@ async function loadPool(id) {
   const grid = document.getElementById('m-pool-grid');
   grid.innerHTML = '<div class="m-empty"><span class="m-spinner"></span></div>';
 
-  const data = await api.get(`/api/jobs/${id}/frames`);
+  const [data, ar] = await Promise.all([
+    api.get(`/api/jobs/${id}/frames`),
+    api.get(`/api/jobs/${id}/analyze-result`).catch(() => null),
+  ]);
   _frames = (data?.frames ?? data ?? []).sort((a, b) => b.score - a.score);
+  const gpsBadge = document.getElementById('m-gps-badge');
+  if (gpsBadge) gpsBadge.style.display = ar?.gps_detected ? '' : 'none';
+  _buildCamFilters();
   renderPool();
+}
+
+function _buildCamFilters() {
+  const bar = document.getElementById('m-cam-filters');
+  if (!bar) return;
+  const cams = [...new Set(_frames.map(f => f.camera).filter(Boolean))];
+  if (cams.length <= 1) { bar.style.display = 'none'; _activeCameras = new Set(cams); return; }
+  _activeCameras = new Set(cams);
+  bar.style.display = 'flex';
+  bar.innerHTML = '';
+  for (const cam of cams) {
+    const lbl = document.createElement('label');
+    lbl.style.cssText = 'display:flex;align-items:center;gap:3px;font-size:10px;color:var(--sub);cursor:pointer;white-space:nowrap';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true; cb.value = cam;
+    cb.onchange = () => {
+      if (cb.checked) _activeCameras.add(cam); else _activeCameras.delete(cam);
+      renderPool();
+    };
+    lbl.append(cb, document.createTextNode(cam.split('/').pop()));
+    bar.appendChild(lbl);
+  }
 }
 
 function scoreClass(score) {
@@ -146,10 +231,13 @@ function renderPool() {
   }
   const banned     = new Set(Object.keys(_overrides).filter(s => _overrides[s] === 'ban'));
   const inTimeline = new Set(_timeline.map(c => c.scene));
-  const available  = _frames.filter(f => !banned.has(f.scene) && !inTimeline.has(f.scene)).length;
-  if (count) count.textContent = `${available} / ${_frames.length}`;
+  const camFiltered = _activeCameras.size
+    ? _frames.filter(f => !f.camera || _activeCameras.has(f.camera))
+    : _frames;
+  const available  = camFiltered.filter(f => !banned.has(f.scene) && !inTimeline.has(f.scene)).length;
+  if (count) count.textContent = `${available} / ${camFiltered.length}`;
   grid.innerHTML = '';
-  _frames.forEach(f => {
+  camFiltered.forEach(f => {
     if (inTimeline.has(f.scene)) return;
     const isBanned  = banned.has(f.scene);
     const isRemoved = _removedScenes.has(f.scene);
@@ -157,7 +245,13 @@ function renderPool() {
     div.className = `m-thumb ${scoreClass(f.score)}${isBanned ? ' banned' : ''}${isRemoved ? ' removed' : ''}`;
     div.dataset.scene = f.scene;
     div.draggable = true;
-    div.title = isBanned ? 'Banned — click to unban' : isRemoved ? 'Removed from timeline — click to ban' : 'Click to ban';
+    const scoreLabel = f.score >= 0.85 ? 'High score (≥0.85) — green border'
+                     : f.score >= 0.70 ? 'Good score (≥0.70) — light green border'
+                     : f.score >= 0.50 ? 'Low score (≥0.50) — yellow border'
+                     : 'Very low score (<0.50)';
+    div.title = isBanned ? `Banned — click to unban\n${scoreLabel}`
+              : isRemoved ? `Removed from timeline — click to ban\n${scoreLabel}`
+              : `Click to ban\n${scoreLabel}`;
     div.innerHTML = `
       <div class="m-thumb-img">
         <img src="/api/file?path=${encodeURIComponent(f.frame_url)}" loading="lazy" draggable="false">
@@ -181,7 +275,18 @@ async function rebuildTimeline() {
   if (overlay) overlay.style.display = 'flex';
 
   const _md = (typeof _musicDir !== 'undefined') ? _musicDir : '';
-  await api.patch(`/api/jobs/${_jobId}/params`, { selected_track: _pinnedTrack, ...(_md ? { music_dir: _md } : {}) });
+  clearTimeout(_savePatternTimer);
+  const _patInput = document.getElementById('m-cam-pattern');
+  const _camPattern = _patInput ? _patInput.value.trim() : '';
+  // Clear manual timeline so dry-run rebuilds fresh from pattern
+  _timeline = [];
+  await api.patch(`/api/jobs/${_jobId}/params`, {
+    selected_track: _pinnedTrack,
+    manual_timeline: null,
+    manual_overrides: {},
+    cam_pattern: _camPattern,
+    ...(_md ? { music_dir: _md } : {}),
+  });
   const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
 
   if (overlay) overlay.style.display = 'none';
@@ -201,6 +306,22 @@ async function rebuildTimeline() {
   enableActions(true);
 }
 window.rebuildTimeline = rebuildTimeline;
+
+function _updatePatternHint(cameras) {
+  const el = document.getElementById('m-pattern-hint');
+  if (!el) return;
+  if (!cameras || cameras.length < 2) { el.textContent = ''; return; }
+  el.textContent = cameras.map((c, i) => `${'abcdefghijklmnopqrstuvwxyz'[i]}=${c}`).join('  ');
+}
+
+function saveCamPattern(val) {
+  if (!_jobId) return;
+  clearTimeout(_savePatternTimer);
+  _savePatternTimer = setTimeout(() => {
+    api.patch(`/api/jobs/${_jobId}/params`, { cam_pattern: val.trim() });
+  }, 600);
+}
+window.saveCamPattern = saveCamPattern;
 
 function _pinnedTrackObj() {
   if (!_pinnedTrack) return null;
@@ -226,13 +347,13 @@ function drawTimeline() {
   const trackObj = _pinnedTrackObj();
   const musicDur = trackObj?.duration || 0;
 
-  // Clips use % of clip track width; music bar uses px based on same width.
-  // Measuring BEFORE clear so offsetWidth is non-zero.
-  const trackW = clipTrack.offsetWidth || Math.max(200, window.innerWidth - 500);
   const refDur = Math.max(musicDur || 0, totalDur || 0) || 1;
-  const pctPerSec = 100 / refDur;
 
+  // Clear FIRST, then measure with getBoundingClientRect (forces reflow, sub-px accurate).
   clipTrack.innerHTML = '';
+  const trackW = Math.floor(clipTrack.getBoundingClientRect().width);
+  if (!trackW) { requestAnimationFrame(drawTimeline); return; }
+  const ruler = document.getElementById('m-time-ruler');
 
   if (meta) {
     if (musicDur > 0)
@@ -241,7 +362,7 @@ function drawTimeline() {
       meta.textContent = `${_timeline.length} clips · ${fmtSec(totalDur)}`;
   }
 
-  // Music bar: px width matching clip track width so it never bleeds past #m-panel.
+  // Music bar: px width relative to clip track content area (same reference as clip %).
   if (musicBar) {
     const musicW = musicDur > 0 ? Math.round(musicDur / refDur * trackW) : trackW;
     musicBar.style.width    = musicW + 'px';
@@ -251,6 +372,29 @@ function drawTimeline() {
     if (musicLabel) musicLabel.textContent = name
       ? `${name}${musicDur > 0 ? ' · ' + fmtSec(musicDur) : ''}`
       : 'no track selected';
+  }
+
+  // Ruler ticks in px — same reference as music bar.
+  if (ruler) {
+    ruler.innerHTML = '';
+    ruler.style.width = trackW + 'px';
+    const step = refDur <= 30 ? 5 : refDur <= 120 ? 10 : refDur <= 300 ? 30 : 60;
+    const majorEvery = step <= 10 ? 4 : 2;
+    for (let s = 0; s <= refDur; s += step) {
+      const x = Math.round(s / refDur * trackW);
+      const isMajor = (s / step) % majorEvery === 0;
+      const tick = document.createElement('div');
+      tick.className = 'm-ruler-tick' + (isMajor ? ' major' : '');
+      tick.style.left = x + 'px';
+      ruler.appendChild(tick);
+      if (isMajor) {
+        const lbl = document.createElement('div');
+        lbl.className = 'm-ruler-label';
+        lbl.style.left = x + 'px';
+        lbl.textContent = fmtSec(s);
+        ruler.appendChild(lbl);
+      }
+    }
   }
 
   const makeInsert = insertIdx => {
@@ -264,30 +408,43 @@ function drawTimeline() {
 
   clipTrack.appendChild(makeInsert(0));
   _timeline.forEach((slot, idx) => {
-    const w = (slot.duration * pctPerSec).toFixed(4) + '%';
-    const scoreColor = slot.clip_score >= 0.85 ? '#22c55e'
-                     : slot.clip_score >= 0.70 ? '#4ade80'
-                     : slot.clip_score >= 0.50 ? '#facc15' : '#475569';
-    const frameObj = _frames.find(f => f.scene === slot.scene);
-    const frameUrl = frameObj?.frame_url || slot.frame_url || null;
-    const imgSrc   = frameUrl ? `/api/file?path=${encodeURIComponent(frameUrl)}` : null;
+    const w = Math.round(slot.duration / refDur * trackW) + 'px';
 
     const div = document.createElement('div');
     div.className = 'm-clip';
     div.style.flex  = '0 0 ' + w;
     div.style.width = w;
     div.dataset.idx = idx;
-    div.dataset.scene = slot.scene;
     div.draggable = true;
-    div.title = `${slot.scene} · ${slot.duration.toFixed(1)}s · score ${slot.clip_score?.toFixed(3)}`;
-    div.innerHTML = `
-      <div class="m-clip-thumb">${imgSrc ? `<img src="${imgSrc}" loading="lazy" draggable="false">` : ''}</div>
-      <div class="m-clip-score-bar" style="background:${scoreColor}"></div>
-      <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>`;
+
+    if (slot.type === 'photo') {
+      const imgSrc = slot.frame_url ? `/api/file?path=${encodeURIComponent(slot.frame_url)}` : null;
+      div.dataset.scene = slot.scene || ('photo_' + idx);
+      div.title = `photo · ${slot.duration.toFixed(1)}s`;
+      div.style.outline = '2px solid #818cf8';
+      div.innerHTML = `
+        <div class="m-clip-thumb">${imgSrc ? `<img src="${imgSrc}" loading="lazy" draggable="false">` : '<span style="font-size:16px;display:flex;align-items:center;justify-content:center;height:100%">🖼</span>'}</div>
+        <div class="m-clip-score-bar" style="background:#818cf8"></div>
+        <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>`;
+    } else {
+      const scoreColor = slot.clip_score >= 0.85 ? '#22c55e'
+                       : slot.clip_score >= 0.70 ? '#4ade80'
+                       : slot.clip_score >= 0.50 ? '#facc15' : '#475569';
+      const frameObj = _frames.find(f => f.scene === slot.scene);
+      const frameUrl = frameObj?.frame_url || slot.frame_url || null;
+      const imgSrc   = frameUrl ? `/api/file?path=${encodeURIComponent(frameUrl)}` : null;
+      div.dataset.scene = slot.scene;
+      div.title = `${slot.scene} · ${slot.duration.toFixed(1)}s · score ${slot.clip_score?.toFixed(3)}`;
+      div.innerHTML = `
+        <div class="m-clip-thumb">${imgSrc ? `<img src="${imgSrc}" loading="lazy" draggable="false">` : ''}</div>
+        <div class="m-clip-score-bar" style="background:${scoreColor}"></div>
+        <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>`;
+      div.addEventListener('mouseenter', () => _showTlPreview(div, frameUrl));
+      div.addEventListener('mouseleave', _hideTlPreview);
+    }
+
     div.addEventListener('dragstart', onClipDragStart);
     div.addEventListener('dblclick',  () => removeClip(idx));
-    div.addEventListener('mouseenter', () => _showTlPreview(div, frameUrl));
-    div.addEventListener('mouseleave', _hideTlPreview);
     clipTrack.appendChild(div);
     clipTrack.appendChild(makeInsert(idx + 1));
   });
@@ -312,8 +469,8 @@ function _showTlPreview(clipEl, frameUrl) {
     const rect = clipEl.getBoundingClientRect();
     const wrap  = document.getElementById('m-timeline-wrap');
     const wRect = wrap?.getBoundingClientRect();
-    pv.style.left    = Math.max(4, Math.min(rect.left, window.innerWidth - 244)) + 'px';
-    pv.style.top     = wRect ? (wRect.top - 178) + 'px' : (rect.top - 178) + 'px';
+    pv.style.left    = Math.max(4, Math.min(rect.left, window.innerWidth - 484)) + 'px';
+    pv.style.top     = wRect ? (wRect.top - 278) + 'px' : (rect.top - 278) + 'px';
     pv.style.display = 'block';
   }, 1000);
 }
@@ -362,11 +519,25 @@ function handleInsert(insertIdx) {
     const frame = _frames.find(f => f.scene === _drag.scene);
     if (!frame) return;
     if (_overrides[frame.scene] === 'ban') delete _overrides[frame.scene];
+
+    // Inherit duration from the existing slot at that position (preserves music sync).
+    // Fall back to scene duration only if inserting at end or timeline is empty.
+    const existingSlot = _timeline[insertIdx];
+    const slotDur = (existingSlot && existingSlot.duration < frame.duration)
+      ? existingSlot.duration
+      : frame.duration;
+
+    // clip_ss: center on the best CLIP-scored frame (_f0=25%, _f1=50%, _f2=75%)
+    const url = frame.frame_url || '';
+    const pct = url.includes('_f0') ? 0.25 : url.includes('_f2') ? 0.75 : 0.50;
+    const bestT = pct * frame.duration;
+    const clip_ss = Math.max(0, Math.min(bestT - slotDur / 2, frame.duration - slotDur));
+
     _timeline.splice(insertIdx, 0, {
-      scene: frame.scene, duration: frame.duration,
+      scene: frame.scene, duration: slotDur,
       clip_score: frame.score, frame_url: frame.frame_url || null, energy: 0.5,
       clip_path: _workDir ? _workDir + '/_autoframe/autocut/' + frame.scene + '.mp4' : '',
-      clip_ss: 0,
+      clip_ss,
     });
   } else {
     const from = _drag.idx;
@@ -559,7 +730,33 @@ function toggleLog() {
 }
 window.toggleLog = toggleLog;
 
+let _logMaximized = false;
+
+function _collapseLogMax() {
+  if (!_logMaximized) return;
+  _logMaximized = false;
+  const log  = document.getElementById('m-log');
+  const pool = document.getElementById('m-pool');
+  const btn  = document.getElementById('m-log-max-btn');
+  if (log)  log.classList.remove('m-log-maximized');
+  if (pool) pool.style.display = '';
+  if (btn)  btn.textContent = '⤢';
+}
+
+function toggleLogMax() {
+  _logMaximized = !_logMaximized;
+  const log   = document.getElementById('m-log');
+  const pool  = document.getElementById('m-pool');
+  const btn   = document.getElementById('m-log-max-btn');
+  if (log)  log.classList.toggle('m-log-maximized', _logMaximized);
+  if (pool) pool.style.display = _logMaximized ? 'none' : '';
+  if (btn)  btn.textContent = _logMaximized ? '⤡' : '⤢';
+  if (_logMaximized && !_logOpen) toggleLog();
+}
+window.toggleLogMax = toggleLogMax;
+
 function clearLog() {
+  _collapseLogMax();
   _logLines = [];
   const el = document.getElementById('m-log-lines');
   if (el) el.innerHTML = '';
@@ -574,28 +771,46 @@ window.clearLog = clearLog;
 async function previewTimeline() {
   if (!_jobId) return;
   const btn = document.getElementById('m-btn-preview');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sequencing…'; }
 
-  // If no timeline yet, run dry-run to generate preview_sequence.json
-  if (!_timeline?.length) {
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Sequencing…'; }
-    const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
-    if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
-    if (!data?.sequence?.length) { alert('Preview failed — check server log.'); return; }
-    _timeline = data.sequence;
-    _timelineMusic = data.music || null;
+  // Flush manual timeline to server so preview-sequence uses it instead of dry-run
+  if (_timeline.length > 0) {
+    await api.patch(`/api/jobs/${_jobId}/params`, {
+      manual_timeline: _timeline,
+      manual_overrides: _overrides,
+    });
   }
+  const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
+  if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+  if (!data?.sequence?.length) { alert('Preview failed — check server log.'); return; }
+  if (!_timeline.length) _timeline = data.sequence;
+  _timelineMusic = data.music || null;
+  drawTimeline();
 
-  const video = document.getElementById('m-results-video');
-  const info  = document.getElementById('m-results-playing-info');
+  const video = document.getElementById('m-preview-video');
+  const modal = document.getElementById('m-preview-modal');
   if (video) {
     video.src = `/api/jobs/${_jobId}/preview-stream?t=${Date.now()}`;
     video.load();
-    video.play().catch(() => {});
+    if (modal) modal.style.display = 'flex';
+    const _onFirstData = () => {
+      video.removeEventListener('progress', _onFirstData);
+      setTimeout(() => video.play().catch(() => {}), 5000);
+    };
+    video.addEventListener('progress', _onFirstData);
+  } else if (modal) {
+    modal.style.display = 'flex';
   }
-  if (info) info.textContent = 'Streaming preview (GPU)…';
-  openResultsModal();
 }
 window.previewTimeline = previewTimeline;
+
+function closePreviewModal() {
+  const modal = document.getElementById('m-preview-modal');
+  if (modal) modal.style.display = 'none';
+  const video = document.getElementById('m-preview-video');
+  if (video) { video.pause(); video.src = ''; }
+}
+window.closePreviewModal = closePreviewModal;
 
 // ── Render ────────────────────────────────────────────────────────────────────
 async function renderTimeline() {
@@ -626,6 +841,68 @@ async function cancelRender() {
   await fetch(`/api/jobs/${_jobId}`, { method: 'DELETE' });
 }
 window.cancelRender = cancelRender;
+
+// ── Proxy generation ──────────────────────────────────────────────────────────
+let _proxyPollTimer = null;
+
+async function startProxy() {
+  if (!_jobId) return;
+  const btn    = document.getElementById('m-btn-proxy');
+  const status = document.getElementById('m-proxy-status');
+  if (btn) btn.disabled = true;
+  if (status) { status.style.display = ''; status.textContent = 'Starting…'; }
+  await fetch(`/api/jobs/${_jobId}/start-proxy`, { method: 'POST' });
+  _pollProxyStatus();
+}
+window.startProxy = startProxy;
+
+function _pollProxyStatus() {
+  clearTimeout(_proxyPollTimer);
+  if (!_jobId) return;
+  const btn    = document.getElementById('m-btn-proxy');
+  const status = document.getElementById('m-proxy-status');
+  fetch(`/api/jobs/${_jobId}/proxy-status`)
+    .then(r => r.ok ? r.json() : null)
+    .then(st => {
+      if (!st) return;
+      if (st.done) {
+        if (btn) btn.disabled = false;
+        if (status) {
+          status.textContent = st.error ? `✗ ${st.error}` : `✓ ${st.finished}/${st.total} done`;
+          setTimeout(() => { status.style.display = 'none'; }, 5000);
+        }
+      } else {
+        const pct = st.total > 0 ? `${st.finished}/${st.total}` : '…';
+        const cur = st.current_file ? st.current_file.split('/').pop() : '';
+        if (status) status.textContent = `${pct}${cur ? ' · ' + cur : ''}`;
+        _proxyPollTimer = setTimeout(_pollProxyStatus, 2000);
+      }
+    })
+    .catch(() => { _proxyPollTimer = setTimeout(_pollProxyStatus, 5000); });
+}
+
+function _checkProxyStatus() {
+  if (!_jobId) return;
+  const btn    = document.getElementById('m-btn-proxy');
+  const status = document.getElementById('m-proxy-status');
+  fetch(`/api/jobs/${_jobId}/proxy-status`)
+    .then(r => r.ok ? r.json() : null)
+    .then(st => {
+      if (!st || st.not_started) { if (btn) btn.disabled = false; return; }
+      if (!st.done) {
+        if (status) status.style.display = '';
+        _pollProxyStatus();
+      } else {
+        if (btn) btn.disabled = false;
+        if (st.finished > 0 && status) {
+          status.style.display = '';
+          status.textContent = `✓ proxy ready (${st.finished} files)`;
+        }
+      }
+    })
+    .catch(() => {});
+}
+window._checkProxyStatus = _checkProxyStatus;
 
 
 // ── Results modal ─────────────────────────────────────────────────────────────
@@ -747,15 +1024,24 @@ function _renderResultsList() {
       ytsBtn.onclick = e => { e.stopPropagation(); mYtsOpen(filePath, name, _jobId, _workDir); };
       rfActions.appendChild(ytsBtn);
 
-      if (info.is_ncs) {
-        const igBtn = document.createElement('button');
-        igBtn.className = 'm-rf-ig' + (info.ig_url ? ' linked' : '');
-        igBtn.textContent = info.ig_url ? '✓ IG' : '▲ IG';
-        igBtn.title = info.ig_url ? 'Uploaded to Instagram' : 'Upload Reel to Instagram';
-        igBtn.onclick = e => { e.stopPropagation(); mIgOpen(filePath, name, info.ncs_attr || null, _jobId); };
-        rfActions.appendChild(igBtn);
-      }
+      const igBtn = document.createElement('button');
+      igBtn.className = 'm-rf-ig' + (info.ig_url ? ' linked' : '');
+      igBtn.textContent = info.ig_url ? '✓ IG' : '▲ IG';
+      igBtn.title = info.ig_url ? 'Uploaded to Instagram' : 'Upload Reel to Instagram';
+      igBtn.onclick = e => { e.stopPropagation(); mIgOpen(filePath, name, info.ncs_attr || null, _jobId); };
+      rfActions.appendChild(igBtn);
     }
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'm-rf-del';
+    delBtn.textContent = '✕';
+    delBtn.title = 'Delete file';
+    delBtn.onclick = async e => {
+      e.stopPropagation();
+      if (!confirm(`Delete ${name} from disk?`)) return;
+      const ok = await api.del(`/api/jobs/${_jobId}/result-file?filename=${encodeURIComponent(name)}`);
+      if (ok) { row.remove(); } else { alert('Delete failed'); }
+    };
 
     row.appendChild(rfName);
     if (info.music) {
@@ -767,6 +1053,7 @@ function _renderResultsList() {
     }
     row.appendChild(rfMeta);
     row.appendChild(dlLink);
+    row.appendChild(delBtn);
     row.appendChild(rfActions);
     list.appendChild(row);
   });
@@ -810,7 +1097,7 @@ function fmtSec(s) {
 }
 
 function enableActions(on) {
-  ['m-btn-rebuild', 'm-btn-preview', 'm-btn-render', 'm-btn-shorts'].forEach(id => {
+  ['m-btn-rebuild', 'm-btn-preview', 'm-btn-render', 'm-btn-shorts', 'm-btn-proxy'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = !on; });
 }
 
@@ -896,7 +1183,7 @@ function _connectStats() {
 
 // ── Tile size ─────────────────────────────────────────────────────────────────
 function setTileSize(px) {
-  px = Math.max(60, Math.min(240, parseInt(px) || 120));
+  px = Math.max(120, Math.min(480, parseInt(px) || 120));
   document.documentElement.style.setProperty('--tile-min', px + 'px');
   localStorage.setItem('tileSize', px);
   const sl = document.getElementById('m-tile-slider');
@@ -921,11 +1208,23 @@ function modernToggleTheme() {
 window.modernToggleTheme = modernToggleTheme;
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const visible = id => { const el = document.getElementById(id); return el && el.style.display !== 'none'; };
+  if (visible('m-preview-modal'))     { closePreviewModal();     return; }
+  if (visible('m-appsettings-modal')) { closeAppSettingsModal(); return; }
+  if (visible('m-project-modal'))     { closeProjectModal();     return; }
+  if (visible('m-shorts-modal'))      { closeShortsModal();      return; }
+  if (visible('m-music-modal'))       { closeMusicModal();       return; }
+  if (visible('m-results-modal'))     { closeResultsModal();     return; }
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
   const t = localStorage.getItem('theme') || 'dark';
   document.body.dataset.theme = t;
   const btn = document.getElementById('m-theme-btn');
   if (btn) btn.textContent = t === 'dark' ? '☽' : '☀';
+  if (typeof applyI18nModern === 'function') applyI18nModern();
   const cfg = await api.get('/api/config');
   if (cfg?.browse_root) _browseRoot = cfg.browse_root;
   const savedTile = parseInt(localStorage.getItem('tileSize')) || 120;
@@ -936,4 +1235,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const lastId = localStorage.getItem('lastJobId');
   if (lastId) openProject(lastId);
   setInterval(refreshProjectList, 5000);
+  let _resizeTimer;
+  window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTimer = setTimeout(drawTimeline, 100); });
 });

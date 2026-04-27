@@ -1,12 +1,12 @@
 // modern_analyze.js — Analyze / New Project modal + Settings panel
 
-// ── Analyze modal state ───────────────────────────────────────────────────────
+// ── Project modal state ───────────────────────────────────────────────────────
 let _analyzeBrowserOpen = false;
 let _analyzeSubdirs = [];
 
 // ── Open / close ──────────────────────────────────────────────────────────────
-async function openAnalyzeModal() {
-  const modal = document.getElementById('m-analyze-modal');
+async function openProjectModal() {
+  const modal = document.getElementById('m-project-modal');
   if (!modal) return;
   document.getElementById('m-analyze-status').textContent = '';
   document.getElementById('m-analyze-btn').disabled = false;
@@ -25,25 +25,54 @@ async function openAnalyzeModal() {
         document.getElementById('m-analyze-clip-first').checked = cfg.clip_first !== false;
         document.getElementById('m-analyze-positive').value     = cfg.positive ?? '';
         document.getElementById('m-analyze-negative').value     = cfg.negative ?? '';
+        document.getElementById('m-analyze-description').value  = job.params?.description ?? cfg.description ?? '';
+        const mgEl = document.getElementById('m-analyze-min-gap');
+        if (mgEl) mgEl.value = cfg.clip_scan_min_gap ?? 15;
+        const ivEl = document.getElementById('m-analyze-interval');
+        if (ivEl) ivEl.value = cfg.clip_scan_interval ?? 3;
       }
+      const scoreEl = document.getElementById('m-analyze-score-all');
+      if (scoreEl) scoreEl.checked = job.params.score_all_cams ?? true;
       _analyzeSubdirs = await _fetchAnalyzeSubdirs(wd);
       const camList = document.getElementById('m-analyze-cam-list');
       camList.innerHTML = '';
       const cams = job.params.cameras
         || [job.params.cam_a, job.params.cam_b].filter(Boolean);
       const toLoad = cams.length ? cams : _analyzeSubdirs.slice(0, 2);
-      for (const cam of toLoad) _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs);
+      const offsets = job.params.cam_offsets || {};
+      for (const cam of toLoad)
+        _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs, offsets[cam] ?? 0);
+
+      // Load settings fields
+      const _titleParts = (job.params.title ?? cfg?.title ?? '').split('\n');
+      const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
+      set('m-settings-title',        _titleParts[0] ?? '');
+      set('m-settings-intro-card',   _titleParts.slice(1).join('\n'));
+      set('m-settings-cam-pattern',  cfg?.cam_pattern ?? '');
+      set('m-settings-beats-fast',   cfg?.beats_fast  ?? '');
+      set('m-settings-beats-mid',    cfg?.beats_mid   ?? '');
+      set('m-settings-beats-slow',   cfg?.beats_slow  ?? '');
+      set('m-settings-shorts-music', cfg?.shorts_music_dir ?? '');
+      set('m-analyze-photos-dir',    cfg?.photos_dir || (wd + '/photos'));
+      set('m-settings-blur-speed',   cfg?.blur_speedometer_cams ?? '');
+      const _bpEl = document.getElementById('m-settings-blur-plates');
+      if (_bpEl) _bpEl.checked = cfg?.blur_plates === true || cfg?.blur_plates === 'true' || cfg?.blur_plates === '1';
     }
   }
   modal.style.display = 'flex';
 }
-window.openAnalyzeModal = openAnalyzeModal;
+window.openProjectModal = openProjectModal;
+window.openAnalyzeModal  = openProjectModal;
+window.openSettingsModal = openProjectModal;
 
-function closeAnalyzeModal() {
-  document.getElementById('m-analyze-modal').style.display = 'none';
+async function closeProjectModal() {
+  await saveProjectModal();
+  document.getElementById('m-project-modal').style.display = 'none';
   _closeBrowser();
 }
-window.closeAnalyzeModal = closeAnalyzeModal;
+window.closeProjectModal  = closeProjectModal;
+window.closeAnalyzeModal  = closeProjectModal;
+window.closeSettingsModal = closeProjectModal;
 
 // ── Directory browser ─────────────────────────────────────────────────────────
 async function analyzeToggleBrowser() {
@@ -167,7 +196,7 @@ async function _fetchAnalyzeSubdirs(dir) {
 }
 
 // ── Camera rows ───────────────────────────────────────────────────────────────
-function _appendAnalyzeCamRow(container, selected, subdirs) {
+function _appendAnalyzeCamRow(container, selected, subdirs, offset = 0) {
   const row = document.createElement('div');
   row.className = 'm-analyze-cam-row';
 
@@ -186,14 +215,39 @@ function _appendAnalyzeCamRow(container, selected, subdirs) {
     if (d === selected) o.selected = true;
     sel.appendChild(o);
   }
+  sel.onchange = _onCamListChange;
+
+  const offLabel = document.createElement('span');
+  offLabel.style.cssText = 'font-size:11px;color:var(--muted);flex-shrink:0';
+  offLabel.textContent = '±';
+
+  const offInput = document.createElement('input');
+  offInput.type = 'number';
+  offInput.className = 'm-input m-cam-offset';
+  offInput.value = offset || 0;
+  offInput.title = 'Time offset in seconds (positive = camera is ahead)';
+  offInput.style.cssText = 'width:60px;text-align:right';
+
+  const offSuffix = document.createElement('span');
+  offSuffix.style.cssText = 'font-size:11px;color:var(--muted);flex-shrink:0';
+  offSuffix.textContent = 's';
 
   const rm = document.createElement('button');
   rm.className = 'm-btn m-btn-ghost m-btn-sm';
   rm.textContent = '−'; rm.title = 'Remove camera';
-  rm.onclick = () => { row.remove(); _relabelAnalyzeCams(container); };
+  rm.onclick = () => { row.remove(); _relabelAnalyzeCams(container); _onCamListChange(); };
 
-  row.append(label, sel, rm);
+  row.append(label, sel, offLabel, offInput, offSuffix, rm);
   container.appendChild(row);
+}
+
+function _onCamListChange() {
+  const camList = document.getElementById('m-analyze-cam-list');
+  if (!camList) return;
+  const count = camList.querySelectorAll('.m-analyze-cam-row select')
+    .length;
+  const scoreEl = document.getElementById('m-analyze-score-all');
+  if (scoreEl && count >= 2) scoreEl.checked = true;
 }
 
 function _relabelAnalyzeCams(container) {
@@ -211,8 +265,51 @@ async function analyzeAddCam() {
     if (dir) _analyzeSubdirs = await _fetchAnalyzeSubdirs(dir);
   }
   _appendAnalyzeCamRow(camList, '', _analyzeSubdirs);
+  _onCamListChange();
 }
 window.analyzeAddCam = analyzeAddCam;
+
+async function analyzeAutoDetectOffsets() {
+  const btn    = document.getElementById('m-analyze-detect-btn');
+  const status = document.getElementById('m-analyze-detect-status');
+  const dir    = document.getElementById('m-analyze-dir')?.value.trim();
+  if (!dir) { if (status) status.textContent = 'Set directory first'; return; }
+
+  const camList = document.getElementById('m-analyze-cam-list');
+  const rows    = camList ? [...camList.querySelectorAll('.m-analyze-cam-row')] : [];
+  const cameras = rows.map(r => r.querySelector('select')?.value).filter(Boolean);
+  if (cameras.length < 2) { if (status) status.textContent = 'Need ≥2 cameras'; return; }
+
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Detecting…';
+
+  // Use existing job if available, otherwise create a temporary detect call via the first job endpoint
+  const jobId = (typeof _jobId !== 'undefined') ? _jobId : null;
+  if (!jobId) { if (status) status.textContent = 'Save project first'; if (btn) btn.disabled = false; return; }
+
+  const r = await fetch(`/api/jobs/${jobId}/detect-cam-offsets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ work_dir: dir, cameras }),
+  });
+  if (btn) btn.disabled = false;
+  if (!r.ok) { if (status) status.textContent = '✗ Failed'; return; }
+  const data = await r.json();
+  const offsets = data.offsets || {};
+
+  // Fill offset inputs in matching rows
+  for (const row of rows) {
+    const cam = row.querySelector('select')?.value;
+    const inp = row.querySelector('.m-cam-offset');
+    if (cam && inp && offsets[cam] != null) inp.value = Math.round(offsets[cam]);
+  }
+  if (status) {
+    const parts = Object.entries(offsets).map(([k, v]) => `${k}:${Math.round(v)}s`).join(', ');
+    status.textContent = parts ? `✓ ${parts}` : '✓ No offset detected';
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+}
+window.analyzeAutoDetectOffsets = analyzeAutoDetectOffsets;
 
 async function analyzeRefreshCams(dir) {
   if (!dir) return;
@@ -230,13 +327,22 @@ async function runAnalyze() {
   const dir = document.getElementById('m-analyze-dir').value.trim();
   if (!dir) { alert('Select a project directory first.'); return; }
 
-  const cameras = [...document.getElementById('m-analyze-cam-list')
-    .querySelectorAll('select')]
-    .map(s => s.value.trim()).filter(Boolean);
-  const clipFirst = document.getElementById('m-analyze-clip-first').checked;
-  const clipDur   = parseFloat(document.getElementById('m-analyze-clip-dur').value) || 6;
-  const positive  = document.getElementById('m-analyze-positive').value.trim() || null;
-  const negative  = document.getElementById('m-analyze-negative').value.trim() || null;
+  const camRows = [...document.getElementById('m-analyze-cam-list')
+    .querySelectorAll('.m-analyze-cam-row')];
+  const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
+  const camOffsets = {};
+  camRows.forEach(r => {
+    const name = r.querySelector('select')?.value.trim();
+    const off  = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
+    if (name) camOffsets[name] = off;
+  });
+  const clipFirst  = document.getElementById('m-analyze-clip-first').checked;
+  const clipDur    = parseFloat(document.getElementById('m-analyze-clip-dur').value)     || 6;
+  const interval   = parseFloat(document.getElementById('m-analyze-interval')?.value)   || 3;
+  const minGap     = parseFloat(document.getElementById('m-analyze-min-gap')?.value)    || 15;
+  const scoreAll   = document.getElementById('m-analyze-score-all')?.checked ?? true;
+  const positive   = document.getElementById('m-analyze-positive').value.trim() || null;
+  const negative   = document.getElementById('m-analyze-negative').value.trim() || null;
 
   const btn    = document.getElementById('m-analyze-btn');
   const status = document.getElementById('m-analyze-status');
@@ -244,10 +350,14 @@ async function runAnalyze() {
   if (status) status.textContent = 'Starting…';
 
   const params = {
-    work_dir:           dir,
-    cameras:            cameras.length ? cameras : null,
-    clip_first:         clipFirst,
-    clip_scan_clip_dur: clipDur,
+    work_dir:              dir,
+    cameras:               cameras.length ? cameras : null,
+    cam_offsets:           Object.keys(camOffsets).length ? camOffsets : null,
+    clip_first:            clipFirst,
+    clip_scan_clip_dur:    clipDur,
+    clip_scan_interval:    interval,
+    clip_scan_min_gap:     minGap,
+    score_all_cams:        scoreAll,
     positive,
     negative,
   };
@@ -285,85 +395,117 @@ async function runAnalyze() {
 }
 window.runAnalyze = runAnalyze;
 
-// ── Settings modal ────────────────────────────────────────────────────────────
-async function openSettingsModal() {
-  const modal = document.getElementById('m-settings-modal');
-  if (!modal) return;
-  document.getElementById('m-settings-status').textContent = '';
-  await _loadSettingsPanel();
-  modal.style.display = 'flex';
-}
-window.openSettingsModal = openSettingsModal;
+// ── Save settings from Analyze modal ─────────────────────────────────────────
+async function saveAnalyzeSettings() {
+  const dir = document.getElementById('m-analyze-dir')?.value.trim();
+  if (!dir) return;
 
-function closeSettingsModal() {
-  document.getElementById('m-settings-modal').style.display = 'none';
-}
-window.closeSettingsModal = closeSettingsModal;
+  const positive    = document.getElementById('m-analyze-positive')?.value.trim()    || null;
+  const negative    = document.getElementById('m-analyze-negative')?.value.trim()    || null;
+  const description = document.getElementById('m-analyze-description')?.value.trim() || null;
+  const clipFirst   = document.getElementById('m-analyze-clip-first')?.checked;
+  const clipDur     = parseFloat(document.getElementById('m-analyze-clip-dur')?.value)  || null;
+  const interval    = parseFloat(document.getElementById('m-analyze-interval')?.value)  || null;
+  const minGap      = parseFloat(document.getElementById('m-analyze-min-gap')?.value)   || null;
 
-async function _loadSettingsPanel() {
+  const saves = [
+    fetch('/api/job-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        work_dir: dir, positive, negative,
+        clip_first: clipFirst, clip_scan_clip_dur: clipDur,
+        clip_scan_interval: interval, clip_scan_min_gap: minGap,
+      }),
+    }).catch(() => {}),
+  ];
+
+  const jobId = (typeof _jobId !== 'undefined') ? _jobId : null;
+  if (jobId) {
+    const job = await window._modernApi.get(`/api/jobs/${jobId}`).catch(() => null);
+    if (job && job.params?.work_dir === dir) {
+      saves.push(fetch(`/api/jobs/${jobId}/save-prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, positive, negative }),
+      }).catch(() => {}));
+    }
+  }
+
+  await Promise.all(saves);
+
+  const status = document.getElementById('m-analyze-status');
+  if (status) { status.textContent = '✓ Saved'; setTimeout(() => { status.textContent = ''; }, 1500); }
+}
+window.saveAnalyzeSettings = saveAnalyzeSettings;
+
+// ── Generate prompts for Analyze modal ───────────────────────────────────────
+async function generateAnalyzePrompts() {
+  const dir = document.getElementById('m-analyze-dir').value.trim();
+  const description = document.getElementById('m-analyze-description')?.value.trim() || '';
+  const btn    = document.getElementById('m-analyze-gen-btn');
+  const status = document.getElementById('m-analyze-gen-status');
+  if (btn)    btn.disabled = true;
+  if (status) status.textContent = 'Generating…';
+
+  let data = null;
+  try {
+    const r = await fetch('/api/about', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, work_dir: dir || undefined }),
+    });
+    data = r.ok ? await r.json() : null;
+  } catch { data = null; }
+
+  if (btn) btn.disabled = false;
+  if (!data?.ok) {
+    if (status) status.textContent = '✗ Failed';
+    return;
+  }
+  if (status) status.textContent = '✓ Done';
+  const pos = document.getElementById('m-analyze-positive');
+  const neg = document.getElementById('m-analyze-negative');
+  if (pos && data.positive) pos.value = data.positive;
+  if (neg && data.negative) neg.value = data.negative;
+}
+window.generateAnalyzePrompts = generateAnalyzePrompts;
+
+// ── Unified save (Project modal) ──────────────────────────────────────────────
+async function saveProjectModal() {
   if (typeof _jobId === 'undefined' || !_jobId) return;
   const job = await window._modernApi.get(`/api/jobs/${_jobId}`);
   if (!job?.params?.work_dir) return;
-  const cfg = await window._modernApi.get(
-    `/api/job-config?dir=${encodeURIComponent(job.params.work_dir)}`
-  );
-  if (!cfg) return;
-  const set = (id, val) => {
-    const el = document.getElementById(id);
-    if (el && val != null) el.value = val;
-  };
-  set('m-settings-music-dir',   cfg.music_dir);
-  set('m-settings-clip-dur',    cfg.clip_scan_clip_dur);
-  set('m-settings-description', job.params.description ?? cfg.description ?? '');
-  set('m-settings-positive',    cfg.positive);
-  set('m-settings-negative',    cfg.negative);
-  document.getElementById('m-settings-gen-status').textContent = '';
-}
+  const status = document.getElementById('m-analyze-status');
 
-async function saveSettings() {
-  if (typeof _jobId === 'undefined' || !_jobId) {
-    alert('No project selected.'); return;
-  }
-  const job = await window._modernApi.get(`/api/jobs/${_jobId}`);
-  if (!job?.params?.work_dir) return;
+  // Analyze settings
+  await saveAnalyzeSettings();
 
-  const musicDir    = document.getElementById('m-settings-music-dir')?.value.trim() || null;
-  const clipDur     = parseFloat(document.getElementById('m-settings-clip-dur')?.value) || null;
-  const description = document.getElementById('m-settings-description')?.value.trim() || null;
-  const positive    = document.getElementById('m-settings-positive')?.value.trim()  || null;
-  const negative    = document.getElementById('m-settings-negative')?.value.trim()  || null;
-
-  const status = document.getElementById('m-settings-status');
-
+  // Output / Render / Shorts / Privacy
+  const _titleLine  = document.getElementById('m-settings-title')?.value.trim() || '';
+  const _cardLine   = document.getElementById('m-settings-intro-card')?.value.trim() || '';
+  const title       = _titleLine ? (_cardLine ? `${_titleLine}\n${_cardLine}` : _titleLine) : null;
   const cfgR = await fetch('/api/job-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      work_dir: job.params.work_dir,
-      music_dir:          musicDir,
-      clip_scan_clip_dur: clipDur,
-      positive,
-      negative,
+      work_dir:              job.params.work_dir,
+      title,
+      shorts_music_dir:      document.getElementById('m-settings-shorts-music')?.value.trim() || null,
+      photos_dir:            document.getElementById('m-analyze-photos-dir')?.value.trim()    || null,
+      blur_speedometer_cams: document.getElementById('m-settings-blur-speed')?.value.trim()   || null,
+      blur_plates:           document.getElementById('m-settings-blur-plates')?.checked ?? false,
+      cam_pattern:           document.getElementById('m-settings-cam-pattern')?.value.trim()  || '',
+      beats_fast:            parseInt(document.getElementById('m-settings-beats-fast')?.value)  || null,
+      beats_mid:             parseInt(document.getElementById('m-settings-beats-mid')?.value)   || null,
+      beats_slow:            parseInt(document.getElementById('m-settings-beats-slow')?.value)  || null,
     }),
   });
-  if (!cfgR.ok) {
-    if (status) status.textContent = '✗ Save failed';
-    return;
-  }
-
-  const promptsR = await fetch(`/api/jobs/${_jobId}/save-prompts`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ description, positive, negative }),
-  });
-  if (!promptsR.ok) {
-    if (status) status.textContent = '✗ Prompts save failed';
-    return;
-  }
-
-  closeSettingsModal();
+  if (!cfgR.ok) { if (status) status.textContent = '✗ Save failed'; return; }
+  if (status) { status.textContent = '✓ Saved'; setTimeout(() => { status.textContent = ''; }, 1500); }
 }
-window.saveSettings = saveSettings;
+window.saveProjectModal = saveProjectModal;
+window.saveSettings     = saveProjectModal;
 
 async function generateSettingsPrompts() {
   if (typeof _jobId === 'undefined' || !_jobId) {

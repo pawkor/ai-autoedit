@@ -226,16 +226,26 @@ def _extract_clip(src: Path, start: float, duration: float, out: Path):
 
 
 # ── Source files ──────────────────────────────────────────────────────────────
+def _find_videos(directory):
+    seen = set()
+    for ext in VIDEO_EXT:
+        for f in directory.glob(f"*{ext}"):
+            if f not in seen:
+                seen.add(f); yield f
+        for f in directory.glob(f"*{ext.upper()}"):
+            if f not in seen:
+                seen.add(f); yield f
+
 if CAMERAS:
     source_files = sorted(
         f for cam in CAMERAS
-        for f in (WORK_DIR / cam).glob("*.mp4")
-        if f.suffix.lower() in VIDEO_EXT and not f.name.lower().startswith("highlight")
+        for f in _find_videos(WORK_DIR / cam)
+        if not f.name.lower().startswith("highlight")
     )
 else:
     source_files = sorted(
-        f for f in WORK_DIR.glob("*.mp4")
-        if f.suffix.lower() in VIDEO_EXT and not f.name.lower().startswith("highlight")
+        f for f in _find_videos(WORK_DIR)
+        if not f.name.lower().startswith("highlight")
     )
 
 print(f"Source files: {len(source_files)}")
