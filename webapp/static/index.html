@@ -1,981 +1,863 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI-autoedit</title>
-    <link rel="stylesheet" href="/css/style.css">
-    <link rel="stylesheet" href="/css/mobile.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-autoedit Studio</title>
+  <link rel="stylesheet" href="/css/studio.css">
+  <link rel="stylesheet" href="/css/music_modal.css">
 </head>
-<body>
-<div id="app">
-<div id="app-body">
+<body data-theme="dark">
 
-<div id="sidebar-overlay"></div>
+  <div id="studio">
 
-<!-- Sidebar -->
-<div id="sidebar">
-  <div id="sidebar-header">
-    <button id="btn-hamburger" title="Close menu">✕</button>
-    <h1>AI<br>autoedit</h1>
-    <div id="sidebar-btns">
-      <div>
-        <button id="sidebar-theme" onclick="toggleTheme()" title="Toggle light/dark" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 4px;line-height:1">☽</button>
-        <button id="sidebar-lang" onclick="toggleLang()">en</button>
+    <aside id="m-sidebar">
+      <div class="m-sidebar-header">
+        <span data-i18n="m.projects">Projects</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="openProjectModal()"
+                data-i18n-title="m.title_new_project" title="New project"
+                style="padding:1px 7px;font-size:14px;line-height:1">+</button>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="openAppSettingsModal()"
+                data-i18n-title="m.title_global_settings" title="Global settings"
+                style="padding:1px 6px;font-size:12px">⚙</button>
+        <button id="m-sort-btn" class="m-btn m-btn-ghost m-btn-sm"
+                onclick="toggleProjectSort()"
+                data-i18n-title="m.title_sort_order" title="Sort order"
+                style="padding:1px 6px;font-size:9px">a→z</button>
       </div>
-      <button id="sidebar-sort" onclick="toggleSortOrder()" data-i18n="misc.newest">a..z</button>
-    </div>
-    <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
-  </div>
-  <div id="sidebar-new-row">
-    <div id="sidebar-queue" style="display:none" onclick="openQueueModal()" title="Running / Queued jobs">
-      <span id="sq-running">0</span> / <span id="sq-queued">0</span>
-    </div>
-    <button id="btn-new" data-i18n="btn.new" onclick="openDirBrowser(null, p => loadDirConfig(p))">+ New project</button>
-  </div>
-  <div id="job-list"></div>
-</div>
+      <div id="m-project-list"></div>
+    </aside>
 
-<!-- Main -->
-<div id="main">
+    <div id="m-main">
 
-  <div id="mobile-topbar">
-    <button id="btn-hamburger-open" title="Open project list">☰</button>
-    <span>AI-autoedit</span>
-  </div>
-  <div id="inspector-overlay"></div>
-
-  <div id="welcome" class="view active">
-    <div class="wt"><h2>AI-autoedit</h2><p data-i18n="misc.welcome_sub">AI highlight reel pipeline</p>
-      <p style="margin-top:14px;font-size:11px;"><span data-i18n="misc.welcome_hint">← Click <strong style="color:var(--accent)">+ New</strong> to start a job</span></p>
-    </div>
-  </div>
-
-  <!-- Job view -->
-  <div id="job-view" class="view">
-    <div id="job-header">
-      <span class="dot s-pending" id="jh-dot"></span>
-      <span id="jh-path"></span>
-      <span class="jh-flex"></span>
-      <button id="btn-inspector-open" title="Settings / Inspector">⚙</button>
-      <div id="hw-monitor" style="display:none">
-        <div id="hw-cols">
-          <div class="hw-col">
-            <span class="hw-label" id="hw-cpu-label">CPU —</span>
-            <div class="hw-bar-track"><div class="hw-bar cpu" id="bar-cpu"></div></div>
-          </div>
-          <div class="hw-col">
-            <span class="hw-label" id="hw-ram-label">RAM —</span>
-            <div class="hw-bar-track"><div class="hw-bar ram" id="bar-ram"></div></div>
-          </div>
-          <div class="hw-col" id="hw-gpu-col" style="display:none">
-            <span class="hw-label" id="hw-gpu-label">GPU —</span>
-            <div class="hw-bar-track"><div class="hw-bar gpu" id="bar-gpu"></div></div>
-          </div>
-          <div class="hw-col" id="hw-vram-col" style="display:none">
-            <span class="hw-label" id="hw-vram-label">VRAM —</span>
-            <div class="hw-bar-track"><div class="hw-bar vram" id="bar-vram"></div></div>
-          </div>
-        </div>
-      </div>
-      <span class="jh-flex"></span>
-      <span id="jh-status" style="font-size:11px;color:var(--muted)"></span>
-      <span id="jh-elapsed" style="font-size:11px;color:var(--muted)"></span>
-      <button id="btn-kill" data-i18n="btn.kill" onclick="killJob()">■ Kill</button>
-    </div>
-    <div id="steps">
-      <span class="step" data-step="1" data-i18n="step.1">1 Sources</span>
-      <span class="step" data-step="2" data-i18n="step.2">2 Detection</span>
-      <span class="step" data-step="3" data-i18n="step.3">3 Split</span>
-      <span class="step" data-step="4" data-i18n="step.4">4 Frames</span>
-      <span class="step" data-step="5" data-i18n="step.5">5 CLIP</span>
-      <span class="step" data-step="6" data-i18n="step.6">6 Select+Encode</span>
-      <button id="btn-kill-log" onclick="killJob()" style="display:none;margin-left:auto;background:transparent;border:1px solid var(--red);color:var(--red);padding:2px 10px;cursor:pointer;font-family:var(--font);font-size:11px;border-radius:3px">■ Stop job</button>
-    </div>
-    <div id="job-body">
-    <div id="center-col">
-    <div id="center-tabs">
-      <div class="tab" data-i18n="tab.gallery" onclick="switchTab('gallery')">Select scenes</div>
-      <div class="tab" data-i18n="tab.music" onclick="switchTab('music')">Music</div>
-      <div class="tab" data-i18n="tab.preview" onclick="switchTab('preview')">Preview</div>
-      <div class="tab" data-i18n="tab.results" onclick="switchTab('results')">Results</div>
-      <div class="tab" data-i18n="tab.log" onclick="switchTab('log')">Log</div>
-      <div id="log-filter-widget" style="display:none;position:relative;margin-left:4px">
-        <button id="log-filter-trigger" onclick="_toggleLogFilterMenu(event)">Info ▾</button>
-        <div id="log-filter-menu">
-          <div class="lfm-item" data-lf="steps" onclick="setLogFilter('steps')">Steps</div>
-          <div class="lfm-item active" data-lf="info"  onclick="setLogFilter('info')">Info</div>
-          <div class="lfm-item" data-lf="all"   onclick="setLogFilter('all')">All</div>
-        </div>
-      </div>
-      <button id="btn-clear-log" style="display:none" onclick="if(currentJobId){api.del('/api/jobs/'+currentJobId+'/log').then(()=>{document.getElementById('log-panel').innerHTML=''})}" title="Clear log">✕</button>
-      <button id="job-progress-btn" onclick="openQueueModal()" style="display:none" title="Job progress — click to view queue">
-        <svg viewBox="0 0 36 36" width="22" height="22">
-          <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--border)" stroke-width="4"/>
-          <circle id="progress-ring" cx="18" cy="18" r="15.9" fill="none"
-                  stroke="var(--accent)" stroke-width="4"
-                  stroke-dasharray="0 100" stroke-linecap="round"
-                  transform="rotate(-90 18 18)"/>
-        </svg>
-        <span id="progress-ring-label"></span>
-        <span id="progress-ring-pct">0%</span>
-      </button>
-    </div>
-    <div id="tab-content">
-
-      <!-- Log tab: split log + stats -->
-      <div id="log-split">
-        <div id="log-panel" class="lf-info"></div>
+      <div id="m-job-status" style="display:none">
+        <span id="m-job-phase"></span>
+        <div id="m-job-bar-track"><div id="m-job-bar-fill"></div></div>
+        <span id="m-job-text"></span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="cancelRender()"
+                id="m-btn-cancel" style="display:none"
+                data-i18n-title="m.title_cancel" title="Cancel render">✕</button>
       </div>
 
-      <!-- Gallery tab -->
-      <div id="gallery-panel">
-        <div id="gallery-header">
-          <div id="threshold-bar" style="display:none">
-            <input type="hidden" id="threshold-val" value="0.148">
-            <span style="font-size:11px;color:var(--muted)">Target dur.</span>
-            <input type="text" id="gallery-target-min" value="6:00" inputmode="numeric"
-              title="Target highlight duration (M:SS or minutes) — Enter or blur to find matching threshold"
-              style="width:44px;margin-left:4px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:2px 4px;border-radius:3px;font-size:12px;font-family:var(--font);outline:none;text-align:center"
-              onkeydown="if(event.key==='Enter'){_applyTargetMin(this);this.blur()}"
-              onblur="_applyTargetMin(this)"
-              onfocus="this.select()">
-            <span style="font-size:11px;color:var(--muted)">min</span>
-            <span id="target-dur-warn" style="font-size:11px;margin-left:6px;display:none" data-tip="Maximum achievable duration with current settings.&#10;Limited by Max per file (sec) × number of source files.&#10;Lower the threshold further or increase Max per file to get more content."></span>
-            <span style="display:none;margin-left:8px;color:var(--muted);font-size:11px">Min gap:</span>
-            <input class="gf-filter-input" id="min-gap-input" type="number" min="0" step="30" placeholder="s" style="display:none;width:52px"
-              onkeydown="if(event.key==='Enter'){onMinGapChange();this.blur()}"
-              onblur="onMinGapChange()">
-          </div>
-          <div id="gallery-status" style="margin-top:2px">
-            <span id="gallery-stats-text">—</span>
-            <button class="btn-sm" style="padding:1px 6px;font-size:14px;line-height:1" title="Clear manual overrides and re-run target search" onclick="resetThreshold()">↺</button>
-            <!-- Beats-per-shot: single ▼/▲ shifts all three tiers together -->
-            <span style="display:flex;align-items:center;gap:5px;margin-left:8px">
-              <span style="font-size:11px;color:var(--muted);white-space:nowrap"
-                title="Beats per shot for Music-driven render (fast · mid · slow energy sections).&#10;▼/▲ shifts all three together.&#10;Fewer beats = faster cuts. Duration shown at selected track BPM.">Beats/shot:</span>
-              <button class="btn-sm" style="padding:0 5px;font-size:11px;line-height:1.7"
-                title="Fewer beats per shot → faster cuts across all energy levels"
-                onclick="_beatsStep(-1)">▼</button>
-              <span id="beats-vals" style="font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap"
-                title="Beats per shot: fast · mid · slow energy sections">3 · 4 · 6</span>
-              <button class="btn-sm" style="padding:0 5px;font-size:11px;line-height:1.7"
-                title="More beats per shot → slower, more cinematic cuts across all energy levels"
-                onclick="_beatsStep(1)">▲</button>
-              <span id="beats-durs" style="font-size:11px;color:var(--accent);white-space:nowrap"
-                title="Estimated shot durations (fast / mid / slow) at selected track BPM"></span>
-            </span>
-            <div id="sd-progress-wrap" style="display:none;flex:1;min-width:0;align-items:center;gap:6px">
-              <span style="font-size:11px;color:var(--muted);white-space:nowrap">Scene detect</span>
-              <div style="flex:1;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;min-width:40px">
-                <div id="sd-progress-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.3s ease"></div>
-              </div>
-              <span id="sd-progress-pct" style="font-size:11px;color:var(--accent);font-weight:600;min-width:3ch;text-align:right">0%</span>
+      <header id="m-topbar">
+        <span id="m-project-name" class="m-project-name"
+              data-i18n="m.no_project">No project selected</span>
+        <div id="m-hw-monitor" style="display:none">
+          <div id="m-hw-cols">
+            <div class="m-hw-col">
+              <span class="m-hw-label" id="m-hw-cpu-label">CPU —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar cpu" id="m-bar-cpu"></div></div>
             </div>
-            <div class="tile-sizer" title="Tile size">
-              <span>▪</span>
-              <input type="range" id="tile-size-gallery" min="80" max="320" value="160" oninput="_setTileSize(this.value)">
-              <span>◼</span>
+            <div class="m-hw-col">
+              <span class="m-hw-label" id="m-hw-ram-label">RAM —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar ram" id="m-bar-ram"></div></div>
+            </div>
+            <div class="m-hw-col" id="m-hw-gpu-col" style="display:none">
+              <span class="m-hw-label" id="m-hw-gpu-label">GPU —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar gpu" id="m-bar-gpu"></div></div>
+            </div>
+            <div class="m-hw-col" id="m-hw-vram-col" style="display:none">
+              <span class="m-hw-label" id="m-hw-vram-label">VRAM —</span>
+              <div class="m-hw-bar-track"><div class="m-hw-bar vram" id="m-bar-vram"></div></div>
             </div>
           </div>
         </div>
-        <div id="frames-scroll">
-          <div id="frames-grid"></div>
+        <div class="m-topbar-actions">
+          <button id="m-btn-results" class="m-btn m-btn-ghost" onclick="openResultsModal()"
+                  style="display:none"
+                  data-i18n="m.btn_results" data-i18n-title="m.title_results"
+                  title="Show render results">▤ Results</button>
+          <button id="m-btn-preview" class="m-btn m-btn-ghost" onclick="previewTimeline()" disabled
+                  data-i18n="m.btn_preview" data-i18n-title="m.title_preview"
+                  title="Preview beat-aligned scene order">▶ Preview</button>
+          <button id="m-btn-shorts" class="m-btn m-btn-ghost" onclick="openShortsModal()" disabled
+                  data-i18n="m.btn_shorts_top" data-i18n-title="m.title_shorts_top"
+                  title="Generate short clips">▶ Shorts</button>
+          <button id="m-btn-render" class="m-btn m-btn-green" onclick="renderTimeline()" disabled
+                  data-i18n="m.btn_render_top" data-i18n-title="m.title_render"
+                  title="Render highlight video">⬡ Render</button>
+          <button id="m-lang-btn" class="m-btn m-btn-ghost" onclick="toggleLang()"
+                  title="Switch language / Zmień język">EN</button>
+          <button id="m-theme-btn" class="m-btn m-btn-ghost" onclick="modernToggleTheme()"
+                  data-i18n-title="m.title_theme" title="Toggle theme">☽</button>
+          <button class="m-btn m-btn-ghost" onclick="location.href='index.html'+location.search"
+                  data-i18n-title="m.title_legacy_top" title="Settings & Legacy UI">⚙</button>
         </div>
-      </div>
+      </header>
 
-      <!-- Music tab -->
-      <div id="music-panel">
-        <div id="music-header">
-          <div id="music-analyze-info" style="display:none;font-size:11px;color:var(--muted);padding:2px 0;align-items:center;gap:12px">
-            <span>Est. highlight: <strong id="music-est-duration">—</strong></span>
-            <span id="music-est-scenes-wrap">(<span id="music-est-scenes">—</span> scenes)</span>
-          </div>
-          <div id="music-dir-row">
-            <button class="btn-sm" id="btn-music-rebuild" data-i18n="btn.rebuild_index" onclick="rebuildMusicIndex()">↺ Update index</button>
-            <label class="cb-label"><input type="checkbox" id="music-force"> <span data-i18n="lbl.force_audio" data-i18n-tip="force_audio">re-analyze</span></label>
-            <label class="cb-label"><input type="checkbox" id="music-force-genres"> <span data-i18n="lbl.force_genres" data-i18n-tip="force_genres">re-genres</span></label>
-          </div>
-          <div id="music-yt-row" style="display:flex;gap:6px;align-items:center">
-            <label style="font-size:11px;color:var(--muted);white-space:nowrap;width:52px">YouTube</label>
-            <input type="text" id="music-yt-url" placeholder="https://youtu.be/…"
-              style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none"
-              onkeydown="if(event.key==='Enter')ytdlDownload()">
-            <button class="btn-sm" onclick="ytdlDownload()">↓ Download</button>
-            <span id="music-yt-msg" style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-            <span id="music-yt-pct" style="font-size:11px;color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
-          </div>
-          <div id="music-s3-row" style="display:flex;gap:6px;align-items:center">
-            <label style="font-size:11px;color:var(--muted);white-space:nowrap;width:52px">S3</label>
-            <input type="text" id="music-s3-prefix" placeholder="music/" value="music/"
-              style="width:100px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none"
-              onkeydown="if(event.key==='Enter')s3MusicBrowse()">
-            <button class="btn-sm" onclick="s3MusicBrowse()" data-i18n="btn.browse_s3">Browse S3</button>
-            <span id="music-s3-status" style="font-size:11px;color:var(--muted)"></span>
-            <button class="btn-sm" id="btn-music-s3-close" style="display:none;margin-left:auto" onclick="document.getElementById('music-s3-wrap').style.display='none';this.style.display='none'">✕ Close</button>
-          </div>
-          <div id="music-s3-wrap" style="display:none">
-            <div id="music-s3-list"></div>
-          </div>
-          <div id="music-controls">
-            <input type="text" id="music-filter" data-i18n-ph="ph.filter_tracks" placeholder="Filter tracks..." oninput="renderMusicList()">
-            <select id="music-genre" onchange="renderMusicList()"><option value="">all genres</option></select>
-            <button class="btn-sm" data-i18n="btn.all" onclick="setAllMusic(true)">All</button>
-            <button class="btn-sm" data-i18n="btn.none" onclick="setAllMusic(false)">None</button>
-            <button class="btn-primary btn-sm" id="btn-set-target-dur" title="Set Target dur. from selected track" onclick="setTargetFromSelectedTrack()" style="display:none">→ Target dur.</button>
-            <span id="music-count">—</span>
-          </div>
+      <section id="m-pool">
+        <div class="m-section-header">
+          <span class="m-section-title" data-i18n="m.pool">POOL</span>
+          <span id="m-pool-count" class="m-section-meta"></span>
+          <span id="m-gps-badge" class="m-badge m-badge-gps" style="display:none"
+                title="GPS data detected — gps_weight auto-enabled">GPS</span>
+          <div id="m-cam-filters" style="display:none;gap:6px;align-items:center;flex-wrap:wrap"></div>
+          <span class="m-section-meta" style="margin-left:auto"
+                data-i18n="m.drag_hint">drag ↓ to timeline</span>
+          <input class="m-tile-slider" type="range" min="120" max="480" value="120"
+                 oninput="setTileSize(this.value)"
+                 data-i18n-title="m.title_tile_size" title="Tile size"
+                 id="m-tile-slider">
         </div>
-        <div id="music-rebuild-progress" style="display:none;padding:4px 0">
-          <div style="background:var(--bg3);border-radius:3px;height:6px;overflow:hidden">
-            <div id="music-rebuild-bar" style="height:6px;background:var(--accent);width:0%;transition:width .4s ease"></div>
-          </div>
+        <div id="m-pool-grid"></div>
+      </section>
+
+      <section id="m-timeline-wrap">
+        <div class="m-section-header">
+          <span class="m-section-title" data-i18n="m.timeline">TIMELINE</span>
+          <span id="m-timeline-meta" class="m-section-meta"></span>
         </div>
-        <div id="music-list-scroll">
-          <div id="music-list-header">
-            <span class="mh-left-controls" title="Offset: seconds added to target (intro silence + outro fade).&#10;Tolerance: max deviation from target+offset to highlight best-fit tracks.">
-              <span id="btn-music-sort-reset" onclick="resetMusicSort()" title="Reset — sort by estimated duration" style="display:none;color:var(--accent);cursor:pointer;font-size:10px;flex-shrink:0">↺ est.</span>
-              <span style="font-size:10px;color:var(--muted)">+</span><input id="music-offset-s" type="number" min="0" max="30" step="1" value="3" style="width:36px;font-size:10px;padding:1px 3px;text-align:center;background:var(--bg2);border:1px solid var(--border);border-radius:3px;color:var(--fg)" title="Intro/outro offset (s)" oninput="renderMusicList()" onclick="event.stopPropagation()">
-              <span style="font-size:10px;color:var(--muted)">±</span><input id="music-tolerance-s" type="number" min="5" max="120" step="5" value="15" style="width:40px;font-size:10px;padding:1px 3px;text-align:center;background:var(--bg2);border:1px solid var(--border);border-radius:3px;color:var(--fg)" title="Tolerance window (s)" oninput="renderMusicList()" onclick="event.stopPropagation()">
-            </span>
-            <span class="mh-title" onclick="sortMusic('title')" data-sort="title" data-label="Title / Artist">Title / Artist</span>
-            <span class="mh-genre" onclick="sortMusic('genre')" data-sort="genre" data-label="Genre">Genre</span>
-            <span class="mh-dur"   onclick="sortMusic('dur')"   data-sort="dur"   data-label="Dur">Dur</span>
-            <span class="mh-bpm"   onclick="sortMusic('bpm')"   data-sort="bpm"   data-label="BPM">BPM</span>
-            <span class="mh-energy" onclick="sortMusic('energy')" data-sort="energy" data-label="Nrg">Nrg</span>
-            <span class="mh-copyright">Copyright</span>
+        <div id="m-timeline">
+          <div class="m-track-row">
+            <div class="m-track-label" data-i18n="m.track_clips">clips</div>
+            <div id="m-clip-track" class="m-track-clips"></div>
           </div>
-          <div id="music-list"></div>
-        </div>
-      </div>
-
-      <!-- Preview tab -->
-      <div id="preview-panel">
-        <div id="preview-header" style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--bg)">
-          <button class="btn-primary" id="btn-preview-run" data-i18n="btn.preview_run" onclick="runPreviewSequence()">▶ Preview render order</button>
-          <span id="preview-status" data-i18n="misc.preview_hint" style="font-size:12px;color:var(--muted)">Run to see planned scene order before rendering.</span>
-          <span id="preview-ban-count" style="font-size:12px;color:var(--red);display:none"></span>
-          <div class="tile-sizer" title="Tile size">
-            <span>▪</span>
-            <input type="range" id="tile-size-preview" min="160" max="640" value="160" oninput="_setTileSize(this.value)">
-            <span>◼</span>
+          <div class="m-track-row m-ruler-row">
+            <div class="m-track-label"></div>
+            <div id="m-time-ruler" class="m-track-ruler"></div>
           </div>
-        </div>
-        <div id="preview-scroll" style="flex:1;overflow-y:auto;padding:14px">
-          <div id="preview-grid"></div>
-        </div>
-      </div>
-
-
-      <!-- Results tab -->
-      <div id="results-panel">
-        <div id="video-wrap"><video id="video-player" controls preload="auto"></video></div>
-        <div id="results-cols">
-          <div class="results-col">
-            <div class="results-col-hdr">Highlight</div>
-            <div class="rf-files" id="rf-files-main"></div>
-          </div>
-          <div class="results-col">
-            <div class="results-col-hdr">Shorts</div>
-            <div class="rf-files" id="rf-files-short"></div>
-          </div>
-        </div>
-      </div>
-
-    </div><!-- /tab-content -->
-    </div><!-- /center-col -->
-
-    <!-- Inspector (right pane) -->
-    <div id="inspector">
-
-      <!-- Source -->
-      <details class="insp-section" data-cat="source" open>
-        <summary><span class="insp-cat-dot"></span>Source</summary>
-        <div class="insp-body">
-          <div class="ff">
-            <label data-i18n="lbl.working_dir">Working directory</label>
-            <div class="dir-pick">
-              <input type="text" id="js-workdir" readonly size="24" style="color:var(--muted);flex:0 0 auto">
-              <button id="js-workdir-browse-btn" class="btn-sm" title="Browse files" onclick="_openWorkdirFileBrowser()">📁</button>
-            </div>
-          </div>
-          <div id="js-s3-section" style="display:none">
-            <div style="margin-bottom:4px">
-              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">S3 source</span>
-              <button class="btn-sm" style="margin-left:6px" title="Refresh" onclick="s3LoadFileList()">↺</button>
-            </div>
-            <div id="js-s3-list-wrap" style="max-height:100px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;margin-bottom:4px;background:var(--bg)">
-              <div id="js-s3-list" style="padding:4px 8px;font-size:11px;color:var(--muted)">—</div>
-            </div>
-            <div id="js-s3-fetch-progress" style="display:none;margin-bottom:4px">
-              <div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:3px">
-                <span id="js-s3-fetch-file" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-                <span id="js-s3-fetch-speed" style="color:var(--muted)"></span>
-                <span id="js-s3-fetch-pct" style="color:var(--accent);font-weight:600;min-width:4ch;text-align:right"></span>
-              </div>
-              <div style="background:var(--bg3);border-radius:3px;height:3px;overflow:hidden">
-                <div id="js-s3-fetch-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.2s"></div>
-              </div>
-            </div>
-            <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
-              <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer">
-                <input type="checkbox" id="js-s3-all" onchange="_s3ToggleAll(this.checked)">
-                <span style="color:var(--muted)">All missing</span>
-              </label>
-              <button class="btn-sm" id="btn-s3-fetch" onclick="s3FetchSources()">↓ Fetch</button>
-              <span id="js-s3-fetch-status" style="font-size:11px;color:var(--muted)"></span>
-              <button class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="s3PurgeLocal()">✕ Purge</button>
+          <div class="m-track-row">
+            <div class="m-track-label" data-i18n="m.track_music">music</div>
+            <div id="m-music-bar" class="m-track-music">
+              <span id="m-music-label" class="m-music-label"
+                    data-i18n="m.no_track">no track selected</span>
             </div>
           </div>
         </div>
-      </details>
+      </section>
 
 
-      <!-- Cameras -->
-      <details class="insp-section" data-cat="camera">
-        <summary><span class="insp-cat-dot"></span>Camera</summary>
-        <div class="insp-body">
-          <label style="font-size:10px;color:var(--muted)" data-i18n="lbl.cam_subfolders">Subfolders (A = audio source)</label>
-          <div id="js-cam-list"></div>
-          <div style="display:flex;gap:5px;align-items:center;margin-top:2px">
-            <button class="btn-sm" onclick="addCamRow('js-cam-list')">+ Add</button>
-            <button class="btn-sm" id="btn-detect-offsets" onclick="detectCamOffsets()" title="Auto-detect time offsets from creation_time metadata">↻ Detect offsets</button>
-          </div>
-          <div style="margin-top:8px">
-            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px"
-              title="Camera cut pattern for Music-driven render.&#10;Letters map alphabetically to cameras (a=first, b=second…).&#10;Pattern repeats cyclically for the whole track.&#10;Examples: ab = strict alternation, aabaab = two-one rhythm, aabb = pairs.&#10;Leave empty for automatic group-based switching (2-3 shots per camera).">Cam pattern (music-driven)</label>
-            <input type="text" id="js-cam-pattern" placeholder="e.g. ab, aabaab, aabb  (empty = score only)"
-              style="width:100%;font-family:var(--mono);font-size:12px;letter-spacing:0.05em"
-              title="Camera cut pattern: a = Cam A (first in list above), b = Cam B, etc.&#10;'ab' = strict A-B-A-B  |  'aabaab' = AA-B-AA-B  |  'aabb' = pairs.&#10;Empty = score-driven (no camera preference)."
-              onchange="saveSettingsField()">
-          </div>
+      <div id="m-log" style="display:none">
+        <div class="m-section-header">
+          <span class="m-section-title" id="m-log-toggle" onclick="toggleLog()"
+                data-i18n="m.log">LOG</span>
+          <span id="m-log-meta" class="m-section-meta"></span>
+          <button class="m-btn m-btn-ghost m-btn-sm" style="margin-left:auto"
+                  onclick="toggleLogMax()" id="m-log-max-btn"
+                  data-i18n-title="m.title_log_max" title="Maximize log">⤢</button>
+          <button class="m-btn m-btn-ghost m-btn-sm" onclick="clearLog()"
+                  data-i18n-title="m.title_log_clear" title="Clear log">✕</button>
         </div>
-      </details>
-
-      <!-- Proxy media (hidden in clip-first mode) -->
-      <div id="js-proxy-section" style="border-bottom:1px solid var(--border);border-left:2px solid var(--cat-camera)">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:7px 12px;display:flex;align-items:center;gap:7px"><span style="width:5px;height:5px;border-radius:50%;background:var(--cat-camera);flex-shrink:0;display:inline-block"></span>Proxy media</div>
-        <div class="insp-body" style="padding-top:0">
-          <div id="js-proxy-bars" style="margin-bottom:4px"></div>
-          <button class="btn-sm" id="btn-proxy-start" onclick="startProxy()">▶ Create proxies</button>
-        </div>
+        <div id="m-log-lines" style="display:none"></div>
       </div>
 
-      <!-- Scene detection -->
-      <details class="insp-section" data-cat="render" open>
-        <summary><span class="insp-cat-dot"></span>Scene detection</summary>
-        <div class="insp-body">
-          <div style="display:flex;align-items:center;justify-content:space-between">
-            <span style="font-size:10px;color:var(--muted)" data-i18n="sec.scene_detect">(auto-calibrated)</span>
-            <button class="btn-sm" onclick="openAdvancedDetect()">⚙ Advanced</button>
-          </div>
-          <div id="traditional-scene-params" style="display:none">
-            <div class="frow" style="gap:8px">
-              <div class="ff"><label data-i18n="lbl.max_scene">Max scene s</label><input type="number" id="js-max-scene" oninput="markManual('js')" onchange="saveSettingsField()"></div>
-              <div class="ff"><label data-i18n="lbl.per_file">Per file s</label><input type="number" id="js-per-file" oninput="markManual('js')" onchange="saveSettingsField()"></div>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px">
-              <span id="js-src-info" style="font-size:10px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-              <button class="btn-sm" onclick="fillSceneParams('js')" title="Calculate from file count and target minutes">⟳ Fill</button>
-            </div>
-          </div>
-          <div id="gps-weight-row" style="display:flex;align-items:center;gap:8px;margin-top:6px">
-            <label style="font-size:11px;color:var(--muted);white-space:nowrap"
-              title="GPS score weight. Boosts scenes with high speed and cornering.&#10;0 = disabled (GPS data ignored).&#10;0.3 = fast corner gets +30% score bonus.&#10;Requires GPS-equipped camera (e.g. Insta360 + remote).&#10;Run Analyze to extract GPS data first.">GPS boost</label>
-            <input type="range" id="js-gps-weight" min="0" max="1" step="0.05" value="0"
-              style="flex:1;accent-color:var(--accent)"
-              title="GPS score weight: 0 = off, 1 = max boost for fast/cornering scenes"
-              oninput="document.getElementById('js-gps-weight-val').textContent=parseFloat(this.value).toFixed(2);saveSettingsField()"
-              onchange="saveSettingsField()">
-            <span id="js-gps-weight-val"
-              style="font-family:var(--mono);font-size:11px;min-width:28px;text-align:right"
-              title="Current GPS weight value">0.00</span>
-          </div>
-        </div>
-      </details>
-
-      <!-- Intro / Music -->
-      <details class="insp-section" data-cat="music">
-        <summary><span class="insp-cat-dot"></span>Intro / Music</summary>
-        <div class="insp-body">
-          <div class="ff"><label data-i18n="lbl.title_short">Title</label><textarea id="js-title" rows="3" style="resize:vertical;width:100%;font-size:12px" onchange="saveSettingsField()"></textarea></div>
-          <div style="display:flex;flex-direction:column;gap:5px">
-            <label class="chk"><input type="checkbox" id="js-no-intro" onchange="saveSettingsField()"><span data-i18n="lbl.no_intro"> No intro/outro</span></label>
-            <label class="chk" id="js-no-music-label" style="display:none"><input type="checkbox" id="js-no-music" onchange="saveSettingsField()"><span data-i18n="lbl.no_music"> No music</span></label>
-          </div>
-          <div class="ff" style="margin-top:4px">
-            <label data-i18n="lbl.music_dir_header">Music dir</label>
-            <div style="display:flex;gap:5px">
-              <input type="text" id="music-dir-input" placeholder="~/moto/music" style="flex:1;min-width:0" onblur="loadMusicTracks()">
-              <button class="btn-sm" data-i18n="btn.browse" onclick="openMusicDirBrowser()">📁</button>
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <!-- Shorts -->
-      <details class="insp-section" data-cat="render">
-        <summary><span class="insp-cat-dot"></span>Shorts</summary>
-        <div class="insp-body">
-          <label class="chk"><input type="checkbox" id="js-shorts-text" onchange="saveSettingsField()"><span> Text overlays (<code>--text</code>)</span></label>
-          <div id="shorts-multicam-wrap" style="display:none;flex-direction:column;gap:5px">
-            <label class="chk"><input type="checkbox" id="js-shorts-multicam" onchange="saveSettingsField()"><span> Multicam shorts</span></label>
-            <label class="chk"><input type="checkbox" id="js-shorts-best"><span> Best of the best</span></label>
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-            <label class="chk"><input type="checkbox" id="js-shorts-ncs" onchange="saveSettingsField()"><span> NCS music</span></label>
-            <label class="chk"><input type="checkbox" id="js-shorts-beat-sync" onchange="saveSettingsField()" title="Transitions snap to beats"><span> Beat sync</span></label>
-          </div>
-          <select id="js-shorts-music-dir" onchange="saveSettingsField()"
-                  style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:2px 4px;font-size:11px;border-radius:3px;outline:none">
-            <option value="">auto</option>
-          </select>
-          <div>
-            <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:2px">Crop X offsets</label>
-            <input type="text" id="js-shorts-crop-offsets" placeholder="back:-300,helmet:0"
-                   onchange="saveSettingsField()"
-                   style="width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none">
-          </div>
-        </div>
-      </details>
-
-      <!-- CLIP Prompts — opens modal -->
-      <div class="insp-section" data-cat="ai" style="padding:8px 12px">
-        <button class="btn-sm" style="width:100%;text-align:left" onclick="openPromptsModal()"><span class="insp-cat-dot"></span>AI / CLIP ↗</button>
-      </div>
-
-      <!-- Analyze CTA -->
-      <div style="padding:10px 12px;flex-shrink:0;display:flex;flex-direction:column;gap:5px">
-        <button class="btn-primary" onclick="rerunFromSettings()" data-i18n="btn.rerun" style="width:100%;font-size:13px;padding:7px 0">Analyze</button>
-        <span id="analyze-warn" style="display:none;font-size:11px;color:#f59e0b;text-align:center"></span>
-      </div>
-
-    </div><!-- /inspector -->
-
-    </div><!-- /job-body -->
-
-    <!-- Sticky footer: always visible, render + music -->
-    <div id="job-footer">
-      <div id="footer-left">
-        <div id="footer-track-row">
-          <span id="sum-track" style="font-size:11px;color:var(--muted);flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word" data-i18n="misc.no_pin">No track pinned — will auto-select.</span>
-          <span id="sum-track-used-warn" style="display:none;color:var(--red);font-size:13px;flex-shrink:0;margin-right:2px" title="">⚠</span>
-          <button onclick="_toggleFooterPreview()" id="btn-footer-play" title="Play / Stop preview" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:12px;padding:0 3px;line-height:1;flex-shrink:0">▶</button>
-          <button onclick="rerollMusic()" title="Pick a different track" id="btn-reroll-music" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 4px;line-height:1;flex-shrink:0">↻</button>
-        </div>
-        <div id="footer-stats-row">
-          <span data-i18n="lbl.scenes_count_prefix">Scenes</span>&nbsp;<span id="sum-scene-selected" style="color:var(--accent)">—</span>/<span id="sum-scene-count" style="color:var(--accent)">—</span>
-          <span style="margin:0 8px;opacity:.3">|</span>
-          <span data-i18n="lbl.est_duration">Est:</span>&nbsp;<span id="sum-duration" style="color:var(--accent)">—</span>
-        </div>
-      </div>
-      <div id="timeline-bar-wrap" title="Estimated material vs selected track length">
-        <div id="timeline-bar-label"><span id="timeline-bar-mode-label">Est. / Track</span><span id="timeline-bar-text">—</span></div>
-        <div id="timeline-bar-track"><div id="timeline-bar-fill"></div></div>
-      </div>
-      <div id="footer-progress">
-        <div id="render-progress-wrap" style="display:none">
-          <div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:3px">
-            <span id="render-status-label" style="color:var(--muted)" data-i18n="misc.rendering">Rendering…</span>
-            <span id="render-step-label" style="color:var(--muted);font-size:10px"></span>
-            <span style="flex:1"></span>
-            <span id="render-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
-            <span id="render-eta" style="color:var(--muted)"></span>
-          </div>
-          <div style="background:var(--bg3);border-radius:2px;height:3px;overflow:hidden">
-            <div id="render-progress-bar" style="height:3px;background:var(--indigo);width:0%;transition:width .4s ease"></div>
-          </div>
-        </div>
-        <div id="shorts-progress-wrap" style="display:none">
-          <div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:3px">
-            <span id="shorts-status-label" style="color:var(--muted)" data-i18n="misc.generating_short">Generating Short…</span>
-            <span id="shorts-pct" style="margin-left:auto;color:var(--muted)"></span>
-          </div>
-          <div style="background:var(--bg3);border-radius:2px;height:3px;overflow:hidden">
-            <div id="shorts-progress-bar" style="height:3px;background:var(--indigo);width:0%;transition:width .4s ease"></div>
-          </div>
-        </div>
-      </div>
-      <div id="footer-actions">
-        <button id="btn-render-md" class="btn-primary" onclick="startMusicDrivenRender()" title="Music-to-Motion Alignment — beat-synced edit driven by music structure">♪ Music-driven</button>
-        <button id="btn-render" class="btn-sm" onclick="startRender()" data-i18n="btn.render" style="display:none">▶ Render Highlight</button>
-        <button id="btn-render-short" class="btn-sm" onclick="startRenderShort()" data-i18n="btn.render_short">▶ Short</button>
-        <input type="number" id="js-shorts-count" value="1" min="1" max="99"
-               title="Number of shorts to generate in parallel"
-               style="width:3.2em;text-align:center;appearance:textfield;-moz-appearance:textfield;padding:4px 6px"
-               oninput="_updateShortsBtn()"
-               onkeydown="if(event.key==='Enter'){this.blur();}">
-        <style>#js-shorts-count::-webkit-inner-spin-button,#js-shorts-count::-webkit-outer-spin-button{-webkit-appearance:none}</style>
-      </div>
     </div>
 
-  </div><!-- /job-view -->
-
-
-</div><!-- /main -->
-</div><!-- /app-body -->
-<div id="app-footer"><a href="/static/license.html" target="_blank">Licencja / License</a><span>,</span><a href="/static/privacy.html" target="_blank">Prywatność / Privacy</a></div>
-</div><!-- /app -->
-
-<!-- Files browser modal -->
-<div id="files-modal">
-  <div id="files-box">
-    <div id="files-path">
-      <span id="files-path-txt"></span>
-      <button class="btn-sm" style="padding:1px 6px" title="Refresh" onclick="_refreshFilesModal()">↺</button>
-      <button class="icon-btn" onclick="closeFileBrowser()" title="Close" style="margin-left:auto">✕</button>
-    </div>
-    <div id="files-list-wrap">
-      <div id="files-list"></div>
-    </div>
-    <div id="files-upload-wrap" style="display:none;padding:7px 11px;border-top:1px solid var(--border);background:var(--bg2)">
-      <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
-        <span id="files-upload-name" style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-        <span id="files-upload-speed" style="color:var(--muted)"></span>
-        <span id="files-upload-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
+    <aside id="m-panel">
+      <div class="m-panel-divider" data-i18n="m.setup">Setup</div>
+      <div class="m-panel-section">
+        <button class="m-btn m-btn-ghost m-btn-full" onclick="openProjectModal()"
+                data-i18n="m.panel_project" data-i18n-title="m.title_project"
+                title="Open project settings">⚙ Project</button>
       </div>
-      <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
-        <div id="files-upload-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.15s"></div>
+      <div class="m-panel-section" style="display:flex;flex-direction:column;gap:4px">
+        <button id="m-btn-proxy" class="m-btn m-btn-ghost m-btn-full" onclick="startProxy()" disabled
+                data-i18n-title="m.title_proxy"
+                title="Generate 480p proxy for faster re-analysis">⬡ Proxy</button>
+        <div id="m-proxy-status" style="display:none;font-size:10px;color:var(--muted);text-align:center"></div>
       </div>
-    </div>
-    <div id="files-footer">
-      <label><input type="checkbox" id="files-all" onchange="_toggleAllFilesModal(this.checked)"><span data-i18n="btn.all"> All</span></label>
-      <button class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_deleteCheckedFilesModal()" data-i18n="btn.delete_selected">✕ Delete selected</button>
-      <button class="btn-sm" onclick="_createFolderInFiles()" data-i18n="btn.create_folder">+ New folder</button>
-      <button class="btn-sm" onclick="document.getElementById('files-upload-input').click()" data-i18n="btn.upload">⬆ Upload</button>
-      <input type="file" id="files-upload-input" multiple style="display:none" onchange="startUploadModal(this)">
-      <button class="btn-sm" onclick="closeFileBrowser()" data-i18n="btn.close">Close</button>
+
+      <div class="m-panel-divider" data-i18n="m.build">Build</div>
+      <div class="m-panel-section">
+        <button class="m-btn m-btn-ghost m-btn-full" onclick="openMusicModal()"
+                data-i18n="m.panel_music" data-i18n-title="m.title_music"
+                title="Open music library">♪ Music</button>
+        <button class="m-btn m-btn-ghost m-btn-full" onclick="openPhotoBrowser()"
+                style="margin-top:4px"
+                data-i18n="m.panel_photos" data-i18n-title="m.title_photos"
+                title="Open photo browser">🖼 Photos</button>
+        <div id="m-pinned-info" style="display:none; margin-top:8px">
+          <div id="m-pinned-title" class="m-pinned-title"></div>
+          <div id="m-pinned-dur" class="m-pinned-dur"></div>
+        </div>
+      </div>
+      <div class="m-panel-section" id="m-pattern-row" style="display:none">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:10px;color:var(--muted);white-space:nowrap"
+                data-i18n="m.pattern_label">Pattern</span>
+          <input id="m-cam-pattern" type="text" class="m-input"
+                 style="flex:1;min-width:0;height:26px;font-size:11px;padding:0 6px"
+                 placeholder="abba" oninput="saveCamPattern(this.value)">
+        </div>
+        <div id="m-pattern-hint" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
+      </div>
+      <div class="m-panel-section">
+        <button id="m-btn-rebuild" class="m-btn m-btn-blue m-btn-full" onclick="rebuildTimeline()" disabled
+                data-i18n="m.panel_build" data-i18n-title="m.title_build"
+                title="Build beat-aligned timeline">↺ Build timeline</button>
+      </div>
+
+      <div class="m-panel-section" style="margin-top:auto">
+        <button class="m-btn m-btn-ghost m-btn-full m-btn-sm"
+                onclick="location.href='index.html'+location.search"
+                data-i18n="m.panel_legacy" data-i18n-title="m.title_legacy_panel"
+                title="Switch to Legacy UI">← Legacy</button>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Build overlay -->
+  <div id="m-build-overlay" style="display:none">
+    <div class="m-build-modal">
+      <div class="m-spinner" style="width:28px;height:28px;border-width:3px"></div>
+      <div class="m-build-msg" data-i18n="m.build_msg">Building timeline…</div>
+      <div class="m-build-bar-track"><div class="m-build-bar-fill"></div></div>
     </div>
   </div>
-</div>
 
-<!-- Queue modal -->
-<div id="queue-modal">
-  <div id="queue-box">
-    <div class="modal-header">
-      <span>Queue</span>
-      <button class="icon-btn" onclick="closeQueueModal()">✕</button>
-    </div>
-    <div class="modal-body" id="queue-modal-body" style="display:flex;flex-direction:column;gap:12px;min-height:60px">
-      <div style="color:var(--muted);font-size:12px">Loading…</div>
-    </div>
+  <!-- Timeline clip hover preview -->
+  <div id="m-tl-preview" style="display:none">
+    <video muted loop playsinline preload="auto"></video>
   </div>
-</div>
 
-<!-- Confirm modal -->
-<div id="confirm-modal">
-  <div id="confirm-box">
-    <div class="modal-header"><span id="confirm-heading" style="color:var(--red)"></span><button class="icon-btn" onclick="_confirmCancel()">✕</button></div>
-    <div class="modal-body">
-      <div id="confirm-msg" style="font-size:12px;line-height:1.5"></div>
-      <div id="confirm-files" style="display:none"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-sm" onclick="_confirmCancel()" data-i18n="btn.cancel">Cancel</button>
-      <button id="btn-confirm-ok" class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="_confirmOk()" data-i18n="btn.delete">Delete</button>
-    </div>
-  </div>
-</div>
-
-<!-- S3 upload modal -->
-<div id="s3-modal">
-  <div id="s3-box">
-    <div class="modal-header">
-      <span>▲ Upload to S3</span>
-      <button class="icon-btn" onclick="s3ModalClose()">✕</button>
-    </div>
-    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-      <div class="ff"><label>File</label><div id="s3-file-name" style="font-size:11px;color:var(--muted)"></div></div>
-      <div class="ff"><label>S3 key</label><input type="text" id="s3-key" style="width:100%;box-sizing:border-box"></div>
-      <div id="s3-progress-wrap" style="display:none">
-        <div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px">
-          <span id="s3-status" style="color:var(--muted);flex:1"></span>
-          <span id="s3-speed" style="color:var(--muted)"></span>
-          <span id="s3-pct" style="color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
-        </div>
-        <div style="background:var(--bg3);border-radius:3px;height:4px;overflow:hidden">
-          <div id="s3-bar" style="background:var(--accent);height:100%;width:0%;transition:width .15s"></div>
-        </div>
+  <!-- Music modal -->
+  <div id="m-music-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)closeMusicModal()">
+    <div class="m-modal">
+      <div class="m-modal-hd">
+        <span class="m-modal-title" data-i18n="m.music_title">♪ Music</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeMusicModal()"
+                data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-sm" onclick="s3ModalClose()" data-i18n="btn.cancel">Cancel</button>
-      <button class="btn-primary" id="btn-s3-upload" onclick="s3ModalUpload()">▲ Upload</button>
-    </div>
-  </div>
-</div>
-
-<!-- Video preview tooltip -->
-<div id="file-tip"><video id="file-tip-video" muted playsinline preload="none"></video></div>
-
-<!-- Dir browser modal -->
-<div id="dir-modal">
-  <div id="dir-box">
-    <p id="dir-hint" style="display:none;padding:8px 12px;margin:0;font-size:12px;color:var(--fg);background:var(--bg2);border-bottom:1px solid var(--border)"></p>
-    <div id="dir-path"><span id="dir-path-txt">/</span><button class="btn-sm" data-i18n="btn.dir_up" onclick="dirUp()">↑ Up</button><button class="icon-btn" onclick="closeDirBrowser()" title="Close" style="margin-left:auto">✕</button></div>
-    <div id="dir-list"></div>
-    <div id="dir-footer">
-      <button class="btn-sm" data-i18n="btn.cancel" onclick="closeDirBrowser()">Cancel</button>
-      <button class="btn-sm" data-i18n="btn.create_folder" style="margin-right:auto" onclick="createFolder()">+ New folder</button>
-      <button class="btn-sm" data-i18n="btn.select_folder" style="border-color:var(--accent);color:var(--accent)" onclick="selectCurrentDir()">Select this folder</button>
-    </div>
-  </div>
-</div>
-
-<!-- Settings modal -->
-<div id="settings-modal">
-  <div id="settings-box">
-    <div class="modal-header">
-      <span data-i18n="misc.settings_title">SETTINGS</span>
-      <button class="icon-btn" onclick="closeSettings()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div style="display:flex;gap:12px">
-        <div class="ff" style="flex:1">
-          <label data-tip="How many pipeline jobs can run simultaneously.&#10;Requires server restart to take effect." data-i18n="lbl.max_concurrent">Max concurrent jobs</label>
-          <input type="number" id="s-max-jobs" value="1" min="1" max="8" onchange="_saveSettingsData()">
-        </div>
-        <div class="ff" style="flex:1">
-          <label data-tip="Parallel scenedetect processes.&#10;Set to number of CPU cores for best speed." data-i18n="lbl.max_detect_workers">Max detection workers</label>
-          <input type="number" id="s-max-detect" value="4" min="1" max="32" onchange="_saveSettingsData()">
-        </div>
+      <div class="m-modal-dir">
+        <input id="m-music-dir-input" class="m-input" type="text"
+               data-i18n-ph="m.ph_music_dir" placeholder="Music directory…"
+               onblur="_onMusicDirBlur(this.value.trim())">
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="musicToggleBrowser()"
+                data-i18n-title="m.title_browse_music" title="Browse music directory">📁</button>
       </div>
-      <div style="display:flex;gap:12px">
-        <div class="ff" style="flex:1">
-          <label data-tip="CLIP scoring: frames processed per GPU batch.&#10;Higher = faster but uses more VRAM.&#10;Default: 64.">CLIP batch size</label>
-          <input type="number" id="s-clip-batch" value="64" min="1" max="512" onchange="_saveSettingsData()">
-        </div>
-        <div class="ff" style="flex:1">
-          <label data-tip="CLIP scoring: CPU threads for loading frames.&#10;More threads = faster data feeding to GPU.&#10;Default: 4.">CLIP data workers</label>
-          <input type="number" id="s-clip-workers" value="4" min="1" max="32" onchange="_saveSettingsData()">
-        </div>
+      <div id="m-music-browser" style="display:none">
+        <div id="m-music-browser-path" class="m-section-meta"
+             style="padding:4px 0;display:flex;align-items:center;gap:4px"></div>
+        <div id="m-music-browser-entries" class="m-music-modal-list" style="max-height:180px"></div>
       </div>
-      <div style="display:flex;gap:12px">
-        <div class="ff" style="flex:1">
-          <label data-i18n="lbl.sound_cam" data-tip="Volume of original camera audio in the final mix.&#10;0 = silent, 100 = full.&#10;Saved to config.ini [music] original_volume.">Sound: Cam %</label>
-          <input type="number" id="s-orig-vol" value="25" min="0" max="100" onchange="_saveSettingsData()">
-        </div>
-        <div class="ff" style="flex:1">
-          <label data-i18n="lbl.sound_music" data-tip="Volume of the music track in the final mix.&#10;0 = silent, 100 = full.&#10;Saved to config.ini [music] music_volume.">Sound: Music %</label>
-          <input type="number" id="s-music-vol" value="70" min="0" max="100" onchange="_saveSettingsData()">
-        </div>
+      <div class="m-modal-filter">
+        <input id="m-music-filter" class="m-input" type="text"
+               data-i18n-ph="m.ph_filter_music" placeholder="Filter title…"
+               oninput="filterMusicModal()">
+        <span id="m-music-count" class="m-section-meta"></span>
       </div>
-      <div id="settings-note" data-i18n="misc.settings_note">Changes to max concurrent jobs require server restart.</div>
-      <hr style="border-color:var(--border);margin:12px 0">
-      <div class="ff" style="margin-top:12px">
-        <label>Interface Mode</label>
-        <select id="s-ui-mode" onchange="setUiMode(this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none">
-          <option value="legacy">Legacy (Current)</option>
-          <option value="modern">Modern (Studio)</option>
-        </select>
+      <div id="m-music-modal-list" class="m-music-modal-list"></div>
+      <div id="m-music-seekbar-row" style="display:none;align-items:center;gap:8px;padding:4px 0">
+        <span id="m-music-seek-cur" style="font-size:11px;color:var(--muted);min-width:34px;text-align:right">0:00</span>
+        <input id="m-music-seekbar" type="range" min="0" value="0" max="300"
+               style="flex:1" oninput="_musicSeek(this.value)">
+        <span id="m-music-seek-dur" style="font-size:11px;color:var(--muted);min-width:34px">0:00</span>
       </div>
-      <hr style="border-color:var(--border);margin:12px 0">
-      <div class="ff">
-        <label>YouTube</label>
-        <div id="yt-connect-row" style="display:flex;align-items:center;gap:8px;margin-top:4px">
-          <span id="yt-status-dot" style="font-size:11px;color:var(--muted)">…</span>
-          <button class="btn-sm" id="btn-yt-connect" onclick="ytConnect()" data-i18n="btn.yt_connect">Connect</button>
-          <button class="btn-sm" id="btn-yt-disconnect" style="display:none" onclick="ytDisconnect()" data-i18n="btn.yt_disconnect">Disconnect</button>
-        </div>
-        <div id="yt-secrets-hint" style="display:none;font-size:10px;color:var(--muted);margin-top:4px">
-          Place <code>youtube_client_secrets.json</code> in <code>webapp/</code> first.
-        </div>
+      <div class="m-music-yt-row">
+        <input id="m-music-yt-url" class="m-input" type="text" placeholder="https://youtu.be/…"
+               style="flex:1;min-width:0"
+               onkeydown="if(event.key==='Enter')musicYtDownload()">
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="musicYtDownload()"
+                data-i18n="m.btn_yt_dl" data-i18n-title="m.title_yt_dl"
+                title="Download from YouTube">↓ YT</button>
+        <span id="m-music-yt-msg" class="m-section-meta" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <span id="m-music-yt-pct" style="font-size:11px;color:var(--accent);font-weight:600;min-width:3ch;text-align:right"></span>
       </div>
-    </div>
-    <div class="modal-footer" style="justify-content:flex-end;gap:0">
-      <div style="flex:1">
-        <button class="btn-sm" id="btn-settings-manage-users" onclick="closeSettings();openManageUsers()" style="display:none">👤 Manage users</button>
-      </div>
-      <div style="display:flex;gap:6px">
-        <button class="btn-sm" data-i18n="btn.cancel" onclick="closeSettings()">Cancel</button>
-        <button class="btn-primary" data-i18n="btn.save" onclick="saveSettings()">Save</button>
+      <div class="m-modal-footer">
+        <span id="m-music-target" class="m-section-meta"></span>
+        <span id="m-music-rebuild-status" class="m-section-meta" style="display:none;margin-left:auto"></span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="rebuildMusicIndex(false)"
+                id="m-btn-rebuild-idx" style="margin-left:8px"
+                data-i18n="m.btn_rebuild" data-i18n-title="m.title_rebuild"
+                title="Rebuild music index">↺ Rebuild</button>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="rebuildMusicIndex(true)"
+                id="m-btn-force-idx"
+                data-i18n="m.btn_force" data-i18n-title="m.title_force_rebuild"
+                title="Force full rebuild">⟳ Force</button>
       </div>
     </div>
   </div>
-</div>
 
-<!-- YouTube upload modal -->
-<div id="yt-modal">
-  <div id="yt-box">
-    <div class="modal-header">
-      <span>▲ Upload to YouTube</span>
-      <button class="icon-btn" onclick="ytModalClose()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="ff"><label>File</label><div id="yt-file-name" style="font-size:11px;color:var(--muted)"></div></div>
-      <div class="ff">
-        <label>Title</label>
-        <input type="text" id="yt-title" oninput="_ytMetaDirty()" onblur="_ytMetaSave()">
+  <!-- Project modal (Source + Analyze + Output + Render + Shorts + Privacy) -->
+  <div id="m-project-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)closeProjectModal()">
+    <div class="m-modal" style="max-width:860px;width:100%">
+      <div class="m-modal-hd">
+        <span class="m-modal-title" data-i18n="m.project_title">⚙ Project</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeProjectModal()"
+                data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-      <div class="ff">
-        <label>Notes for AI <span style="font-size:10px;color:var(--muted)">(route, mood, key moments)</span></label>
-        <textarea id="yt-notes" rows="2" placeholder="e.g. coastal road Balkans, cold mountain summit, sandy track to TV antenna station, GPS boost scenes, sharp corners…" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box" oninput="_ytMetaDirty()" onblur="_ytMetaSave()"></textarea>
-      </div>
-      <div class="ff">
-        <label style="display:flex;align-items:center;gap:6px">
-          Description
-          <button type="button" id="btn-yt-gen" class="icon-btn" style="font-size:13px;line-height:1" title="Generate description via Claude API" onclick="_generateYtMeta()">↺</button>
-          <button type="button" id="btn-yt-chapters" class="icon-btn" style="font-size:11px;line-height:1;padding:2px 7px" title="Generate AI Chapters + scene detection (CLIP zero-shot)" onclick="_generateYtChapters()">✦ AI Chapters</button>
-          <span id="yt-gen-status" style="font-size:11px;color:var(--muted)"></span>
-        </label>
-        <textarea id="yt-desc" rows="3" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box" oninput="_ytMetaDirty()" onblur="_ytMetaSave()"></textarea>
-      </div>
-      <div class="ff" style="margin-top:3em">
-        <label>Privacy</label>
-        <div style="display:flex;gap:14px;margin-top:4px">
-          <label class="cb-label"><input type="radio" name="yt-privacy" value="private"> private</label>
-          <label class="cb-label"><input type="radio" name="yt-privacy" value="unlisted" checked> unlisted</label>
-          <label class="cb-label"><input type="radio" name="yt-privacy" value="public"> public</label>
+      <div style="padding:12px 12px 4px;flex:1;overflow-y:auto;min-height:0">
+
+        <!-- Source -->
+        <div class="m-modal-section-hd" data-i18n="m.sec_source">Source</div>
+        <div class="m-modal-dir">
+          <input id="m-analyze-dir" class="m-input" type="text"
+                 data-i18n-ph="m.ph_project_dir" placeholder="Project directory…"
+                 onblur="analyzeRefreshCams(this.value.trim())">
+          <button class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeToggleBrowser()"
+                  data-i18n-title="m.title_browse_dir" title="Browse project directory">📁</button>
         </div>
-      </div>
-      <div class="ff">
-        <label>Playlist</label>
-        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <select id="yt-playlist" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none"></select>
-          <button type="button" class="btn-sm" onclick="ytNewPlaylist()">+ New</button>
+        <div id="m-analyze-browser" style="display:none">
+          <div id="m-analyze-browser-path" class="m-section-meta"
+               style="padding:4px 0;display:flex;align-items:center;gap:4px"></div>
+          <div id="m-analyze-browser-entries" class="m-music-modal-list"
+               style="max-height:180px"></div>
         </div>
-        <input type="text" id="yt-new-playlist" placeholder="New playlist name…"
-               onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('btn-yt-upload').focus();}"
-               style="display:none;margin-top:6px;width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--accent);color:var(--text);padding:4px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none">
-      </div>
-      <div class="ff" id="yt-existing-row">
-        <label style="color:var(--muted)">Already on YouTube?</label>
-        <div style="display:flex;gap:6px;margin-top:4px">
-          <input type="text" id="yt-existing-url" placeholder="https://youtu.be/…"
-                 style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 7px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none">
-          <button type="button" class="btn-sm" onclick="ytSaveExistingUrl()" data-i18n="btn.save_link">Save link</button>
-          <button type="button" class="icon-btn" onclick="ytClearUrl()" title="Clear YouTube link">✕</button>
+        <div id="m-analyze-cam-list" class="m-analyze-cams"></div>
+        <div style="margin-top:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <button class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeAddCam()"
+                  data-i18n="m.btn_add_cam" data-i18n-title="m.title_add_cam"
+                  title="Add camera source">+ Camera</button>
+          <button class="m-btn m-btn-ghost m-btn-sm" id="m-analyze-detect-btn"
+                  onclick="analyzeAutoDetectOffsets()"
+                  title="Read creation_time from first video per camera and compute relative offsets">⊙ Auto-detect offsets</button>
+          <span id="m-analyze-detect-status" class="m-section-meta"></span>
         </div>
-      </div>
-      <div id="yt-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn-sm" onclick="ytModalClose()" data-i18n="btn.cancel">Cancel</button>
-      <button type="button" class="btn-primary" id="btn-yt-upload" onclick="ytUpload()">▲ Upload</button>
-    </div>
-  </div>
-</div>
 
-<!-- YouTube Shorts upload modal -->
-<div id="yt-shorts-modal">
-  <div id="yt-shorts-box">
-    <div class="modal-header">
-      <span>▲ Upload to YouTube Shorts</span>
-      <button class="icon-btn" onclick="ytShortsModalClose()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="ff"><label>File</label><div id="yts-file-name" style="font-size:11px;color:var(--muted)"></div></div>
-      <div class="ff" id="yts-fullvideo-row" style="display:none">
-        <label>Full video</label>
-        <select id="yts-fullvideo-select" onchange="ytShortsUpdateLink()" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none"></select>
-      </div>
-      <div class="ff">
-        <label>Title</label>
-        <input type="text" id="yts-title">
-      </div>
-      <div class="ff">
-        <label>Description</label>
-        <textarea id="yts-desc" rows="3" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box"></textarea>
-      </div>
-      <div class="ff" style="margin-top:3em">
-        <label>Privacy</label>
-        <div style="display:flex;gap:14px;margin-top:4px">
-          <label class="cb-label"><input type="radio" name="yts-privacy" value="private"> private</label>
-          <label class="cb-label"><input type="radio" name="yts-privacy" value="unlisted"> unlisted</label>
-          <label class="cb-label"><input type="radio" name="yts-privacy" value="public" checked> public</label>
+        <!-- Photos -->
+        <div class="m-modal-section-hd" style="margin-top:12px"
+             data-i18n="m.sec_photos">Photos</div>
+        <div class="m-modal-dir" style="margin-top:4px">
+          <input id="m-analyze-photos-dir" class="m-input" type="text"
+                 data-i18n-ph="m.ph_photos_dir" placeholder="Photos directory (optional)…">
+          <button class="m-btn m-btn-ghost m-btn-sm" onclick="openPhotoBrowser()"
+                  data-i18n-title="m.title_browse_photos" title="Browse photos directory">🖼</button>
         </div>
-      </div>
-      <div class="ff">
-        <label>Playlist</label>
-        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <select id="yts-playlist" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-family:var(--font);font-size:11px;border-radius:3px;outline:none"></select>
-          <button type="button" class="btn-sm" onclick="ytShortsNewPlaylist()">+ New</button>
-        </div>
-        <input type="text" id="yts-new-playlist" placeholder="New playlist name…"
-               onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('btn-yts-upload').focus();}"
-               style="display:none;margin-top:6px;width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--accent);color:var(--text);padding:4px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none">
-      </div>
-      <div id="yts-status" style="font-size:11px;min-height:16px;color:var(--muted)"></div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn-sm" onclick="ytShortsModalClose()" data-i18n="btn.cancel">Cancel</button>
-      <button type="button" class="btn-primary" id="btn-yts-upload" onclick="ytShortsUpload()">▲ Upload</button>
-    </div>
-  </div>
-</div>
 
-<!-- Instagram Reels upload modal -->
-<div id="ig-reel-modal">
-  <div id="ig-reel-box">
-    <div class="modal-header">
-      <span>▲ Upload to Instagram Reels</span>
-      <button class="icon-btn" onclick="igReelModalClose()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="ff"><label>File</label><div id="ig-file-name" style="font-size:11px;color:var(--muted)"></div></div>
-      <div class="ff">
-        <label>Caption</label>
-        <textarea id="ig-caption" rows="4" style="resize:vertical;width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 7px;font-family:var(--font);font-size:12px;border-radius:3px;outline:none;box-sizing:border-box"></textarea>
-      </div>
-      <div id="ig-token-warn" style="display:none;font-size:11px;color:var(--orange,#f5a623);margin-top:4px"></div>
-      <div id="ig-cooldown-warn" style="display:none;font-size:11px;color:var(--red);margin-top:4px"></div>
-      <div id="ig-status" style="font-size:11px;min-height:16px;color:var(--muted);margin-top:4px"></div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn-sm" onclick="igReelModalClose()">Cancel</button>
-      <button type="button" class="btn-primary" id="btn-ig-upload" onclick="igReelUpload()">▲ Upload</button>
-    </div>
-  </div>
-</div>
-
-<!-- Login modal -->
-<div id="login-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:3000;align-items:center;justify-content:center">
-  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px 28px;min-width:300px;max-width:360px;width:90%">
-    <h3 style="margin:0 0 18px;font-size:15px;color:var(--text)">AI-autoedit — Sign in</h3>
-    <div class="ff" style="margin-bottom:10px">
-      <label style="font-size:11px;color:var(--muted)">Username</label>
-      <input id="login-username" type="text" autocomplete="username" style="width:100%;box-sizing:border-box" onkeydown="if(event.key==='Enter')_authLogin()">
-    </div>
-    <div class="ff" style="margin-bottom:16px">
-      <label style="font-size:11px;color:var(--muted)">Password</label>
-      <input id="login-password" type="password" autocomplete="current-password" style="width:100%;box-sizing:border-box" onkeydown="if(event.key==='Enter')_authLogin()">
-    </div>
-    <div id="login-error" style="font-size:11px;color:var(--red);min-height:14px;margin-bottom:10px"></div>
-    <button class="btn-primary" style="width:100%" onclick="_authLogin()">Sign in</button>
-  </div>
-</div>
-
-<!-- Manage Users modal -->
-<div id="users-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:3000;align-items:center;justify-content:center">
-  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px 24px;min-width:320px;max-width:420px;width:90%">
-    <div class="modal-header" style="margin-bottom:14px">
-      <span style="font-size:14px;font-weight:600">Manage Users</span>
-      <button class="icon-btn" id="users-modal-close" onclick="_usersModalClose()">✕</button>
-    </div>
-    <div id="users-first-run-msg" style="display:none;font-size:12px;color:var(--text);background:color-mix(in srgb,var(--accent) 12%,var(--bg3));border:1px solid var(--accent);border-radius:5px;padding:9px 12px;margin-bottom:14px">
-      First run with auth enabled. Create a user to continue.
-    </div>
-    <div id="users-list" style="margin-bottom:14px;max-height:180px;overflow-y:auto"></div>
-    <div style="border-top:1px solid var(--border);padding-top:12px">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Add user</div>
-      <div style="display:flex;gap:6px;margin-bottom:6px">
-        <input id="new-user-name" type="text" placeholder="Username" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')document.getElementById('new-user-pw').focus()">
-        <input id="new-user-pw" type="password" placeholder="Password" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')_authCreateUser()">
-      </div>
-      <div id="users-error" style="font-size:11px;color:var(--red);min-height:13px;margin-bottom:6px"></div>
-      <button class="btn-primary btn-sm" onclick="_authCreateUser()">+ Add user</button>
-    </div>
-    <div id="users-reload-row" style="display:none;margin-top:14px;text-align:center">
-      <button class="btn-primary" onclick="location.reload()">↺ Reload</button>
-    </div>
-  </div>
-</div>
-
-<!-- Scripts -->
-<script src="/js/app.js" defer></script>
-<script src="/js/ui.js" defer></script>
-<script src="/js/jobs.js" defer></script>
-<script src="/js/mobile.js" defer></script>
-<!-- Gallery module -->
-<script src="/js/gallery/select.js" defer></script>
-<script src="/js/gallery/music.js" defer></script>
-<script src="/js/gallery/jobs.js" defer></script>
-<script src="/js/gallery/results.js" defer></script>
-<script src="/js/gallery/preview.js" defer></script>
-<!-- Services module -->
-<script src="/js/services/s3.js" defer></script>
-<script src="/js/services/ytdl.js" defer></script>
-<script src="/js/services/files.js" defer></script>
-<script src="/js/services/forms.js" defer></script>
-<script src="/js/services/youtube.js" defer></script>
-<script src="/js/services/instagram.js" defer></script>
-<script src="/js/services/auth.js" defer></script>
-
-<!-- Advanced detect modal -->
-<div id="advanced-detect-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1100;align-items:center;justify-content:center">
-  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:20px;min-width:320px;max-width:420px;width:90%">
-    <div class="modal-header" style="margin-bottom:16px">
-      <span style="font-weight:600;font-size:13px;letter-spacing:.05em">SCENE DETECTION — ADVANCED</span>
-      <button class="icon-btn" onclick="closeAdvancedDetect()">✕</button>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:14px">
-      <div style="padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Traditional mode</div>
-      <div class="ff">
-        <label data-i18n-tip="sd_threshold" data-i18n="lbl.sd_threshold" style="font-size:12px">Detect threshold</label>
-        <input type="number" id="js-sd-threshold" placeholder="24" min="5" max="100" step="1" onchange="saveSettingsField();_syncAdvancedHint()" style="width:70px">
-        <span style="font-size:11px;color:var(--muted);margin-top:4px">Auto-calibrated before each detection run. Override only if calibration picks a wrong sample file.</span>
-      </div>
-      <div class="ff">
-        <label data-i18n-tip="sd_min_scene" data-i18n="lbl.sd_min_scene" style="font-size:12px">Min scene len (s)</label>
-        <input type="number" id="js-sd-min-scene" placeholder="10" min="1" max="120" step="1" style="width:70px" onchange="saveSettingsField()">
-        <span style="font-size:11px;color:var(--muted);margin-top:4px">Minimum scene duration in seconds. 10s works for all motorcycle footage.</span>
-      </div>
-      <div style="border-top:1px solid var(--border);padding-top:14px">
-        <label class="chk" style="font-size:12px;font-weight:600" title="Skip scenedetect entirely. Score frames every N seconds, extract clips around CLIP score peaks. Better for long continuous shots with good moments inside.">
-          <input type="checkbox" id="js-clip-first" onchange="saveSettingsField();document.getElementById('clip-first-opts').style.display=this.checked?'flex':'none';document.getElementById('js-proxy-section').style.display=this.checked?'none':'';if(this.checked){var _sac=document.getElementById('js-score-all-cams');if(_sac&&!_sac.checked){_sac.checked=true;saveSettingsField();}}">
-          <span> CLIP-first mode (experimental)</span>
-        </label>
-        <div style="font-size:11px;color:var(--muted);margin:4px 0 10px 20px">Replaces scenedetect — finds good moments anywhere in footage, not just at camera cuts.</div>
-        <div id="clip-first-opts" style="display:none;flex-direction:column;gap:10px;margin-left:20px">
-          <div style="display:flex;gap:16px;flex-wrap:wrap">
-            <label class="ff" style="font-size:12px">Interval (s)
-              <input type="number" id="js-clip-scan-interval" value="3" min="1" max="30" step="1" style="width:60px" onchange="saveSettingsField()" title="Seconds between sampled frames">
-            </label>
-            <label class="ff" style="font-size:12px">Clip dur (s)
-              <input type="number" id="js-clip-scan-clip-dur" value="8" min="2" max="30" step="1" style="width:60px" onchange="saveSettingsField()" title="Duration of each extracted clip">
-            </label>
-            <label class="ff" style="font-size:12px">Min gap (s)
-              <input type="number" id="js-clip-scan-min-gap" value="30" min="5" max="300" step="5" style="width:65px" onchange="saveSettingsField()" title="Minimum seconds between clips">
-            </label>
-          </div>
-          <label class="chk" style="font-size:12px" title="Score frames from all cameras, not just the main/audio cam. Required for music-driven multicam renders.">
-            <input type="checkbox" id="js-score-all-cams" onchange="saveSettingsField()">
-            <span> Score all cameras</span>
+        <!-- Analyze -->
+        <div class="m-modal-section-hd" style="margin-top:14px"
+             data-i18n="m.sec_analyze">Analyze</div>
+        <div class="m-analyze-opts" style="margin-top:4px">
+          <label class="m-analyze-check">
+            <input type="checkbox" id="m-analyze-clip-first" checked>
+            <span data-i18n="m.lbl_clip_first">CLIP-first</span>
+          </label>
+          <label class="m-analyze-check" style="margin-left:8px">
+            <span data-i18n="m.lbl_clip_dur">Clip dur:</span>
+            <input id="m-analyze-clip-dur" class="m-input" type="number"
+                   min="2" max="30" step="0.5" value="6"
+                   style="width:56px;margin-left:4px">
+            <span>s</span>
+          </label>
+          <label class="m-analyze-check" style="margin-left:8px">
+            <span data-i18n="m.lbl_interval">Interval:</span>
+            <input id="m-analyze-interval" class="m-input" type="number"
+                   min="1" max="30" step="1" value="3"
+                   style="width:56px;margin-left:4px">
+            <span>s</span>
+          </label>
+          <label class="m-analyze-check" style="margin-left:8px">
+            <span data-i18n="m.lbl_min_gap">Min gap:</span>
+            <input id="m-analyze-min-gap" class="m-input" type="number"
+                   min="5" max="300" step="5" value="15"
+                   style="width:56px;margin-left:4px">
+            <span>s</span>
+          </label>
+          <label class="m-analyze-check" style="margin-left:8px">
+            <input type="checkbox" id="m-analyze-score-all">
+            <span data-i18n="m.lbl_score_all">Score all cams</span>
           </label>
         </div>
-      </div>
-    </div>
-      <div style="border-top:1px solid var(--border);padding-top:14px">
-        <label class="chk" style="font-size:12px;font-weight:600" title="Enable Render Highlight button, manual threshold/target, and Max scene / Per file fields.">
-          <input type="checkbox" id="js-traditional-mode" onchange="_applyTraditionalMode(this.checked)">
-          <span> Traditional mode</span>
-        </label>
-        <div style="font-size:11px;color:var(--muted);margin:4px 0 0 20px">Shows Render Highlight button, target duration slider, and manual scene params.</div>
-      </div>
-    </div>
-    <div style="margin-top:18px;display:flex;justify-content:flex-end">
-      <button class="btn-sm" onclick="closeAdvancedDetect()">Close</button>
-    </div>
-  </div>
-</div>
+        <div style="margin-top:8px">
+          <label class="m-label" data-i18n="m.lbl_description">Description</label>
+          <textarea id="m-analyze-description" class="m-input" rows="5"
+                    data-i18n-ph="m.ph_description"
+                    placeholder="Describe the footage (location, activity, mood)…"
+                    style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+            <button class="m-btn m-btn-ghost m-btn-sm" onclick="generateAnalyzePrompts()"
+                    id="m-analyze-gen-btn"
+                    data-i18n="m.btn_gen_prompts">✦ Generate prompts</button>
+            <span id="m-analyze-gen-status" class="m-section-meta"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <div style="flex:1;min-width:0">
+            <label class="m-label" data-i18n="m.lbl_positive">Positive prompts</label>
+            <textarea id="m-analyze-positive" class="m-input" rows="10"
+                      data-i18n-ph="m.ph_positive"
+                      placeholder="Positive CLIP prompts (comma-separated)…"
+                      style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+          </div>
+          <div style="flex:1;min-width:0">
+            <label class="m-label" data-i18n="m.lbl_negative">Negative prompts</label>
+            <textarea id="m-analyze-negative" class="m-input" rows="10"
+                      data-i18n-ph="m.ph_negative"
+                      placeholder="Negative CLIP prompts (comma-separated)…"
+                      style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+          </div>
+        </div>
 
-<!-- AI / CLIP Prompts modal -->
-<div id="prompts-modal" onclick="if(event.target===this)closePromptsModal()">
-  <div id="prompts-modal-box">
-    <div id="prompts-modal-hdr">
-      <span style="font-size:13px;font-weight:600;color:var(--text)">AI / CLIP Prompts</span>
-      <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
-        <button class="btn-sm" id="btn-gen-prompts" onclick="generateJobPrompts()">✦ Generate</button>
-        <span id="gen-prompts-status" style="font-size:11px;color:var(--muted);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-        <button class="btn-sm" onclick="saveJobPrompts()">Save</button>
-        <button class="btn-sm" onclick="closePromptsModal()" style="padding:2px 8px">✕</button>
+        <!-- Output -->
+        <div class="m-modal-section-hd" style="margin-top:14px"
+             data-i18n="m.sec_output">Output</div>
+        <div class="m-settings-row">
+          <span class="m-settings-label" data-i18n="m.lbl_title">Title</span>
+          <input id="m-settings-title" class="m-input m-settings-input"
+                 type="text"
+                 data-i18n-ph="m.ph_title" placeholder="2025 · Slovenia · Day 1">
+        </div>
+        <div class="m-settings-row" style="align-items:flex-start;margin-top:6px">
+          <span class="m-settings-label" style="padding-top:4px"
+                data-i18n="m.lbl_intro_card">Intro card</span>
+          <textarea id="m-settings-intro-card" class="m-input m-settings-textarea"
+                    rows="3"
+                    data-i18n-ph="m.ph_intro_card"
+                    placeholder="Subtitle shown below title on intro card…"
+                    style="width:100%;box-sizing:border-box"></textarea>
+        </div>
+
+        <!-- Render -->
+        <div class="m-modal-section-hd" style="margin-top:14px"
+             data-i18n="m.sec_render">Render</div>
+        <div class="m-settings-row">
+          <span class="m-settings-label"
+                data-i18n="m.lbl_cam_pattern"
+                data-i18n-title="m.lbl_cam_pattern"
+                title="Camera cut pattern. Letters map to cameras in order (a=first, b=second…). Repeats cyclically. ab = strict alternation, aabaab = two-one rhythm, aabb = pairs. Empty = auto group-2.">Cam pattern</span>
+          <input id="m-settings-cam-pattern" class="m-input"
+                 type="text" placeholder="ab, aabaab, aabb… (empty = auto)"
+                 style="width:180px;font-family:monospace">
+        </div>
+        <div class="m-settings-row" style="margin-top:4px">
+          <span class="m-settings-label"
+                data-i18n="m.lbl_beats_shot"
+                title="Beats per shot for each energy level. Rock/metal → lower (2/3/4). Pop/RnB → default (3/4/6).">Beats/shot</span>
+          <span class="m-section-meta" style="margin-right:4px"
+                data-i18n="m.lbl_fast">fast</span>
+          <input id="m-settings-beats-fast" class="m-input" type="number"
+                 min="1" max="16" step="1" style="width:46px" placeholder="3">
+          <span class="m-section-meta" style="margin:0 4px"
+                data-i18n="m.lbl_mid">mid</span>
+          <input id="m-settings-beats-mid" class="m-input" type="number"
+                 min="1" max="16" step="1" style="width:46px" placeholder="4">
+          <span class="m-section-meta" style="margin:0 4px"
+                data-i18n="m.lbl_slow">slow</span>
+          <input id="m-settings-beats-slow" class="m-input" type="number"
+                 min="1" max="16" step="1" style="width:46px" placeholder="6">
+        </div>
+
+        <!-- Shorts -->
+        <div class="m-modal-section-hd" style="margin-top:14px"
+             data-i18n="m.sec_shorts_cfg">Shorts</div>
+        <div class="m-settings-row">
+          <span class="m-settings-label" data-i18n="m.lbl_shorts_music">Music dir</span>
+          <input id="m-settings-shorts-music" class="m-input m-settings-input"
+                 type="text"
+                 data-i18n-ph="m.ph_shorts_music" placeholder="/data/music/shorts…">
+        </div>
+
+        <!-- Privacy -->
+        <div class="m-modal-section-hd" style="margin-top:14px"
+             data-i18n="m.sec_privacy">Privacy Blur</div>
+        <div class="m-settings-row">
+          <span class="m-settings-label" data-i18n="m.lbl_speedo">Speedo cams</span>
+          <input id="m-settings-blur-speed" class="m-input m-settings-input"
+                 type="text"
+                 data-i18n-ph="m.ph_speedo" placeholder="helmet, front…">
+        </div>
+        <div class="m-settings-row" style="margin-top:4px">
+          <span class="m-settings-label" data-i18n="m.lbl_blur_plates">Blur plates</span>
+          <label class="m-analyze-check" style="margin:0">
+            <input type="checkbox" id="m-settings-blur-plates">
+            <span data-i18n="m.lbl_license_plates">License plates</span>
+          </label>
+        </div>
+
       </div>
-    </div>
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
-      <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Describe this ride</label>
-      <textarea id="js-description" rows="15" placeholder="Motorcycle ride on winding mountain roads, scenic landscapes..." style="width:100%;box-sizing:border-box;margin-top:4px;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;resize:none"></textarea>
-    </div>
-    <div id="prompts-modal-body">
-      <div class="prompts-col">
-        <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Positive</label>
-        <textarea id="js-positive" style="flex:1;width:100%;box-sizing:border-box;margin-top:4px;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;resize:none" onchange="savePromptsField()"></textarea>
-      </div>
-      <div class="prompts-col">
-        <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Negative</label>
-        <textarea id="js-negative" style="flex:1;width:100%;box-sizing:border-box;margin-top:4px;font-size:12px;font-family:var(--font);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:3px;outline:none;resize:none" onchange="savePromptsField()"></textarea>
+      <div class="m-modal-footer">
+        <span id="m-analyze-status" class="m-section-meta"></span>
+        <button class="m-btn m-btn-ghost" onclick="saveProjectModal()"
+                style="margin-left:auto"
+                data-i18n="m.btn_save_project">Save</button>
+        <button class="m-btn m-btn-blue" id="m-analyze-btn"
+                onclick="runAnalyze()"
+                data-i18n="m.btn_analyze">⚡ Analyze</button>
       </div>
     </div>
   </div>
-</div>
+
+  <!-- Shorts modal -->
+  <div id="m-shorts-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)closeShortsModal()">
+    <div class="m-modal" style="max-width:500px;width:100%">
+      <div class="m-modal-hd">
+        <span class="m-modal-title" data-i18n="m.shorts_title">▶ Shorts</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeShortsModal()"
+                data-i18n-title="m.title_close" title="Close">×</button>
+      </div>
+      <div style="padding:10px 0 4px">
+        <div class="m-shorts-count-row">
+          <span class="m-settings-label" data-i18n="m.lbl_count">Count</span>
+          <input id="m-shorts-count" class="m-input" type="number"
+                 min="1" max="9" step="1" value="1" style="width:56px">
+        </div>
+        <div class="m-analyze-opts" style="margin-top:10px">
+          <label class="m-analyze-check">
+            <input type="checkbox" id="m-shorts-text">
+            <span data-i18n="m.lbl_text_overlays">Text overlays</span>
+          </label>
+          <label class="m-analyze-check" id="m-shorts-multicam-row">
+            <input type="checkbox" id="m-shorts-multicam">
+            <span data-i18n="m.lbl_multicam">Multicam</span>
+          </label>
+          <label class="m-analyze-check">
+            <input type="checkbox" id="m-shorts-beat">
+            <span data-i18n="m.lbl_beat_sync">Beat sync</span>
+          </label>
+          <label class="m-analyze-check">
+            <input type="checkbox" id="m-shorts-best">
+            <span data-i18n="m.lbl_best_of_best">Best of best</span>
+          </label>
+        </div>
+        <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+          <div class="m-section-meta" style="padding:0 0 6px 0;font-weight:600"
+               data-i18n="m.lbl_music_folders">Music folders</div>
+          <div id="m-shorts-dirs-list" class="m-shorts-dirs-list"></div>
+          <div id="m-shorts-dirs-empty" class="m-section-meta"
+               style="padding:4px 0;display:none"
+               data-i18n="m.hint_shorts_music">Set Shorts music dir in ⚙ Project first</div>
+        </div>
+      </div>
+      <div class="m-modal-footer">
+        <span id="m-shorts-status" class="m-section-meta"></span>
+        <button class="m-btn m-btn-green" id="m-shorts-btn"
+                onclick="renderShorts()" style="margin-left:auto"
+                data-i18n="m.btn_make_shorts">⬡ Make Shorts</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results modal -->
+  <div id="m-results-modal" class="m-results-overlay" style="display:none"
+       onclick="if(event.target===this)closeResultsModal()">
+    <div class="m-results-modal">
+      <div class="m-results-hd">
+        <span class="m-results-title" data-i18n="m.results_title">Results</span>
+        <span id="m-results-meta" class="m-section-meta"></span>
+        <button class="m-btn m-btn-ghost m-btn-sm" style="margin-left:auto"
+                onclick="closeResultsModal()"
+                data-i18n-title="m.title_close" title="Close">×</button>
+      </div>
+      <div class="m-results-body">
+        <div class="m-results-player-col">
+          <video id="m-results-video" controls preload="metadata"></video>
+          <div id="m-results-playing-info"></div>
+        </div>
+        <div class="m-results-list-col">
+          <div id="m-results-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- YT Main Upload modal -->
+  <div id="m-yt-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)mYtClose()">
+    <div class="m-modal" style="width:640px;max-width:96vw">
+      <div class="m-modal-hd">
+        <span class="m-modal-title" data-i18n="m.yt_title">▲ YouTube Upload</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="mYtClose()"
+                data-i18n-title="m.title_close" title="Close">×</button>
+      </div>
+      <div style="padding:12px 0 4px;overflow-y:auto;max-height:80vh">
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_file">File</span>
+          <span id="m-yt-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_title">Title</span>
+          <input id="m-yt-title" class="m-input" type="text"
+                 oninput="mYtMetaDirty()" onblur="mYtMetaSave()">
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_desc">Description</span>
+          <textarea id="m-yt-desc" class="m-input" rows="8"
+                    oninput="mYtMetaDirty()" onblur="mYtMetaSave()"></textarea>
+        </div>
+        <div class="m-upload-gen-row">
+          <button class="m-btn m-btn-sm" id="m-yt-gen-btn" onclick="mYtGenDesc()"
+                  data-i18n="m.btn_generate">✦ Generate</button>
+          <button class="m-btn m-btn-sm" id="m-yt-chapters-btn" onclick="mYtChapters()"
+                  data-i18n="m.btn_chapters">✦ AI Chapters</button>
+          <span id="m-yt-gen-status" class="m-upload-status"></span>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_notes">Notes</span>
+          <textarea id="m-yt-notes" class="m-input" rows="3"
+                    data-i18n-ph="m.ph_notes"
+                    placeholder="Optional notes for Claude generation"
+                    oninput="mYtMetaDirty()" onblur="mYtMetaSave()"></textarea>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_privacy">Privacy</span>
+          <div class="m-upload-privacy">
+            <label><input type="radio" name="m-yt-privacy" value="public">
+              <span data-i18n="m.lbl_public"> Public</span></label>
+            <label><input type="radio" name="m-yt-privacy" value="unlisted" checked>
+              <span data-i18n="m.lbl_unlisted"> Unlisted</span></label>
+            <label><input type="radio" name="m-yt-privacy" value="private">
+              <span data-i18n="m.lbl_private"> Private</span></label>
+          </div>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_playlist">Playlist</span>
+          <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+            <select id="m-yt-playlist" class="m-input"></select>
+            <button class="m-btn m-btn-sm" style="align-self:flex-start"
+                    onclick="mYtToggleNewPlaylist()"
+                    data-i18n="m.btn_new_playlist">+ New playlist</button>
+            <input id="m-yt-new-playlist" class="m-input" type="text"
+                   data-i18n-ph="m.ph_new_playlist"
+                   placeholder="New playlist name" style="display:none">
+          </div>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_existing_url">Existing URL</span>
+          <div class="m-upload-existing-row">
+            <input id="m-yt-existing-url" class="m-input" type="text"
+                   placeholder="https://youtu.be/…">
+            <button class="m-btn m-btn-sm" onclick="mYtSaveUrl()"
+                    data-i18n="m.btn_save_url">Save</button>
+            <button class="m-btn m-btn-sm m-btn-ghost" onclick="mYtClearUrl()"
+                    data-i18n="m.btn_clear_url">Clear</button>
+          </div>
+        </div>
+        <div id="m-yt-status" class="m-upload-status" style="margin-top:4px"></div>
+      </div>
+      <div class="m-modal-footer">
+        <button class="m-btn m-btn-green" id="m-yt-upload-btn"
+                onclick="mYtUpload()"
+                data-i18n="m.btn_upload">▲ Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- YT Shorts Upload modal -->
+  <div id="m-yts-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)mYtsClose()">
+    <div class="m-modal" style="width:640px;max-width:96vw">
+      <div class="m-modal-hd">
+        <span class="m-modal-title" data-i18n="m.yts_title">▲ YouTube Shorts Upload</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="mYtsClose()"
+                data-i18n-title="m.title_close" title="Close">×</button>
+      </div>
+      <div style="padding:12px 0 4px;overflow-y:auto;max-height:80vh">
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_file">File</span>
+          <span id="m-yts-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_title">Title</span>
+          <input id="m-yts-title" class="m-input" type="text">
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_desc">Description</span>
+          <textarea id="m-yts-desc" class="m-input" rows="7"></textarea>
+        </div>
+        <div class="m-upload-gen-row">
+          <button class="m-btn m-btn-sm" id="m-yts-gen-btn" onclick="mYtsGenDesc()"
+                  data-i18n="m.btn_generate">✦ Generate</button>
+          <span id="m-yts-gen-status" class="m-upload-status"></span>
+        </div>
+        <div class="m-upload-row" id="m-yts-fullvideo-row" style="display:none">
+          <span class="m-upload-label" data-i18n="m.lbl_full_video">Full video</span>
+          <select id="m-yts-fullvideo-select" class="m-input"
+                  onchange="mYtsUpdateLink()"></select>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_privacy">Privacy</span>
+          <div class="m-upload-privacy">
+            <label><input type="radio" name="m-yts-privacy" value="public" checked>
+              <span data-i18n="m.lbl_public"> Public</span></label>
+            <label><input type="radio" name="m-yts-privacy" value="unlisted">
+              <span data-i18n="m.lbl_unlisted"> Unlisted</span></label>
+            <label><input type="radio" name="m-yts-privacy" value="private">
+              <span data-i18n="m.lbl_private"> Private</span></label>
+          </div>
+        </div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_playlist">Playlist</span>
+          <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+            <select id="m-yts-playlist" class="m-input"></select>
+            <button class="m-btn m-btn-sm" style="align-self:flex-start"
+                    onclick="mYtsToggleNewPlaylist()"
+                    data-i18n="m.btn_new_playlist">+ New playlist</button>
+            <input id="m-yts-new-playlist" class="m-input" type="text"
+                   data-i18n-ph="m.ph_new_playlist"
+                   placeholder="New playlist name" style="display:none">
+          </div>
+        </div>
+        <div id="m-yts-status" class="m-upload-status" style="margin-top:4px"></div>
+      </div>
+      <div class="m-modal-footer">
+        <button class="m-btn m-btn-green" id="m-yts-upload-btn"
+                onclick="mYtsUpload()"
+                data-i18n="m.btn_upload">▲ Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- IG Reel Upload modal -->
+  <div id="m-ig-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)mIgClose()">
+    <div class="m-modal" style="width:560px;max-width:96vw">
+      <div class="m-modal-hd">
+        <span class="m-modal-title" data-i18n="m.ig_title">▲ Instagram Reel Upload</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="mIgClose()"
+                data-i18n-title="m.title_close" title="Close">×</button>
+      </div>
+      <div style="padding:12px 0 4px">
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_file">File</span>
+          <span id="m-ig-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
+        </div>
+        <div id="m-ig-token-warn" class="m-upload-status"
+             style="color:var(--yellow);margin-bottom:6px;display:none"></div>
+        <div id="m-ig-cooldown-warn" class="m-upload-status"
+             style="color:var(--yellow);margin-bottom:6px;display:none"></div>
+        <div class="m-upload-row">
+          <span class="m-upload-label" data-i18n="m.lbl_caption">Caption</span>
+          <textarea id="m-ig-caption" class="m-input" rows="8"
+                    data-i18n-ph="m.ph_caption"
+                    placeholder="Caption and hashtags…"></textarea>
+        </div>
+        <div id="m-ig-status" class="m-upload-status" style="margin-top:4px"></div>
+      </div>
+      <div class="m-modal-footer">
+        <button class="m-btn m-btn-green" id="m-ig-upload-btn"
+                onclick="mIgUpload()"
+                data-i18n="m.btn_upload">▲ Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview modal (fullscreen) -->
+  <div id="m-preview-modal" style="display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column;align-items:stretch">
+    <button onclick="closePreviewModal()"
+            data-i18n-title="m.title_close" title="Close"
+            style="position:absolute;top:12px;right:14px;z-index:1;background:rgba(0,0,0,.6);
+                   border:1px solid rgba(255,255,255,.2);color:#fff;font-size:18px;line-height:1;
+                   padding:4px 10px;border-radius:5px;cursor:pointer">✕</button>
+    <video id="m-preview-video" controls
+           style="width:100%;height:100%;object-fit:contain;display:block"></video>
+  </div>
+
+  <!-- App Settings modal -->
+  <div id="m-appsettings-modal" class="m-modal-overlay" style="display:none"
+       onclick="if(event.target===this)closeAppSettingsModal()">
+    <div class="m-modal" style="max-width:520px;width:100%">
+      <div class="m-modal-hd">
+        <span class="m-modal-title" data-i18n="m.appsettings_title">⚙ Global Settings</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeAppSettingsModal()"
+                data-i18n-title="m.title_close" title="Close">×</button>
+      </div>
+      <div style="padding:10px 0 4px">
+
+        <!-- HW info -->
+        <div id="m-app-hw-info" class="m-section-meta"
+             style="margin-bottom:10px;padding:6px 8px;background:var(--bg2);border-radius:6px;display:flex;gap:16px;flex-wrap:wrap">
+          <span id="m-app-hw-cpu"></span>
+          <span id="m-app-hw-ram"></span>
+          <span id="m-app-hw-vram"></span>
+        </div>
+
+        <!-- Concurrent jobs + Auto -->
+        <div class="m-settings-row">
+          <span class="m-settings-label" data-i18n="m.lbl_concurrent">Concurrent jobs</span>
+          <input id="m-app-concurrent" class="m-input" type="number"
+                 min="1" max="8" step="1" style="width:56px">
+          <button class="m-btn m-btn-ghost m-btn-sm" style="margin-left:6px"
+                  onclick="autoDetectSettings()"
+                  data-i18n-title="m.title_auto_hw"
+                  title="Suggest based on detected HW">Auto</button>
+        </div>
+
+        <!-- Volume sliders -->
+        <div class="m-settings-row" style="margin-top:8px">
+          <span class="m-settings-label" data-i18n="m.lbl_music_vol">Music</span>
+          <input id="m-app-music-vol" class="m-input" type="range"
+                 min="0" max="100" step="1" style="flex:1">
+          <span id="m-app-music-vol-val" class="m-section-meta" style="min-width:2.5ch;text-align:right">70</span>
+          <span class="m-section-meta" style="margin-left:2px">%</span>
+        </div>
+
+        <!-- YouTube -->
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+          <div class="m-settings-row">
+            <span class="m-settings-label" data-i18n="m.lbl_youtube">YouTube</span>
+            <span id="m-app-yt-status" class="m-section-meta">…</span>
+            <button id="m-app-yt-connect" class="m-btn m-btn-ghost m-btn-sm"
+                    style="margin-left:auto;display:none" onclick="appYtConnect()"
+                    data-i18n="m.btn_yt_connect">Connect</button>
+            <button id="m-app-yt-disconnect" class="m-btn m-btn-ghost m-btn-sm"
+                    style="margin-left:auto;display:none" onclick="appYtDisconnect()"
+                    data-i18n="m.btn_yt_disconnect">Disconnect</button>
+          </div>
+          <div id="m-app-yt-secrets-hint" class="m-section-meta"
+               style="display:none;color:var(--red);margin-top:2px"
+               data-i18n="m.yt_missing">youtube_client_secrets.json missing</div>
+        </div>
+
+        <!-- Queue -->
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span class="m-section-meta" style="font-weight:600"
+                  data-i18n="m.lbl_queue">Queue</span>
+            <button class="m-btn m-btn-ghost m-btn-sm" onclick="_appQueueRefresh()">↺</button>
+          </div>
+          <div id="m-app-queue-list" class="m-section-meta">Loading…</div>
+        </div>
+      </div>
+      <div class="m-modal-footer">
+        <span id="m-app-settings-status" class="m-section-meta"></span>
+        <button class="m-btn m-btn-blue" onclick="saveAppSettings()"
+                style="margin-left:auto"
+                data-i18n="m.btn_save_settings">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Photo Browser modal -->
+  <div id="m-photos-modal" class="m-modal-overlay" style="display:none">
+    <div class="m-modal" style="width:860px;max-width:95vw;height:82vh;display:flex;flex-direction:column;position:relative">
+      <div class="m-modal-hd">
+        <span data-i18n="m.photos_title">Photo Browser</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closePhotoBrowser()"
+                data-i18n-title="m.title_close" title="Close">✕</button>
+      </div>
+      <div id="m-photos-grid"
+           style="flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;padding:12px;min-height:0;align-content:start">
+        <span style="color:var(--muted)">Loading…</span>
+      </div>
+      <!-- Full preview overlay -->
+      <div id="m-photo-preview" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.92);z-index:10;align-items:center;justify-content:center;border-radius:8px"
+           onclick="closePhotoPreview()">
+        <img id="m-photo-preview-img" style="max-width:90%;max-height:88%;object-fit:contain;border-radius:4px"
+             onclick="event.stopPropagation();_previewToggleCurrent()">
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closePhotoPreview()"
+                data-i18n-title="m.title_close_preview" title="Close preview"
+                style="position:absolute;top:10px;right:12px;font-size:16px">✕</button>
+        <div id="m-photo-preview-sel" onclick="event.stopPropagation();_previewToggleCurrent()"
+             style="position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+                    width:36px;height:36px;border-radius:50%;border:2px solid #fff;
+                    background:rgba(0,0,0,.55);color:#fff;font-size:18px;font-weight:700;
+                    display:flex;align-items:center;justify-content:center;cursor:pointer;
+                    user-select:none">+</div>
+        <div style="position:absolute;bottom:58px;left:50%;transform:translateX(-50%);
+                    font-size:11px;color:rgba(255,255,255,.4);white-space:nowrap">
+          ← → navigate &nbsp;·&nbsp; Space / click to select
+        </div>
+      </div>
+      <div class="m-modal-ft">
+        <span id="m-photos-count" class="m-section-meta"
+              data-i18n="m.no_photos">No photos selected</span>
+        <button class="m-btn m-btn-primary" onclick="savePhotoSelection()"
+                data-i18n="m.btn_save_photos">✓ Save selection</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/music_modal.js"></script>
+  <script src="/js/analyze.js"></script>
+  <script src="/js/shorts.js"></script>
+  <script src="/js/studio.js"></script>
+  <script src="/js/uploads.js"></script>
+  <script src="/js/appsettings.js"></script>
+  <script src="/js/photos.js"></script>
 </body>
 </html>

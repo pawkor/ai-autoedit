@@ -38,10 +38,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 async def serve_index():
     return FileResponse(STATIC_DIR / "index.html")
 
-@app.get("/modern.html")
-async def serve_modern():
-    return FileResponse(STATIC_DIR / "modern.html")
-
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
 
