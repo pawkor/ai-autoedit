@@ -95,6 +95,11 @@ _JOB_CONFIG_MAP = {
     "blur_plates":           ("privacy", "blur_plates"),
     "consensus_min":         ("privacy", "consensus_min"),
     "photos_dir":            ("photos", "dir"),
+    "cc_brightness":         ("color_correct", "brightness"),
+    "cc_gamma":              ("color_correct", "gamma"),
+    "cc_contrast":           ("color_correct", "contrast"),
+    "cc_saturation":         ("color_correct", "saturation"),
+    "cc_temperature":        ("color_correct", "temperature"),
 }
 
 
@@ -194,8 +199,11 @@ def save_job_config(work_dir: Path, params: dict):
     for field, (section, key) in _JOB_CONFIG_MAP.items():
         if section == "clip_prompts":
             continue
+        if field not in params:
+            continue
         v = params.get(field)
         if v is None or v == "" or v == []:
+            updates.setdefault(section, {})[key] = ""
             continue
         if isinstance(v, list):
             sv = ",".join(str(x) for x in v if x)
@@ -310,7 +318,7 @@ class JobParams(BaseModel):
     clip_scan_clip_dur: Optional[float] = None
     clip_scan_min_gap:  Optional[float] = None
     score_all_cams:    bool             = True
-    blur_plates:        bool = True
+    blur_plates:        bool = False
     blur_speedometer_cams: Optional[str] = None
     consensus_min:      Optional[int] = None
 
@@ -608,6 +616,15 @@ async def create_job(params: JobParams, analyze_only: bool = Query(default=True)
     if existing_idle:
         if draft:
             return {"id": existing_idle.id}
+        # Preserve music + color-correction params — analyze modal doesn't send them,
+        # so a plain replace would wipe selected_track, music_files, cc_* etc.
+        _preserve_keys = (
+            "selected_track", "music_file", "music_files",
+            "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature",
+        )
+        for _k in _preserve_keys:
+            if not d.get(_k) and existing_idle.params.get(_k):
+                d[_k] = existing_idle.params[_k]
         existing_idle.params      = d
         existing_idle.log         = _LogList(JOBS_DIR / f"{existing_idle.id}.log")
         existing_idle.status      = "queued"
@@ -615,7 +632,6 @@ async def create_job(params: JobParams, analyze_only: bool = Query(default=True)
         existing_idle.started_at  = time.time()
         existing_idle.ended_at    = None
         existing_idle.analyze_result = None
-        existing_idle.selected_track = None
         existing_idle._task       = None
         existing_idle.save()
         existing_idle._task = asyncio.create_task(_run_job(existing_idle, analyze_only=analyze_only))
@@ -673,7 +689,6 @@ async def rerun_job(job_id: str, params: JobParams):
     job.status         = "queued"
     job.phase          = "analyzing"
     job.analyze_result = None
-    job.selected_track = None
     job.started_at     = time.time()
     job.ended_at       = None
     job.process        = None
@@ -1020,6 +1035,13 @@ async def preview_sequence(job_id: str):
 
     save_job_config(Path(job.params["work_dir"]), job.params)
 
+    # Persist manual_overrides → JSON so music_driven dry-run sees the bans.
+    # Frontend PATCHes manual_overrides into params; subprocess reads from disk.
+    _ov_payload = job.params.get("manual_overrides") or {}
+    _ov_path = auto_dir / "manual_overrides.json"
+    _ov_path.parent.mkdir(parents=True, exist_ok=True)
+    _ov_path.write_text(json.dumps(_ov_payload))
+
     # Manual timeline takes priority — skip dry-run
     manual_tl = job.params.get("manual_timeline")
     if manual_tl and isinstance(manual_tl, list) and len(manual_tl) > 0:
@@ -1191,12 +1213,30 @@ async def preview_stream(job_id: str):
     # Fix: one -i per slot with -ss clip_ss -t duration (fast seek, ~1 extra frame at most
     # because both camera types have keyframes every 0.3-0.5s), then filter_complex concat.
     # Each input gets its own decoder instance so H264/HEVC mix is handled correctly.
-    valid_slots = [
-        (slot, float(slot.get("clip_ss", 0)), float(slot.get("duration", 0)))
-        for slot in sequence
-        if slot.get("clip_path") and Path(slot["clip_path"]).exists()
-        and float(slot.get("duration", 0)) > 0
-    ]
+    # Photo slots get -loop 1 + -framerate so a still image becomes a fixed-duration video.
+    valid_slots: list[tuple] = []
+    for slot in sequence:
+        dur = float(slot.get("duration", 0))
+        if dur <= 0:
+            continue
+        if slot.get("type") == "photo":
+            p = slot.get("path") or slot.get("frame_path")
+            if p and Path(p).exists():
+                valid_slots.append(("photo", slot, p, dur))
+        else:
+            cp = slot.get("clip_path")
+            ss = float(slot.get("clip_ss", 0))
+            if cp and Path(cp).exists():
+                valid_slots.append(("video", slot, cp, ss, dur))
+
+    # Per-project color correction (built from [color_correct] sliders)
+    _local_cp = configparser.ConfigParser()
+    _local_cp.read([str(APP_DIR / "config.ini"),
+                    str(Path(job.params.get("work_dir", "")) / "config.ini")])
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+    from color_correct import chain_from_cp as _cc_chain
+    cc_chain = _cc_chain(_local_cp)
 
     cf = _tmp.NamedTemporaryFile(suffix=".txt", mode="w", delete=False, prefix="pvs_dummy_")
     cf.close()
@@ -1205,22 +1245,35 @@ async def preview_stream(job_id: str):
     try:
         has_music = bool(music_path_str and Path(music_path_str).exists())
 
+        # Common per-slot normalisation — every input ends up at 1280×720, 30 fps, sar 1.
+        # fps=30 placed FIRST regenerates timestamps cleanly — needed for -loop 1
+        # photo inputs whose PTS otherwise stays at 0 and corrupts the concat output.
+        _norm = ("fps=30,setpts=PTS-STARTPTS,"
+                 "scale=1280:720:force_original_aspect_ratio=decrease,"
+                 "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1")
+        _post = (_norm + "," + cc_chain) if cc_chain else _norm
+
         inputs = []
         filter_parts = []
-        for i, (slot, ss, dur) in enumerate(valid_slots):
-            inputs += ["-ss", f"{ss:.4f}", "-t", f"{dur:.4f}", "-i", slot["clip_path"]]
-            filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+        for i, item in enumerate(valid_slots):
+            kind = item[0]
+            if kind == "photo":
+                _, _slot, path, dur = item
+                inputs += ["-loop", "1", "-framerate", "30", "-t", f"{dur:.4f}", "-i", path]
+            else:  # video
+                _, _slot, clip_path, ss, dur = item
+                inputs += ["-ss", f"{ss:.4f}", "-t", f"{dur:.4f}", "-i", clip_path]
+            filter_parts.append(f"[{i}:v]{_post}[v{i}]")
         n = len(valid_slots)
         concat_in = "".join(f"[v{i}]" for i in range(n))
-        filter_parts.append(f"{concat_in}concat=n={n}:v=1:a=0[vout]")
-        filter_parts.append("[vout]fps=fps=30,scale=1280:-2[out]")
+        filter_parts.append(f"{concat_in}concat=n={n}:v=1:a=0[out]")
 
         cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
         cmd += inputs
         if has_music:
             cmd += ["-ss", f"{music_ss:.4f}", "-i", music_path_str]
         cmd += ["-filter_complex", ";".join(filter_parts), "-map", "[out]"]
-        cmd += ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30"]
+        cmd += ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30", "-pix_fmt", "yuv420p"]
         if has_music:
             cmd += ["-map", f"{n}:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
         else:
@@ -1315,11 +1368,29 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                 # frontend PUT /api/job-config was still in-flight at render time.
                 save_job_config(Path(job.params["work_dir"]), job.params)
 
+                # Persist manual_overrides → JSON so music_driven render hard-excludes banned scenes.
+                _ov_payload = job.params.get("manual_overrides") or {}
+                _ov_path = job.auto_dir() / "manual_overrides.json"
+                _ov_path.parent.mkdir(parents=True, exist_ok=True)
+                _ov_path.write_text(json.dumps(_ov_payload))
+
                 # Write photo_selection.json so render can weave photo slots
                 _sel_photos = job.params.get("selected_photos") or []
                 _photo_sel_path = Path(job.params["work_dir"]) / "_autoframe" / "photo_selection.json"
                 _photo_sel_path.parent.mkdir(parents=True, exist_ok=True)
                 _photo_sel_path.write_text(json.dumps({"photos": _sel_photos}))
+
+                # If user edited timeline in UI, persist that exact ordering and
+                # tell music_driven to render it (skips analyse/match).
+                _manual_tl = job.params.get("manual_timeline")
+                _use_saved = bool(_manual_tl and isinstance(_manual_tl, list) and len(_manual_tl) > 0)
+                if _use_saved:
+                    _seq_path = job.auto_dir() / "preview_sequence.json"
+                    _seq_path.parent.mkdir(parents=True, exist_ok=True)
+                    _seq_path.write_text(json.dumps({
+                        "sequence": _manual_tl,
+                        "music":    music_path_str,
+                    }))
 
                 cmd = [sys.executable, str(SCRIPT_DIR / "music_driven.py"),
                        job.params["work_dir"]]
@@ -1330,6 +1401,8 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                         cmd += ["--music-dir", music_path_str]
                 top_pct = float(job.params.get("md_top_percent", 0.40))
                 cmd += ["--top-percent", str(top_pct)]
+                if _use_saved:
+                    cmd += ["--use-saved-sequence"]
 
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -1504,7 +1577,7 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_music_dir", "shorts_music_dirs", "selected_photos"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v
@@ -1549,6 +1622,190 @@ async def put_overrides(job_id: str, data: dict):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data))
     return {"ok": True}
+
+
+@router.get("/api/jobs/{job_id}/picture-preview")
+async def picture_preview(
+    job_id: str,
+    b: float = 0.0, g: float = 1.0, c: float = 1.0,
+    s: float = 1.0, t: float = 0.0,
+    idx: int = 0,
+):
+    """Return a scene frame with color correction applied (PNG).
+
+    idx selects which non-banned scene to show (0 = top scoring).
+    Response header X-Scene-Count = total non-banned scenes with frames.
+    """
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    auto_dir = job.auto_dir()
+    csv_path = auto_dir / "scene_scores_allcam.csv"
+    if not csv_path.exists():
+        csv_path = auto_dir / "scene_scores.csv"
+    if not csv_path.exists():
+        raise HTTPException(404, "No scene scores yet — run Analyze first")
+    import csv as _csv
+    import json as _json
+    with csv_path.open() as f:
+        rows = list(_csv.DictReader(f))
+    if not rows:
+        raise HTTPException(404, "Empty scene_scores.csv")
+    _overrides_path = auto_dir / "manual_overrides.json"
+    _banned: set[str] = set()
+    if _overrides_path.exists():
+        try:
+            _ov = _json.loads(_overrides_path.read_text())
+            _banned = {k for k, v in _ov.items() if v is False}
+        except Exception:
+            pass
+    def _score(r):
+        try:
+            return float(r.get("max_score") or r.get("score") or 0)
+        except ValueError:
+            return 0.0
+    rows.sort(key=_score, reverse=True)
+
+    frames_dir = auto_dir / "frames"
+
+    def _find_frame(scene: str):
+        for pat in (f"{scene}_f*.jpg", f"{scene}_f*.png", f"{scene}.jpg", f"{scene}.png"):
+            hits = sorted(frames_dir.glob(pat))
+            if hits:
+                return hits[len(hits) // 2]
+        return None
+
+    import re as _re
+    def _source_stem(scene: str) -> str:
+        return _re.sub(r'-(scene|clip)-\d+$', '', scene)
+
+    # One best non-banned scene per source file — gives colour diversity across shots.
+    seen_sources: set[str] = set()
+    candidates: list[str] = []
+    for r in rows:  # already sorted score desc
+        sc = r.get("scene", "")
+        if sc in _banned or not _find_frame(sc):
+            continue
+        src = _source_stem(sc)
+        if src not in seen_sources:
+            seen_sources.add(src)
+            candidates.append(sc)
+    if not candidates:
+        # Fallback: include banned scenes if nothing else has frames
+        seen_sources2: set[str] = set()
+        for r in rows:
+            sc = r.get("scene", "")
+            if not _find_frame(sc):
+                continue
+            src = _source_stem(sc)
+            if src not in seen_sources2:
+                seen_sources2.add(src)
+                candidates.append(sc)
+    if not candidates:
+        raise HTTPException(404, "No frames found — run Analyze first")
+
+    scene_count = len(candidates)
+    src_frame = _find_frame(candidates[idx % scene_count])
+    media_type = "image/jpeg" if src_frame.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+    from color_correct import build_vf_chain
+    vf = build_vf_chain(brightness=b, gamma=g, contrast=c, saturation=s, temperature=t)
+
+    from fastapi.responses import Response, FileResponse
+    headers = {"X-Scene-Count": str(scene_count)}
+    if not vf:
+        return FileResponse(src_frame, media_type=media_type, headers=headers)
+
+    _gcfg = configparser.ConfigParser()
+    _gcfg.read(str(APP_DIR / "config.ini"))
+    ffmpeg = _gcfg.get("paths", "ffmpeg", fallback="ffmpeg")
+    proc = subprocess.run(
+        [ffmpeg, "-y", "-i", str(src_frame), "-vf", vf,
+         "-frames:v", "1", "-f", "image2", "-c:v", "png", "pipe:1"],
+        capture_output=True, timeout=10,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(500, f"ffmpeg failed: {proc.stderr.decode(errors='replace')[-500:]}")
+    return Response(content=proc.stdout, media_type="image/png", headers=headers)
+
+
+@router.post("/api/jobs/{job_id}/regenerate-thumbs")
+async def regenerate_thumbs(job_id: str, data: dict = Body(default={})):
+    """Regenerate pool thumbnails into _autoframe/frames_cc/ with current color
+    correction. Idempotent — skipped when params hash matches cache."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+
+    # Accept overrides from body, then persist to params + config.ini
+    for k in ("cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"):
+        if k in data:
+            job.params[k] = data[k]
+    job.save()
+    save_job_config(Path(job.params["work_dir"]), job.params)
+
+    auto_dir   = job.auto_dir()
+    frames_src = auto_dir / "frames"
+    frames_cc  = auto_dir / "frames_cc"
+    if not frames_src.exists():
+        raise HTTPException(404, "No frames/ — run Analyze first")
+
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+    from color_correct import build_vf_chain
+    vf = build_vf_chain(
+        brightness  = float(job.params.get("cc_brightness",  0)),
+        gamma       = float(job.params.get("cc_gamma",       1)),
+        contrast    = float(job.params.get("cc_contrast",    1)),
+        saturation  = float(job.params.get("cc_saturation",  1)),
+        temperature = float(job.params.get("cc_temperature", 0)),
+    )
+
+    import shutil
+    # No correction → wipe cc dir, frames endpoint falls back to frames/
+    if not vf:
+        if frames_cc.exists():
+            shutil.rmtree(frames_cc)
+        return {"regenerated": 0, "total": 0, "skipped": True}
+
+    import hashlib
+    params_hash = hashlib.sha256(vf.encode()).hexdigest()[:16]
+    hash_file = frames_cc / ".params_hash"
+    if hash_file.exists() and hash_file.read_text().strip() == params_hash:
+        return {"regenerated": 0, "total": 0, "cached": True}
+
+    if frames_cc.exists():
+        shutil.rmtree(frames_cc)
+    frames_cc.mkdir(parents=True, exist_ok=True)
+
+    src_files = sorted(p for p in frames_src.iterdir()
+                       if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    if not src_files:
+        raise HTTPException(404, "frames/ is empty")
+
+    _gcfg = configparser.ConfigParser()
+    _gcfg.read(str(APP_DIR / "config.ini"))
+    ffmpeg = _gcfg.get("paths", "ffmpeg", fallback="ffmpeg")
+
+    def _process(src: Path) -> bool:
+        dst = frames_cc / src.name
+        proc = subprocess.run(
+            [ffmpeg, "-y", "-i", str(src), "-vf", vf, "-q:v", "3", str(dst)],
+            capture_output=True, timeout=15,
+        )
+        return proc.returncode == 0 and dst.exists()
+
+    from concurrent.futures import ThreadPoolExecutor
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futs = [loop.run_in_executor(pool, _process, s) for s in src_files]
+        results = await asyncio.gather(*futs)
+
+    ok = sum(1 for r in results if r)
+    hash_file.write_text(params_hash)
+    return {"regenerated": ok, "total": len(src_files), "params_hash": params_hash}
 
 
 @router.post("/api/jobs/{job_id}/detect-cam-offsets")
@@ -1684,7 +1941,9 @@ async def job_frames(job_id: str):
 
     allcam_csv = job.auto_dir() / "scene_scores_allcam.csv"
     scores_csv = allcam_csv if allcam_csv.exists() else job.auto_dir() / "scene_scores.csv"
-    frames_dir = job.auto_dir() / "frames"
+    # Prefer color-corrected thumbs when available (regenerated after Picture Save).
+    _cc_dir    = job.auto_dir() / "frames_cc"
+    frames_dir = _cc_dir if (_cc_dir / ".params_hash").exists() else job.auto_dir() / "frames"
     csv_dir    = job.auto_dir() / "csv"
     if not scores_csv.exists():
         raise HTTPException(404, "No scores yet")
@@ -1714,6 +1973,8 @@ async def job_frames(job_id: str):
 
     df = pd.read_csv(scores_csv).sort_values("scene")
     df = df.dropna(subset=["score"])
+    if "avg_brightness" in df.columns:
+        df = df[pd.to_numeric(df["avg_brightness"], errors="coerce").fillna(0) >= 50.0]
 
     cam_sources_csv = job.auto_dir() / "camera_sources.csv"
     avg_back_cam_take_sec = None
@@ -1844,8 +2105,9 @@ async def job_frames(job_id: str):
                               ) if p.exists()),
                               None
                           ),
-            "file_start": file_starts.get(row["scene"]),
-            "duplicate":  row["scene"] in dup_scenes,
+            "file_start":     file_starts.get(row["scene"]),
+            "duplicate":      row["scene"] in dup_scenes,
+            "avg_brightness": round(float(row["avg_brightness"]), 1) if "avg_brightness" in df.columns and pd.notna(row.get("avg_brightness")) else None,
         }
         for _, row in df.iterrows()
     ]

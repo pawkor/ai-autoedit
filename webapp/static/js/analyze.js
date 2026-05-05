@@ -38,7 +38,7 @@ async function openProjectModal() {
       camList.innerHTML = '';
       const cams = job.params.cameras
         || [job.params.cam_a, job.params.cam_b].filter(Boolean);
-      const toLoad = cams.length ? cams : _analyzeSubdirs.slice(0, 2);
+      const toLoad = cams.length ? cams : [];
       const offsets = job.params.cam_offsets || {};
       for (const cam of toLoad)
         _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs, offsets[cam] ?? 0);
@@ -422,6 +422,23 @@ async function saveAnalyzeSettings() {
 
   const jobId = (typeof _jobId !== 'undefined') ? _jobId : null;
   if (jobId) {
+    const camRows = [...(document.getElementById('m-analyze-cam-list')
+      ?.querySelectorAll('.m-analyze-cam-row') || [])];
+    const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
+    const camOffsets = {};
+    camRows.forEach(r => {
+      const name = r.querySelector('select')?.value.trim();
+      const off  = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
+      if (name) camOffsets[name] = off;
+    });
+    if (cameras.length) {
+      saves.push(fetch(`/api/jobs/${jobId}/params`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cameras, cam_offsets: camOffsets }),
+      }).catch(() => {}));
+    }
+
     const job = await window._modernApi.get(`/api/jobs/${jobId}`).catch(() => null);
     if (job && job.params?.work_dir === dir) {
       saves.push(fetch(`/api/jobs/${jobId}/save-prompts`, {

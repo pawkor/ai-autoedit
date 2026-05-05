@@ -413,8 +413,26 @@ if all_clips:
         print(f"Aesthetic scoring skipped: {e}")
         for clip in all_clips: clip.setdefault("aesthetic_score", float("nan"))
 
+    # ── Brightness (median Y-channel) ─────────────────────────────────────────
+    try:
+        import cv2 as _cv2
+        for clip in all_clips:
+            _fp = frames_dir / f"{clip['scene']}_f0.jpg"
+            try:
+                _img = _cv2.imread(str(_fp))
+                if _img is not None:
+                    _y = _cv2.cvtColor(_img, _cv2.COLOR_BGR2YUV)[:, :, 0]
+                    clip["avg_brightness"] = round(float(np.median(_y)), 1)
+                else:
+                    clip["avg_brightness"] = float("nan")
+            except Exception:
+                clip["avg_brightness"] = float("nan")
+    except ImportError:
+        for clip in all_clips:
+            clip.setdefault("avg_brightness", float("nan"))
+
     # ── Write CSVs ────────────────────────────────────────────────────────────
-    fieldnames = ["scene", "score", "pos_score", "neg_score", "aesthetic_score", "offset_sec"]
+    fieldnames = ["scene", "score", "pos_score", "neg_score", "aesthetic_score", "offset_sec", "avg_brightness"]
     main_clips = [c for c in all_clips if c["is_main"]]
     all_clips_sorted  = sorted(all_clips, key=lambda c: c["score"], reverse=True)
     main_clips_sorted = sorted(main_clips, key=lambda c: c["score"], reverse=True)

@@ -11,6 +11,9 @@ let _browseRoot  = '';     // stripped from work_dir paths for display
 let _timelineMusic = null; // music path from last dry-run (for preview playback)
 let _workDir     = '';     // current job work_dir (for clip_path reconstruction)
 let _activeCameras = new Set(); // currently visible cameras in pool filter
+let _photos      = [];     // selected photos: [{path, thumb_url, filename, timestamp}]
+let _filterVids  = true;   // pool source filter: video clips visible
+let _filterPhotos = true;  // pool source filter: photos visible
 
 // ── Timeline persistence (backend) ───────────────────────────────────────────
 let _saveTlTimer = null;
@@ -168,15 +171,42 @@ async function loadPool(id) {
   const grid = document.getElementById('m-pool-grid');
   grid.innerHTML = '<div class="m-empty"><span class="m-spinner"></span></div>';
 
-  const [data, ar] = await Promise.all([
+  const [data, ar, ph] = await Promise.all([
     api.get(`/api/jobs/${id}/frames`),
     api.get(`/api/jobs/${id}/analyze-result`).catch(() => null),
+    api.get(`/api/jobs/${id}/photos`).catch(() => null),
   ]);
   _frames = (data?.frames ?? data ?? []).sort((a, b) => b.score - a.score);
+  _photos = (ph?.photos || []).filter(p => p.selected);
   const gpsBadge = document.getElementById('m-gps-badge');
   if (gpsBadge) gpsBadge.style.display = ar?.gps_detected ? '' : 'none';
   _buildCamFilters();
+  _refreshSourceFilterButtons();
   renderPool();
+}
+
+// Refresh selected photos (called after Photos modal save)
+async function loadPhotos() {
+  if (!_jobId) return;
+  const ph = await api.get(`/api/jobs/${_jobId}/photos`).catch(() => null);
+  _photos = (ph?.photos || []).filter(p => p.selected);
+  renderPool();
+}
+window.loadPhotos = loadPhotos;
+
+function toggleSourceFilter(kind) {
+  if (kind === 'vids')   _filterVids   = !_filterVids;
+  if (kind === 'photos') _filterPhotos = !_filterPhotos;
+  _refreshSourceFilterButtons();
+  renderPool();
+}
+window.toggleSourceFilter = toggleSourceFilter;
+
+function _refreshSourceFilterButtons() {
+  const v = document.getElementById('m-filter-vids');
+  const p = document.getElementById('m-filter-photos');
+  if (v) v.classList.toggle('active', _filterVids);
+  if (p) p.classList.toggle('active', _filterPhotos);
 }
 
 function _buildCamFilters() {
@@ -208,12 +238,18 @@ function scoreClass(score) {
   return '';
 }
 
+function _isBanned(scene) {
+  const v = _overrides[scene];
+  return v === 'ban' || v === 'ban-new';
+}
+
 function toggleBan(scene) {
-  if (_overrides[scene] === 'ban') {
+  if (_isBanned(scene)) {
     delete _overrides[scene];
     _removedScenes.delete(scene);
   } else {
-    _overrides[scene] = 'ban';
+    // Fresh ban (since last Build timeline) — dashed red until next build promotes to solid
+    _overrides[scene] = 'ban-new';
     _removedScenes.delete(scene);
   }
   _saveTimeline(_jobId);
@@ -224,25 +260,52 @@ function renderPool() {
   const grid  = document.getElementById('m-pool-grid');
   const count = document.getElementById('m-pool-count');
   if (!grid) return;
-  if (_frames.length === 0) {
+  if (_frames.length === 0 && _photos.length === 0) {
     grid.innerHTML = '<div class="m-empty">No scenes analyzed yet.</div>';
     if (count) count.textContent = '';
     return;
   }
-  const banned     = new Set(Object.keys(_overrides).filter(s => _overrides[s] === 'ban'));
+  const banned     = new Set(Object.keys(_overrides).filter(s => _isBanned(s)));
+  const bannedNew  = new Set(Object.keys(_overrides).filter(s => _overrides[s] === 'ban-new'));
   const inTimeline = new Set(_timeline.map(c => c.scene));
   const camFiltered = _activeCameras.size
     ? _frames.filter(f => !f.camera || _activeCameras.has(f.camera))
     : _frames;
   const available  = camFiltered.filter(f => !banned.has(f.scene) && !inTimeline.has(f.scene)).length;
-  if (count) count.textContent = `${available} / ${camFiltered.length}`;
+  // Counter sums what each active filter shows
+  const photosCount = _photos.length;
+  const shown = (_filterVids ? available : 0) + (_filterPhotos ? photosCount : 0);
+  const total = (_filterVids ? camFiltered.length : 0) + (_filterPhotos ? photosCount : 0);
+  if (count) count.textContent = `${shown} / ${total}`;
   grid.innerHTML = '';
+
+  // Photos row at top — only when photos filter active
+  if (_filterPhotos && _photos.length) {
+    for (const ph of _photos) {
+      const div = document.createElement('div');
+      div.className = 'm-thumb m-thumb-photo';
+      div.title = ph.filename || 'photo';
+      // thumb_url already includes /api/file?path=... — use directly
+      div.innerHTML = `
+        <div class="m-thumb-img">
+          <img src="${ph.thumb_url || ''}" loading="lazy" draggable="false">
+          <span class="m-thumb-score" style="background:#818cf8">📷</span>
+        </div>
+        <div class="m-thumb-label"></div>`;
+      div.querySelector('.m-thumb-label').textContent = ph.filename || '';
+      grid.appendChild(div);
+    }
+  }
+
+  if (!_filterVids) return;
   camFiltered.forEach(f => {
     if (inTimeline.has(f.scene)) return;
-    const isBanned  = banned.has(f.scene);
-    const isRemoved = _removedScenes.has(f.scene);
+    const isBanned    = banned.has(f.scene);
+    const isBannedNew = bannedNew.has(f.scene);
+    const isRemoved   = _removedScenes.has(f.scene);
     const div = document.createElement('div');
-    div.className = `m-thumb ${scoreClass(f.score)}${isBanned ? ' banned' : ''}${isRemoved ? ' removed' : ''}`;
+    const banCls = isBannedNew ? ' banned banned-new' : (isBanned ? ' banned' : '');
+    div.className = `m-thumb ${scoreClass(f.score)}${banCls}${isRemoved ? ' removed' : ''}`;
     div.dataset.scene = f.scene;
     div.draggable = true;
     const scoreLabel = f.score >= 0.85 ? 'High score (≥0.85) — green border'
@@ -260,12 +323,61 @@ function renderPool() {
       <div class="m-thumb-label"></div>`;
     div.querySelector('.m-thumb-label').textContent = f.scene;
     div.addEventListener('click', () => toggleBan(f.scene));
+    div.addEventListener('contextmenu', e => { e.preventDefault(); _showPoolCtx(e, f.scene); });
     div.addEventListener('dragstart', onPoolDragStart);
     div.addEventListener('mouseenter', () => _showInlinePreview(div, f.frame_url));
     div.addEventListener('mouseleave', () => _hideInlinePreview(div));
     grid.appendChild(div);
   });
 }
+
+// ── Pool context menu (right-click) ──────────────────────────────────────────
+let _ctxScene = null;
+
+function _sourceStem(scene) {
+  return scene.replace(/-(scene|clip)-\d+$/, '');
+}
+
+function _showPoolCtx(e, scene) {
+  _hidePoolCtx();
+  _ctxScene = scene;
+  const menu  = document.getElementById('m-pool-ctx');
+  const label = document.getElementById('m-pool-ctx-label');
+  if (!menu) return;
+  if (label) label.textContent = _sourceStem(scene);
+  menu.style.display = 'block';
+  const x = Math.min(e.clientX, window.innerWidth  - menu.offsetWidth  - 8);
+  const y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 8);
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
+}
+
+function _hidePoolCtx() {
+  const menu = document.getElementById('m-pool-ctx');
+  if (menu) menu.style.display = 'none';
+  _ctxScene = null;
+}
+
+function banSourceFile() {
+  if (!_ctxScene) return;
+  const stem = _sourceStem(_ctxScene);
+  _hidePoolCtx();
+  let count = 0;
+  for (const f of _frames) {
+    if (_sourceStem(f.scene) === stem) {
+      _overrides[f.scene] = 'ban-new';
+      count++;
+    }
+  }
+  if (count) { renderPool(); _saveTimeline(_jobId); }
+}
+window.banSourceFile = banSourceFile;
+
+document.addEventListener('click', e => {
+  const menu = document.getElementById('m-pool-ctx');
+  if (menu && !menu.contains(e.target)) _hidePoolCtx();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _hidePoolCtx(); });
 
 // ── Timeline ──────────────────────────────────────────────────────────────────
 async function rebuildTimeline() {
@@ -278,12 +390,13 @@ async function rebuildTimeline() {
   clearTimeout(_savePatternTimer);
   const _patInput = document.getElementById('m-cam-pattern');
   const _camPattern = _patInput ? _patInput.value.trim() : '';
-  // Clear manual timeline so dry-run rebuilds fresh from pattern
+  // Clear manual timeline so dry-run rebuilds fresh from pattern.
+  // Keep _overrides — backend hard-excludes banned scenes from the dry-run pool.
   _timeline = [];
   await api.patch(`/api/jobs/${_jobId}/params`, {
     selected_track: _pinnedTrack,
     manual_timeline: null,
-    manual_overrides: {},
+    manual_overrides: _overrides,
     cam_pattern: _camPattern,
     ...(_md ? { music_dir: _md } : {}),
   });
@@ -298,7 +411,10 @@ async function rebuildTimeline() {
   }
   _timeline = data.sequence;
   _timelineMusic = data.music || null;
-  _overrides = {};
+  // Promote fresh bans (dashed) → solid: this build is now the "previous" build
+  for (const k of Object.keys(_overrides)) {
+    if (_overrides[k] === 'ban-new') _overrides[k] = 'ban';
+  }
   _removedScenes.clear();
   _saveTimeline(_jobId);
   drawTimeline();
@@ -406,9 +522,13 @@ function drawTimeline() {
     return z;
   };
 
+  // Reserve space for N+1 insert zones (6px each) so clips + inserts = trackW exactly.
+  const INSERT_PX = 6;
+  const clipAreaW = Math.max(1, trackW - (_timeline.length + 1) * INSERT_PX);
+
   clipTrack.appendChild(makeInsert(0));
   _timeline.forEach((slot, idx) => {
-    const w = Math.round(slot.duration / refDur * trackW) + 'px';
+    const w = Math.round(slot.duration / refDur * clipAreaW) + 'px';
 
     const div = document.createElement('div');
     div.className = 'm-clip';
@@ -486,7 +606,8 @@ function _hideTlPreview() {
 
 function removeClip(idx) {
   const scene = _timeline[idx]?.scene;
-  if (scene) _overrides[scene] = 'ban';
+  // Removed-from-timeline bans count as fresh (since last Build) — dashed border
+  if (scene) _overrides[scene] = 'ban-new';
   _timeline.splice(idx, 1);
   _saveTimeline(_jobId);
   drawTimeline();
@@ -518,7 +639,7 @@ function handleInsert(insertIdx) {
   if (_drag.from === 'pool') {
     const frame = _frames.find(f => f.scene === _drag.scene);
     if (!frame) return;
-    if (_overrides[frame.scene] === 'ban') delete _overrides[frame.scene];
+    if (_isBanned(frame.scene)) delete _overrides[frame.scene];
 
     // Inherit duration from the existing slot at that position (preserves music sync).
     // Fall back to scene duration only if inserting at end or timeline is empty.
@@ -562,7 +683,8 @@ function _setupPoolDropTarget() {
     const scene = _timeline[_drag.idx]?.scene;
     _timeline.splice(_drag.idx, 1);
     _drag = null;
-    if (scene) _removedScenes.add(scene);
+    // Drag-out from timeline = fresh ban (dashed red), persisted via manual_overrides
+    if (scene) _overrides[scene] = 'ban-new';
     _saveTimeline(_jobId);
     drawTimeline();
     renderPool();
@@ -609,6 +731,7 @@ function _connectJobProgress(jobId) {
   let total = 0;
   let current = 0;
   let startTime = null;
+  let currentPhase = 'rendering';
 
   ws.onmessage = e => {
     let msg;
@@ -617,7 +740,8 @@ function _connectJobProgress(jobId) {
     if (msg.type === 'status') {
       const st = msg.status;
       if (st === 'running') {
-        _showStatus(msg.phase || 'rendering', '', null, 'running');
+        currentPhase = msg.phase || 'rendering';
+        _showStatus(currentPhase, '', null, 'running');
         _setRenderBusy(true);
       } else if (st === 'done') {
         _showStatus('done', '✓ complete', 100, 'done');
@@ -645,7 +769,7 @@ function _connectJobProgress(jobId) {
           const eta = elapsed / current * (total - current);
           label += `  ETA ${_fmtEta(eta)}`;
         }
-        _showStatus('rendering', label, pct, 'running');
+        _showStatus(currentPhase, label, pct, 'running');
       }
     } else if (msg.type === 'shorts_status') {
       if (msg.running) {
@@ -697,7 +821,17 @@ function _appendLog(line) {
   if (panel) panel.style.display = '';
   const meta = document.getElementById('m-log-meta');
   if (meta) meta.textContent = `${_logLines.length} lines`;
-  if (!_logOpen) return;
+  if (!_logOpen) {
+    if (_logLines.length === 1) {
+      _logOpen = true;
+      const el2   = document.getElementById('m-log-lines');
+      const label = document.getElementById('m-log-toggle');
+      if (el2)   el2.style.display = '';
+      if (label) label.textContent = 'LOG ▾';
+    } else {
+      return;
+    }
+  }
   const el = document.getElementById('m-log-lines');
   if (!el) return;
   const div = document.createElement('div');
@@ -819,7 +953,7 @@ async function renderTimeline() {
   _showStatus('queuing…', '', null, 'running');
 
   const overridesPayload = {};
-  Object.keys(_overrides).filter(s => _overrides[s] === 'ban')
+  Object.keys(_overrides).filter(s => _isBanned(s))
     .forEach(s => { overridesPayload[s] = false; });
 
   _connectJobProgress(_jobId);
@@ -844,13 +978,18 @@ window.cancelRender = cancelRender;
 
 // ── Proxy generation ──────────────────────────────────────────────────────────
 let _proxyPollTimer = null;
+let _proxyStartTime = null;
+let _proxyLastFile  = null;
 
 async function startProxy() {
   if (!_jobId) return;
-  const btn    = document.getElementById('m-btn-proxy');
-  const status = document.getElementById('m-proxy-status');
+  _proxyStartTime = Date.now();
+  _proxyLastFile  = null;
+  const btn = document.getElementById('m-btn-proxy');
   if (btn) btn.disabled = true;
-  if (status) { status.style.display = ''; status.textContent = 'Starting…'; }
+  clearLog();
+  _appendLog('[proxy] Starting…');
+  _showStatus('proxy', 'Starting…', null, 'running');
   await fetch(`/api/jobs/${_jobId}/start-proxy`, { method: 'POST' });
   _pollProxyStatus();
 }
@@ -859,22 +998,36 @@ window.startProxy = startProxy;
 function _pollProxyStatus() {
   clearTimeout(_proxyPollTimer);
   if (!_jobId) return;
-  const btn    = document.getElementById('m-btn-proxy');
-  const status = document.getElementById('m-proxy-status');
+  const btn = document.getElementById('m-btn-proxy');
   fetch(`/api/jobs/${_jobId}/proxy-status`)
     .then(r => r.ok ? r.json() : null)
     .then(st => {
       if (!st) return;
       if (st.done) {
-        if (btn) btn.disabled = false;
-        if (status) {
-          status.textContent = st.error ? `✗ ${st.error}` : `✓ ${st.finished}/${st.total} done`;
-          setTimeout(() => { status.style.display = 'none'; }, 5000);
+        const txt = st.error ? `✗ ${st.error}` : `✓ ${st.finished}/${st.total} done`;
+        _appendLog(`[proxy] ${txt}`);
+        _showStatus('proxy', txt, st.error ? 0 : 100, st.error ? 'error' : 'done');
+        setTimeout(_hideStatus, 4000);
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = st.error ? '⬡ Proxy' : '✓ Proxy';
         }
+        _proxyStartTime = null;
+        _proxyLastFile  = null;
       } else {
-        const pct = st.total > 0 ? `${st.finished}/${st.total}` : '…';
         const cur = st.current_file ? st.current_file.split('/').pop() : '';
-        if (status) status.textContent = `${pct}${cur ? ' · ' + cur : ''}`;
+        if (cur && cur !== _proxyLastFile) {
+          _proxyLastFile = cur;
+          _appendLog(`[proxy] ${st.finished + 1}/${st.total}  ${cur}`);
+        }
+        const pct = st.total > 0 ? Math.round(st.finished / st.total * 100) : null;
+        let label = st.total > 0 ? `${st.finished} / ${st.total}` : '…';
+        if (_proxyStartTime && st.finished > 0 && st.total > st.finished) {
+          const elapsed = (Date.now() - _proxyStartTime) / 1000;
+          const eta = elapsed / st.finished * (st.total - st.finished);
+          label += `  ETA ${_fmtEta(eta)}`;
+        }
+        _showStatus('proxy', label, pct, 'running');
         _proxyPollTimer = setTimeout(_pollProxyStatus, 2000);
       }
     })
@@ -883,20 +1036,22 @@ function _pollProxyStatus() {
 
 function _checkProxyStatus() {
   if (!_jobId) return;
-  const btn    = document.getElementById('m-btn-proxy');
-  const status = document.getElementById('m-proxy-status');
+  const btn = document.getElementById('m-btn-proxy');
   fetch(`/api/jobs/${_jobId}/proxy-status`)
     .then(r => r.ok ? r.json() : null)
     .then(st => {
       if (!st || st.not_started) { if (btn) btn.disabled = false; return; }
       if (!st.done) {
-        if (status) status.style.display = '';
+        _proxyStartTime = _proxyStartTime || Date.now();
         _pollProxyStatus();
       } else {
-        if (btn) btn.disabled = false;
-        if (st.finished > 0 && status) {
-          status.style.display = '';
-          status.textContent = `✓ proxy ready (${st.finished} files)`;
+        if (btn) {
+          if (st.finished > 0) {
+            btn.disabled = true;
+            btn.textContent = '✓ Proxy';
+          } else {
+            btn.disabled = false;
+          }
         }
       }
     })
@@ -1107,7 +1262,7 @@ let _activePreviewThumb = null;
 function _clipPath(frameUrl) {
   if (!frameUrl) return null;
   return frameUrl
-    .replace(/\/frames\//, '/autocut/')
+    .replace(/\/frames(?:_cc)?\//, '/autocut/')
     .replace(/_f[012]\.jpg$/, '.mp4')
     .replace(/\.jpg$/, '.mp4');
 }
@@ -1238,3 +1393,120 @@ document.addEventListener('DOMContentLoaded', async () => {
   let _resizeTimer;
   window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTimer = setTimeout(drawTimeline, 100); });
 });
+
+// ── Picture (color correction) modal ─────────────────────────────────────────
+const _PIC_DEFAULTS = { brightness: 0, gamma: 1, contrast: 1, saturation: 1, temperature: 0 };
+let _pictureSettings = { ..._PIC_DEFAULTS };
+let _picPreviewTimer = null;
+let _picSceneIdx = 0;
+let _picSceneCount = 1;
+
+async function openPictureModal() {
+  if (!_jobId) { alert('No project selected.'); return; }
+  const job = await api.get(`/api/jobs/${_jobId}`);
+  const p = job?.params || {};
+  _pictureSettings = {
+    brightness:  parseFloat(p.cc_brightness  ?? _PIC_DEFAULTS.brightness),
+    gamma:       parseFloat(p.cc_gamma       ?? _PIC_DEFAULTS.gamma),
+    contrast:    parseFloat(p.cc_contrast    ?? _PIC_DEFAULTS.contrast),
+    saturation:  parseFloat(p.cc_saturation  ?? _PIC_DEFAULTS.saturation),
+    temperature: parseFloat(p.cc_temperature ?? _PIC_DEFAULTS.temperature),
+  };
+  _picSceneIdx = 0;
+  _applyPictureSlidersToDom();
+  const m = document.getElementById('m-picture-modal');
+  if (m) m.style.display = 'flex';
+  _refreshPicturePreview();
+}
+window.openPictureModal = openPictureModal;
+
+function closePictureModal() {
+  const m = document.getElementById('m-picture-modal');
+  if (m) m.style.display = 'none';
+}
+window.closePictureModal = closePictureModal;
+
+function _applyPictureSlidersToDom() {
+  document.querySelectorAll('#m-picture-modal .m-pic-row').forEach(row => {
+    const k = row.dataset.key;
+    const inp = row.querySelector('input[type=range]');
+    const val = row.querySelector('.m-pic-val');
+    if (!inp || !val) return;
+    inp.min  = row.dataset.min;
+    inp.max  = row.dataset.max;
+    inp.step = row.dataset.step;
+    inp.value = _pictureSettings[k];
+    val.textContent = (+inp.value).toFixed(2);
+  });
+}
+
+function onPictureSlider(input) {
+  const row = input.closest('.m-pic-row');
+  if (!row) return;
+  const k = row.dataset.key;
+  const v = parseFloat(input.value);
+  _pictureSettings[k] = v;
+  row.querySelector('.m-pic-val').textContent = v.toFixed(2);
+  clearTimeout(_picPreviewTimer);
+  _picPreviewTimer = setTimeout(_refreshPicturePreview, 200);
+}
+window.onPictureSlider = onPictureSlider;
+
+function prevPicScene() { _picSceneIdx = (_picSceneIdx - 1 + _picSceneCount) % _picSceneCount; _refreshPicturePreview(); }
+function nextPicScene() { _picSceneIdx = (_picSceneIdx + 1) % _picSceneCount; _refreshPicturePreview(); }
+window.prevPicScene = prevPicScene;
+window.nextPicScene = nextPicScene;
+
+function _refreshPicturePreview() {
+  if (!_jobId) return;
+  const img     = document.getElementById('m-picture-preview-img');
+  const sp      = document.getElementById('m-picture-spinner');
+  const counter = document.getElementById('m-pic-counter');
+  if (sp) sp.style.display = 'block';
+  const q = new URLSearchParams({
+    b: _pictureSettings.brightness,
+    g: _pictureSettings.gamma,
+    c: _pictureSettings.contrast,
+    s: _pictureSettings.saturation,
+    t: _pictureSettings.temperature,
+    idx: _picSceneIdx,
+  });
+  fetch(`/api/jobs/${_jobId}/picture-preview?${q}&_=${Date.now()}`)
+    .then(r => {
+      const cnt = parseInt(r.headers.get('X-Scene-Count') || '1', 10);
+      if (cnt > 0) _picSceneCount = cnt;
+      if (counter) counter.textContent = `${_picSceneIdx + 1} / ${_picSceneCount}`;
+      return r.blob();
+    })
+    .then(blob => { if (img) img.src = URL.createObjectURL(blob); })
+    .catch(() => {})
+    .finally(() => { if (sp) sp.style.display = 'none'; });
+}
+
+function resetPictureDefaults() {
+  _pictureSettings = { ..._PIC_DEFAULTS };
+  _applyPictureSlidersToDom();
+  _refreshPicturePreview();
+}
+window.resetPictureDefaults = resetPictureDefaults;
+
+async function savePictureSettings() {
+  if (!_jobId) return;
+  closePictureModal();
+  // Persist params + regenerate pool thumbnails with applied filter
+  const overlay = document.getElementById('m-build-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  try {
+    await api.post(`/api/jobs/${_jobId}/regenerate-thumbs`, {
+      cc_brightness:  _pictureSettings.brightness,
+      cc_gamma:       _pictureSettings.gamma,
+      cc_contrast:    _pictureSettings.contrast,
+      cc_saturation:  _pictureSettings.saturation,
+      cc_temperature: _pictureSettings.temperature,
+    });
+    await loadPool(_jobId);
+  } finally {
+    if (overlay) overlay.style.display = 'none';
+  }
+}
+window.savePictureSettings = savePictureSettings;

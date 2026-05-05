@@ -166,6 +166,8 @@ async function savePhotoSelection() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selected_photos: [..._photoSelection] }),
   }).catch(() => {});
+  // Refresh pool so newly selected photos appear at the top
+  if (typeof window.loadPhotos === 'function') await window.loadPhotos();
   closePhotoBrowser();
 }
 window.savePhotoSelection = savePhotoSelection;

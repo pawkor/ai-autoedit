@@ -80,8 +80,6 @@
                   title="Switch language / Zmień język">EN</button>
           <button id="m-theme-btn" class="m-btn m-btn-ghost" onclick="modernToggleTheme()"
                   data-i18n-title="m.title_theme" title="Toggle theme">☽</button>
-          <button class="m-btn m-btn-ghost" onclick="location.href='index.html'+location.search"
-                  data-i18n-title="m.title_legacy_top" title="Settings & Legacy UI">⚙</button>
         </div>
       </header>
 
@@ -89,6 +87,10 @@
         <div class="m-section-header">
           <span class="m-section-title" data-i18n="m.pool">POOL</span>
           <span id="m-pool-count" class="m-section-meta"></span>
+          <span id="m-filter-vids" class="m-pool-filter active"
+                onclick="toggleSourceFilter('vids')" title="Toggle video clips">Vidz</span>
+          <span id="m-filter-photos" class="m-pool-filter active"
+                onclick="toggleSourceFilter('photos')" title="Toggle photos">Photos</span>
           <span id="m-gps-badge" class="m-badge m-badge-gps" style="display:none"
                 title="GPS data detected — gps_weight auto-enabled">GPS</span>
           <div id="m-cam-filters" style="display:none;gap:6px;align-items:center;flex-wrap:wrap"></div>
@@ -166,6 +168,9 @@
                 style="margin-top:4px"
                 data-i18n="m.panel_photos" data-i18n-title="m.title_photos"
                 title="Open photo browser">🖼 Photos</button>
+        <button class="m-btn m-btn-ghost m-btn-full" onclick="openPictureModal()"
+                style="margin-top:4px"
+                title="Adjust brightness / gamma / contrast / saturation / temperature">🎨 Picture</button>
         <div id="m-pinned-info" style="display:none; margin-top:8px">
           <div id="m-pinned-title" class="m-pinned-title"></div>
           <div id="m-pinned-dur" class="m-pinned-dur"></div>
@@ -187,12 +192,6 @@
                 title="Build beat-aligned timeline">↺ Build timeline</button>
       </div>
 
-      <div class="m-panel-section" style="margin-top:auto">
-        <button class="m-btn m-btn-ghost m-btn-full m-btn-sm"
-                onclick="location.href='index.html'+location.search"
-                data-i18n="m.panel_legacy" data-i18n-title="m.title_legacy_panel"
-                title="Switch to Legacy UI">← Legacy</button>
-      </div>
     </aside>
 
   </div>
@@ -851,10 +850,75 @@
     </div>
   </div>
 
+  <!-- Picture (color correction) modal -->
+  <div id="m-picture-modal" class="m-modal-overlay" style="display:none">
+    <div class="m-modal" style="width:760px;max-width:96vw">
+      <div class="m-modal-hd">
+        <span>🎨 Picture</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="closePictureModal()" title="Close">✕</button>
+      </div>
+      <div style="padding:14px;display:flex;flex-direction:column;gap:14px">
+        <div style="position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:4px;overflow:hidden">
+          <img id="m-picture-preview-img" style="width:100%;height:100%;object-fit:contain" alt="preview">
+          <button onclick="prevPicScene()" style="position:absolute;left:6px;top:50%;transform:translateY(-50%);
+                background:rgba(0,0,0,.55);border:none;color:#fff;font-size:20px;padding:4px 10px;
+                border-radius:4px;cursor:pointer;line-height:1">‹</button>
+          <button onclick="nextPicScene()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);
+                background:rgba(0,0,0,.55);border:none;color:#fff;font-size:20px;padding:4px 10px;
+                border-radius:4px;cursor:pointer;line-height:1">›</button>
+          <span id="m-pic-counter" style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+                background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px">1 / 1</span>
+          <div id="m-picture-spinner" style="display:none;position:absolute;top:8px;right:8px;
+                width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;
+                border-radius:50%;animation:spin .8s linear infinite"></div>
+        </div>
+        <div class="m-pic-row" data-key="brightness"  data-min="-0.30" data-max="0.30" data-step="0.01" data-default="0">
+          <span class="m-pic-lbl">Brightness</span>
+          <input type="range" oninput="onPictureSlider(this)">
+          <span class="m-pic-val">0.00</span>
+        </div>
+        <div class="m-pic-row" data-key="gamma"       data-min="0.40"  data-max="1.60" data-step="0.01" data-default="1">
+          <span class="m-pic-lbl">Gamma</span>
+          <input type="range" oninput="onPictureSlider(this)">
+          <span class="m-pic-val">1.00</span>
+        </div>
+        <div class="m-pic-row" data-key="contrast"    data-min="0.70"  data-max="1.50" data-step="0.01" data-default="1">
+          <span class="m-pic-lbl">Contrast</span>
+          <input type="range" oninput="onPictureSlider(this)">
+          <span class="m-pic-val">1.00</span>
+        </div>
+        <div class="m-pic-row" data-key="saturation"  data-min="0.40"  data-max="1.60" data-step="0.01" data-default="1">
+          <span class="m-pic-lbl">Saturation</span>
+          <input type="range" oninput="onPictureSlider(this)">
+          <span class="m-pic-val">1.00</span>
+        </div>
+        <div class="m-pic-row" data-key="temperature" data-min="-1.00" data-max="1.00" data-step="0.02" data-default="0">
+          <span class="m-pic-lbl">Temperature</span>
+          <input type="range" oninput="onPictureSlider(this)">
+          <span class="m-pic-val">0.00</span>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+          <button class="m-btn m-btn-ghost" onclick="resetPictureDefaults()">Reset</button>
+          <button class="m-btn m-btn-ghost" onclick="closePictureModal()">Cancel</button>
+          <button class="m-btn m-btn-primary" onclick="savePictureSettings()">✓ Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/app.js"></script>
   <script src="/js/music_modal.js"></script>
   <script src="/js/analyze.js"></script>
   <script src="/js/shorts.js"></script>
+  <!-- Pool right-click context menu -->
+  <div id="m-pool-ctx" style="display:none;position:fixed;z-index:9999;background:var(--bg1);
+       border:1px solid var(--border);border-radius:6px;padding:4px 0;min-width:200px;
+       box-shadow:0 4px 16px rgba(0,0,0,.5);font-size:13px">
+    <div id="m-pool-ctx-label" style="padding:4px 14px 6px;color:var(--sub);font-size:11px;border-bottom:1px solid var(--border);margin-bottom:4px"></div>
+    <div style="padding:8px 14px;cursor:pointer;color:var(--red)"
+         onmouseenter="this.style.background='var(--bg2)'" onmouseleave="this.style.background=''"
+         onclick="banSourceFile()">Ban all clips from this file</div>
+  </div>
   <script src="/js/studio.js"></script>
   <script src="/js/uploads.js"></script>
   <script src="/js/appsettings.js"></script>

@@ -18,8 +18,12 @@ import random
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, Optional
+
+def _ts() -> str:
+    return datetime.now().strftime("[%H:%M:%S]")
 
 _GPU_LOCK_FILE = Path("/tmp/ai-autoedit-gpu.lock")
 
@@ -189,7 +193,7 @@ async def apply_postprocess(
 
     if not no_intro:
         yield ""
-        yield "Adding intro/outro..."
+        yield f"{_ts()} Adding intro/outro..."
 
         # Best frame from scores CSV
         _frames_dir = auto_dir / "frames"
@@ -353,7 +357,7 @@ async def apply_postprocess(
 
                 if _mpath and Path(_mpath).exists():
                     yield ""
-                    yield f"Mixing music (music={_mvol:.2f}, cam={_orig_vol:.2f})..."
+                    yield f"{_ts()} Mixing music (music={_mvol:.2f}, cam={_orig_vol:.2f})..."
                     _vdur      = await _probe_duration(src, ffprobe) or 0.0
                     _outro_dur = float(intro_dur)
                     _fade_dur  = _f(cp, "music", "fade_out_duration", _outro_dur)
@@ -1713,7 +1717,7 @@ async def run(params: dict, work_dir: Path,
     final: Path | None = None
     if not no_intro:
         yield ""
-        yield "Adding intro/outro..."
+        yield f"{_ts()} Adding intro/outro..."
 
         df_scores = pd.read_csv(scores_csv)
         _best_scene = df_scores.iloc[0]['scene']

@@ -161,13 +161,22 @@ def make_clip(src: Path, ss: float, shot_dur: float,
     crop_out = tmp / f"crop_{idx:04d}.mp4"
     out      = tmp / f"clip_{idx:04d}.mp4"
 
-    # ── Pass 1: crop + scale (fast, high quality) ──────────────────────────
+    # ── Pass 1: blur-background + foreground (65% portrait height, moderate zoom) ──
     _enc_crop = (["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "18", "-preset", "p4"]
                  if USE_NVENC else ["-c:v", "libx264", "-preset", "fast", "-crf", "18"])
+    _fg_h = (int(height * 0.52) >> 1) << 1  # 52% of portrait height, even
+    _fc = (
+        # bg: center-crop to 9:16 first (no stretch), then scale + blur
+        f"[0:v]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale={width}:{height}:flags=lanczos,boxblur=25:5[bg];"
+        # fg: scale to target height keeping AR, then center-crop to target width
+        f"[0:v]scale=-2:{_fg_h}:flags=lanczos[fg_s];"
+        f"[fg_s]crop={width}:{_fg_h}:(iw-{width})/2:0[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2[out]"
+    )
     cmd = [
         "ffmpeg", "-y",
         "-ss", f"{ss:.3f}", "-i", str(src), "-t", str(shot_dur),
-        "-vf", f"crop=ih*9/16:ih:(iw-ih*9/16)/2+({x_shift}):0,scale={width}:{height}:flags=lanczos",
+        "-filter_complex", _fc, "-map", "[out]",
         *_enc_crop,
         "-an", str(crop_out),
     ]
@@ -318,7 +327,7 @@ def beat_shot_dur(music_path: Path, min_dur: float = 0.8, max_dur: float = 3.0) 
     # Load first 90 s only — enough for reliable BPM, fast to process
     y, sr = librosa.load(str(music_path), sr=None, mono=True, duration=90.0)
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    tempo = float(tempo)
+    tempo = float(tempo.flat[0] if hasattr(tempo, 'flat') else tempo)
     if not (40 <= tempo <= 220):
         print(f"  Beat sync: BPM={tempo:.0f} out of range (40-220) — skipped")
         return None
@@ -498,6 +507,7 @@ def main():
     # Per-camera crop X offsets + clip_pool_percent from project config.ini
     _crop_x_offsets: dict[str, int] = {}
     _clip_pool_percent: int = 50   # default: use top 50% of scenes by CLIP score
+    _color_correct: str = ""       # per-project ffmpeg vf chain (color grading)
     try:
         import configparser as _cp
         _cfg = _cp.ConfigParser()
@@ -510,6 +520,10 @@ def main():
                 cam_name, val = part.split(":", 1)
                 _crop_x_offsets[cam_name.strip()] = int(val.strip())
         _clip_pool_percent = _cfg.getint("shorts", "clip_pool_percent", fallback=50)
+        # 5-slider color correction (brightness/gamma/contrast/saturation/temperature).
+        # Legacy vf_chain= override still honoured.
+        from color_correct import chain_from_cp as _cc_chain
+        _color_correct = _cc_chain(_cfg)
     except Exception:
         pass
     if _crop_x_offsets:
@@ -587,20 +601,21 @@ def main():
         for _md in args.music_dirs:
             if _md.strip():
                 search_roots.append(Path(_md.strip()))
-        try:
-            import configparser
-            cp = configparser.ConfigParser()
-            cp.read(str(Path(__file__).parent.parent / "config.ini"))
-            d = cp.get("music", "dir", fallback="")
-            if d:
-                if args.ncs:
-                    ncs_dir = Path(d) / "NCS"
-                    search_roots.append(ncs_dir if ncs_dir.is_dir() else Path(d))
-                else:
-                    shorts_dir = Path(d) / "shorts"
-                    search_roots.append(shorts_dir if shorts_dir.is_dir() else Path(d))
-        except Exception:
-            pass
+        if not search_roots:
+            try:
+                import configparser
+                cp = configparser.ConfigParser()
+                cp.read(str(Path(__file__).parent.parent / "config.ini"))
+                d = cp.get("music", "dir", fallback="")
+                if d:
+                    if args.ncs:
+                        ncs_dir = Path(d) / "NCS"
+                        search_roots.append(ncs_dir if ncs_dir.is_dir() else Path(d))
+                    else:
+                        shorts_dir = Path(d) / "shorts"
+                        search_roots.append(shorts_dir if shorts_dir.is_dir() else Path(d))
+            except Exception:
+                pass
         if search_roots:
             music_file = pick_music(search_roots)
 
@@ -787,6 +802,13 @@ def main():
 
         fc, vout = build_xfade_graph(len(clip_paths), shot_dur, transitions, xfade_dur)
 
+        # Per-project color grading: append filter chain to xfade output
+        _map_label = vout
+        if _color_correct:
+            fc = fc + f";{vout}{_color_correct}[ccv]"
+            _map_label = "[ccv]"
+            print(f"  Color correct: {_color_correct}", flush=True)
+
         inputs = []
         for c in clip_paths:
             inputs += ["-i", str(c)]
@@ -801,7 +823,7 @@ def main():
         cmd_v = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc,
-            "-map", f"{vout}",
+            "-map", f"{_map_label}",
             *_enc_xfade,
             "-an", str(video_only),
         ]

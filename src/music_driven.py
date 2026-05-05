@@ -21,6 +21,7 @@ Output:
 from __future__ import annotations
 
 import csv
+from datetime import datetime
 import json as _json
 import os
 import random
@@ -33,6 +34,9 @@ from pathlib import Path
 import numpy as np
 
 _WORKERS = min(os.cpu_count() or 4, 12)
+
+def _ts() -> str:
+    return datetime.now().strftime("[%H:%M:%S]")
 
 
 # ── Music analysis ────────────────────────────────────────────────────────────
@@ -444,16 +448,17 @@ def match_clips(schedule: list[dict], clips: list[dict],
         ss = max(0.0, min(ideal_ss, best["duration"] - dur))
 
         edit.append({
-            "music_start": slot["start"],
-            "duration":    dur,
-            "energy":      energy,
-            "n_beats":     slot["n_beats"],
-            "scene":       best["scene"],
-            "clip_path":   str(best["path"]),
-            "clip_ss":     round(ss, 3),
-            "clip_score":  round(best["score"], 4),
-            "motion_peak": round(best["motion_peak"], 3),
-            "camera":      best.get("camera", "unknown"),
+            "music_start":    slot["start"],
+            "duration":       dur,
+            "energy":         energy,
+            "n_beats":        slot["n_beats"],
+            "scene":          best["scene"],
+            "clip_path":      str(best["path"]),
+            "clip_ss":        round(ss, 3),
+            "clip_total_dur": round(best["duration"], 3),
+            "clip_score":     round(best["score"], 4),
+            "motion_peak":    round(best["motion_peak"], 3),
+            "camera":         best.get("camera", "unknown"),
         })
 
     covered = sum(e["duration"] for e in edit)
@@ -465,7 +470,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
         if c["scene"] in {e["scene"] for e in edit}:
             cam_counts[cam] = cam_counts.get(cam, 0) + 1
     cam_str = "  ".join(f"{k}={v}" for k, v in sorted(cam_counts.items()))
-    print(f"  Matched: {len(edit)} slots  {covered:.1f}s  unique={unique}  [{cam_str}]")
+    print(f"{_ts()}  Matched: {len(edit)} slots  {covered:.1f}s  unique={unique}  [{cam_str}]")
     # Log selected scenes for exclusion debugging
     scene_list = [e["scene"] for e in edit]
     print(f"  Scenes: {scene_list[:8]}{'…' if len(scene_list) > 8 else ''}")
@@ -478,11 +483,13 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
            output: Path, ffmpeg: str, nvenc: bool = True,
            resolution: str = "", framerate: str = "60",
            blur_speed_cams: list[str] | None = None,
-           blur_plates: bool = False) -> None:
+           blur_plates: bool = False,
+           color_correct: str = "") -> None:
     """
     Trim each clip to its slot duration, concat, overlay music.
     Uses NVENC if available (detected by nvenc flag).
     resolution: e.g. "3840:2160" — scale all clips to this; empty = preserve source.
+    color_correct: optional ffmpeg filter chain appended after scale/fps (per-project grading).
     """
     enc_v = (
         ["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", "18", "-preset", "p4",
@@ -497,8 +504,14 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         _vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
                f"fps={framerate}")
+        if color_correct:
+            _vf = _vf + "," + color_correct
+        vf_args = ["-vf", _vf]
+    elif color_correct:
+        _vf = color_correct
         vf_args = ["-vf", _vf]
     else:
+        _vf = ""
         vf_args = []
 
     with tempfile.TemporaryDirectory() as _tmp:
@@ -535,7 +548,7 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                     _speed_cam_set = set(blur_speed_cams)
 
                 from privacy import detect_clip_regions, blur_vf as _blur_vf_fn
-                print(f"  Privacy: detecting regions ({len(edit)} clips)…", flush=True)
+                print(f"{_ts()}  Privacy: detecting regions ({len(edit)} clips)…", flush=True)
                 for _pi, _entry in enumerate(edit):
                     if _entry.get("type") == "photo":
                         continue
@@ -547,11 +560,32 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                     _regs = detect_clip_regions(
                         Path(_entry["clip_path"]), _entry["clip_ss"], _entry["duration"],
                         ffmpeg=ffmpeg, detect_speed=_do_speed, detect_plates=_do_plates,
+                        dense=_do_plates,
                     )
+                    # Fallback: scan full clip when rendered window missed plates
+                    if _do_plates and not any(r["type"] == "plate" for r in _regs):
+                        _total = _entry.get("clip_total_dur", 0)
+                        if _total > _entry["duration"] + 0.5:
+                            _full = detect_clip_regions(
+                                Path(_entry["clip_path"]), 0.0, _total,
+                                ffmpeg=ffmpeg, detect_speed=False, detect_plates=True,
+                            )
+                            _prs = [r for r in _full if r["type"] == "plate"]
+                            if _prs:
+                                # Best cluster → static blur box (plate not in render window)
+                                _best_pr = max(_prs, key=lambda r: len(r["detections"]))
+                                _dets = sorted(_best_pr["detections"].items())
+                                _mid = _dets[len(_dets) // 2]
+                                _regs = list(_regs) + [{
+                                    "type": "plate",
+                                    "detections": {0.0: _mid[1]},
+                                    "frame_w": _best_pr["frame_w"],
+                                    "frame_h": _best_pr["frame_h"],
+                                }]
                     if _regs:
                         _privacy_regions[_pi] = _regs
                 n_with = sum(1 for r in _privacy_regions.values() if r)
-                print(f"  Privacy: {n_with}/{len(edit)} clips have regions to blur", flush=True)
+                print(f"{_ts()}  Privacy: {n_with}/{len(edit)} clips have regions to blur", flush=True)
             except Exception as _pe:
                 print(f"  Privacy detection error (skipping): {_pe}", flush=True)
 
@@ -597,15 +631,24 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
             # IMPORTANT: detection coords are in original-resolution space, so blur
             # must be applied before any scale filter that changes frame dimensions.
             _prv_regs = _privacy_regions.get(i, [])
+            _fc_script_path = None
             if _prv_regs:
+                import tempfile
                 from privacy import blur_vf as _blur_vf_fn
                 _prv_filter = _blur_vf_fn(_prv_regs, dur)  # [0:v] → [privacy_out]
                 if resolution:
-                    # privacy on original → [privacy_out] → scale/fps → [out]
                     _fc = _prv_filter + f";[privacy_out]{_vf}[out]"
-                    vf_final = ["-filter_complex", _fc, "-map", "[out]"]
+                    _fc_map = "[out]"
                 else:
-                    vf_final = ["-filter_complex", _prv_filter, "-map", "[privacy_out]"]
+                    _fc = _prv_filter
+                    _fc_map = "[privacy_out]"
+                # Write filtergraph to temp file — large LK-tracked filtergraphs can
+                # exceed OS execve arg limit if passed inline as -filter_complex.
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.fc',
+                                                delete=False, dir='/tmp') as _tf:
+                    _tf.write(_fc)
+                    _fc_script_path = _tf.name
+                vf_final = ["-filter_complex_script", _fc_script_path, "-map", _fc_map]
             else:
                 vf_final = vf_args
 
@@ -620,7 +663,11 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                 "-map_metadata", "-1",
                 str(out)
             ]
-            r = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True)
+            finally:
+                if _fc_script_path:
+                    Path(_fc_script_path).unlink(missing_ok=True)
             if r.returncode != 0 or not out.exists():
                 print(f"  WARN: trim failed for {entry['scene']}\n{r.stderr}", flush=True)
                 return (i, None, 0.0)
@@ -650,7 +697,7 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         if not trimmed:
             raise RuntimeError("All clip trims failed")
 
-        print(f"  Trimmed {len(trimmed)}/{len(edit)} clips")
+        print(f"{_ts()}  Trimmed {len(trimmed)}/{len(edit)} clips")
 
         # Concat video-only
         clist = tmp / "list.txt"
@@ -689,7 +736,7 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
         # Output the concatenated video as is (now contains audio)
         shutil.move(str(vid), str(output))
 
-    print(f"  → {output.name}  ({video_dur:.1f}s  {len(trimmed)} shots)")
+    print(f"{_ts()}  → {output.name}  ({video_dur:.1f}s  {len(trimmed)} shots)")
 
 
 # ── Photo slot insertion ──────────────────────────────────────────────────────
@@ -729,6 +776,7 @@ def assemble(
     ffprobe:        str            = "ffprobe",
     nvenc:          bool           = True,
     dry_run:        bool           = False,
+    use_saved_sequence: bool       = False,
 ) -> Path:
     import configparser as _cp_mod
     _cp = _cp_mod.ConfigParser()
@@ -763,6 +811,11 @@ def assemble(
     # Privacy: blur speedometer + license plates
     _blur_speed_cams = [c.strip() for c in _cp.get("privacy", "blur_speedometer_cams", fallback="").split(",") if c.strip()]
     _blur_plates     = _cp.getboolean("privacy", "blur_plates", fallback=False)
+    # Per-project color correction (applied during per-clip re-encode).
+    # Built from [color_correct] sliders (brightness/gamma/contrast/saturation/temperature),
+    # with legacy vf_chain= still honoured as a manual override.
+    from color_correct import chain_from_cp as _cc_chain
+    _color_correct   = _cc_chain(_cp)
     # Camera order from config: cam_a = 'a', cam_b = 'b' in pattern.
     # Falls back to alphabetical if not configured.
     _cam_a = _cp.get("job", "cam_a", fallback="")
@@ -776,6 +829,73 @@ def assemble(
 
     auto_dir    = work_dir / "_autoframe"
     autocut_dir = auto_dir / "autocut"
+
+    # ── Saved-sequence path: skip analyse/match, render the manual timeline ──
+    # Used when the UI persists user-edited timeline (drag/drop/photos) and the
+    # webapp wants the final render to honour that exact ordering.
+    if use_saved_sequence:
+        seq_path = auto_dir / "preview_sequence.json"
+        if not seq_path.exists():
+            raise FileNotFoundError(f"--use-saved-sequence: {seq_path} missing")
+        seq_data = _json.loads(seq_path.read_text())
+        edit = seq_data.get("sequence", [])
+        if not edit:
+            raise RuntimeError("--use-saved-sequence: empty sequence")
+
+        # Drag-drop in the UI does not refresh per-slot music_start. Reset them
+        # cumulatively from 0 so audio aligns with the rendered video.
+        _t_run = 0.0
+        for slot in edit:
+            slot["music_start"] = round(_t_run, 3)
+            _t_run += float(slot.get("duration", 0))
+        music_ss = 0.0
+
+        # Cap sequence so that clips + intro + outro <= music length.
+        # pipeline.py adds intro_dur + outro_dur (default 3s each) after render,
+        # so we must leave that headroom here, same as the normal render path.
+        try:
+            _r = subprocess.run(
+                [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", str(music_path)],
+                capture_output=True, text=True, timeout=5,
+            )
+            _music_dur = float(_r.stdout.strip()) if _r.stdout.strip() else 0.0
+        except Exception:
+            _music_dur = 0.0
+        if _music_dur > 0:
+            _no_intro_cfg = _cp.getboolean("job", "no_intro", fallback=False)
+            _card_dur_cfg = _cp.getfloat("intro_outro", "duration", fallback=3.0) if not _no_intro_cfg else 0.0
+            _cap_dur = _music_dur - _card_dur_cfg * 2  # reserve intro + outro
+            _cap_dur = max(_cap_dur, _music_dur * 0.9)  # never shave more than 10%
+            _accum = 0.0
+            _capped = []
+            for slot in edit:
+                d = float(slot.get("duration", 0))
+                if _accum + d > _cap_dur:
+                    _last = _cap_dur - _accum
+                    if _last > 0.5:
+                        _capped.append({**slot, "duration": round(_last, 3)})
+                    break
+                _capped.append(slot)
+                _accum += d
+            if len(_capped) < len(edit):
+                print(f"  Capped sequence {len(edit)} → {len(_capped)} slots "
+                      f"({_accum:.1f}s clips + {_card_dur_cfg*2:.0f}s cards "
+                      f"of {_music_dur:.1f}s music)", flush=True)
+                edit = _capped
+
+        print(f"  Saved sequence: {len(edit)} slots — bypassing analyse/match", flush=True)
+        if output is None:
+            output = auto_dir / "highlight_music_driven.mp4"
+        render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
+               resolution=_resolution, framerate=_framerate,
+               blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates,
+               color_correct=_color_correct)
+        _music_vol = _cp.getfloat("music", "music_volume", fallback=0.7)
+        (auto_dir / "music_info.json").write_text(
+            _json.dumps({"music_path": str(music_path), "music_ss": music_ss, "music_vol": _music_vol})
+        )
+        return output
 
     # Multicam: use all-cam scores when available
     allcam_csv = auto_dir / "scene_scores_allcam.csv"
@@ -793,7 +913,7 @@ def assemble(
     if _overrides_path.exists():
         try:
             _ov = _json.loads(_overrides_path.read_text())
-            _manual_banned   = {k for k, v in _ov.items() if v in ("ban", "exclude")}
+            _manual_banned   = {k for k, v in _ov.items() if v in ("ban", "ban-new", "exclude")}
             _manual_included = {k for k, v in _ov.items() if v == "include"}
             if _manual_banned:
                 print(f"  Banned: {len(_manual_banned)} scene(s) — hard excluded from pool")
@@ -883,12 +1003,21 @@ def assemble(
     # Load CLIP scores; hard-exclude banned scenes and negative-dominant scenes
     _all_scores: dict[str, float] = {}
     _neg_excluded = 0
+    _BRIGHTNESS_BAN = 50.0
+    _dark_excluded = 0
     with open(scores_csv) as f:
         for row in csv.DictReader(f):
             try:
                 scene = row["scene"]
                 if scene in _manual_banned:
                     continue
+                if row.get("avg_brightness", "") not in ("", "nan"):
+                    try:
+                        if float(row["avg_brightness"]) < _BRIGHTNESS_BAN:
+                            _dark_excluded += 1
+                            continue
+                    except ValueError:
+                        pass
                 final = float(row["score"])
                 if final < 0:
                     _neg_excluded += 1
@@ -896,6 +1025,8 @@ def assemble(
                 _all_scores[scene] = final
             except (KeyError, ValueError):
                 pass
+    if _dark_excluded:
+        print(f"  Brightness filter: excluded {_dark_excluded} dark scenes (< {_BRIGHTNESS_BAN})")
     if _neg_excluded:
         print(f"  Neg-score excluded: {_neg_excluded} scene(s)")
     if not _all_scores:
@@ -1147,18 +1278,33 @@ def assemble(
         raise RuntimeError("No clips available for motion analysis")
 
     # Filter out static clips: configurable via [music_driven] min_motion_score (0.0 = off)
-    _min_motion = float(_cp.get("music_driven", "min_motion_score", fallback="0.1"))
-    if not dry_run and _min_motion > 0 and len(clips) > len(schedule):
+    # Smart-detect: ≤1.0 = relative (motion_norm); >1.0 = absolute pixel diff (motion_level).
+    # Absolute is more robust — relative gives 1.0 to least-static clip even if absolutely static.
+    # Active in dry-run too so Build Timeline preview matches final render.
+    _min_motion = float(_cp.get("music_driven", "min_motion_score", fallback="5.0"))
+    if _min_motion > 0 and len(clips) > len(schedule):
+        _field = "motion_norm" if _min_motion <= 1.0 else "motion_level"
         _before = len(clips)
-        _filtered = [c for c in clips if c.get("motion_norm", 0) >= _min_motion]
+        _filtered = [c for c in clips if c.get(_field, 0) >= _min_motion]
         # Only apply filter if enough clips remain to fill schedule
         if len(_filtered) >= len(schedule):
             clips = _filtered
             print(f"  Motion filter: removed {_before - len(clips)} static clips "
-                  f"(motion_norm < {_min_motion}, {len(clips)} remain)")
+                  f"({_field} < {_min_motion}, {len(clips)} remain)")
         else:
             print(f"  Motion filter: skipped (would leave only {len(_filtered)} for "
                   f"{len(schedule)} slots — pool too small)")
+
+    # CLIP score floor: exclude clips below min_clip_score (0.0 = off).
+    # No pool-size guard — match_clips reuses good clips rather than pulling bad ones.
+    _min_clip = float(_cp.get("music_driven", "min_clip_score", fallback="0.0"))
+    if _min_clip > 0:
+        _score_filtered = [c for c in clips if c.get("score", 0) >= _min_clip]
+        if _score_filtered:
+            _removed = len(clips) - len(_score_filtered)
+            clips = _score_filtered
+            print(f"  Score filter: removed {_removed} clips below {_min_clip} "
+                  f"({len(clips)} remain)")
 
     # Post-motion pattern balance: re-check per-camera count after motion filter.
     # Adds lower-scored clips for deficient cameras, bypassing motion filter.
@@ -1275,7 +1421,8 @@ def assemble(
 
     render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
            resolution=_resolution, framerate=_framerate,
-           blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates)
+           blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates,
+           color_correct=_color_correct)
 
     # Write music info so apply_postprocess() can mix music over the final video
     # (after intro/outro are added), ensuring the fade covers the outro too.
@@ -1309,6 +1456,8 @@ if __name__ == "__main__":
                     help="Fraction of top CLIP clips to motion-analyse (default 0.4)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Run scene selection only, write preview_sequence.json, skip encoding")
+    ap.add_argument("--use-saved-sequence", action="store_true",
+                    help="Skip analyse/match — render exact slots from preview_sequence.json")
     args = ap.parse_args()
 
     # Read ffmpeg/ffprobe from global config.ini
@@ -1349,5 +1498,6 @@ if __name__ == "__main__":
         ffprobe=_ffprobe,
         nvenc=_nvenc,
         dry_run=args.dry_run,
+        use_saved_sequence=args.use_saved_sequence,
     )
     print(f"\nDone → {out}")

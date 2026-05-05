@@ -225,6 +225,7 @@ def _load_aesthetic_predictor():
     return m.eval().to(DEVICE)
 
 aes_scores: dict[str, float] = {}
+_brightness_map: dict[str, float] = {}
 try:
     _aes_model = _load_aesthetic_predictor()
     _stems = list(scene_best.keys())
@@ -264,6 +265,7 @@ try:
     # ── Quality/Luminance pass ──
     # Check for "muddy" or "blown out" frames to further refine aesthetic score.
     _quality_boosts = []
+    _brightness_map: dict[str, float] = {}
     for stem in _stems:
         img_path = Path(FRAMES_DIR) / f"{scene_best[stem]['frame']}.jpg"
         try:
@@ -272,17 +274,18 @@ try:
             if _img_bgr is not None:
                 _yuv = cv2.cvtColor(_img_bgr, cv2.COLOR_BGR2YUV)
                 _y = _yuv[:, :, 0]
-                _avg_luma = _y.mean()
+                _avg_luma = float(np.median(_y))
                 _std_luma = _y.std()
+                _brightness_map[stem] = round(_avg_luma, 1)
                 # Boost frames with good contrast and balanced lighting
                 # Penalty for very dark (<30) or very bright (>225)
                 _luma_mult = 1.0
                 if _avg_luma < 40 or _avg_luma > 230: _luma_mult = 0.7
                 elif 80 < _avg_luma < 180: _luma_mult = 1.1 # Sweet spot
-                
+
                 # Penalty for extremely low contrast (foggy/muddy)
                 if _std_luma < 15: _luma_mult *= 0.5
-                
+
                 _quality_boosts.append(_luma_mult)
             else:
                 _quality_boosts.append(1.0)
@@ -298,6 +301,7 @@ except Exception as _e:
 
 for r in results:
     r["aesthetic_score"] = round(aes_scores.get(r["scene"], float("nan")), 4)
+    r["avg_brightness"]  = _brightness_map.get(r["scene"], float("nan"))
 
 df_all = pd.DataFrame(results).sort_values("score", ascending=False)
 

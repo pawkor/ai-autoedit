@@ -152,6 +152,35 @@ if not DRY_RUN:
     except Exception:
         pass
 
+# Auto-exclude very dark frames (black screen, no-light, night with no illumination)
+BRIGHTNESS_BAN = 50.0
+if 'avg_brightness' not in df.columns:
+    import cv2 as _cv2
+    _frames_dir = Path(SCORES_CSV).parent / "frames"
+    _bvals: dict[str, float] = {}
+    for _stem in df['scene']:
+        for _suf in ('_f1', '_f0', '_f2', ''):
+            _fp = _frames_dir / f"{_stem}{_suf}.jpg"
+            if _fp.exists():
+                try:
+                    _img = _cv2.imread(str(_fp))
+                    if _img is not None:
+                        _yuv = _cv2.cvtColor(_img, _cv2.COLOR_BGR2YUV)
+                        _bvals[_stem] = round(float(np.median(_yuv[:, :, 0])), 1)
+                except Exception:
+                    pass
+                break
+    if _bvals:
+        df['avg_brightness'] = df['scene'].map(_bvals)
+        df.to_csv(SCORES_CSV, index=False)
+        print(f"Brightness: computed {len(_bvals)} scenes → CSV updated")
+
+if 'avg_brightness' in df.columns:
+    _dark = df[pd.to_numeric(df['avg_brightness'], errors='coerce').fillna(0) < BRIGHTNESS_BAN]['scene']
+    if not _dark.empty:
+        print(f"Brightness filter: excluding {len(_dark)} dark scenes (avg_brightness < {BRIGHTNESS_BAN})")
+        force_exclude = force_exclude | set(_dark)
+
 # Apply force-exclude and dedup before selection
 if force_exclude or dup_scenes:
     df = df[~df['scene'].isin(force_exclude | dup_scenes)]

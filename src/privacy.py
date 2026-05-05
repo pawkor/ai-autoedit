@@ -41,9 +41,11 @@ LOWER_FRAC     = 0.50   # speedometer lives in lower half of frame
 SPEED_MIN_H    = 35     # min digit bbox height in detection-scale pixels (35 @ 1920×1080)
 SPEED_MIN_CONF = 0.7    # min OCR confidence for speedometer reading
 LP_MIN_W       = 50     # min LP width in detection-scale pixels
-LP_MIN_CONF    = 0.85   # min YOLO confidence for plate detection (high: model over-detects logos)
-LP_MIN_ASPECT  = 2.0    # min width/height ratio (EU plates ~4.7:1, US ~2:1; logos/gloves fail)
+LP_MIN_CONF    = 0.28   # min YOLO confidence — low for max coverage; LP_MIN_Y_FRAC handles FPs
+LP_MIN_ASPECT  = 0.8    # min width/height ratio (model bbox ~1:1; EU plates ~4.7:1 theoretical)
 LP_MAX_W_FRAC  = 0.22   # max plate width as fraction of frame (plates small vs logos on helmet)
+LP_MIN_Y_FRAC  = 0.30   # plate center must be below top 30% of frame — rejects signs/billboards/scaffolding
+DENSE_MIN_YOLO = 1      # min YOLO keyframe hits to accept a dense cluster (1 = max coverage)
 PAD_SPEED      = 30     # padding around speedometer region (detect-scale px)
 PAD_LP         = 15     # padding around LP region (detect-scale px)
 PIX_BLOCK      = 20     # pixelation block size (original-scale px)
@@ -71,7 +73,8 @@ def _get_yolo():
         # (yolov8n, yolo11n) have class 0 = person, not plate, and produce
         # false positives without a reliable class filter.
         try:
-            _yolo = YOLO("yolo11n-license-plate.pt")
+            _model_path = Path(__file__).parent / "yolo11n-license-plate.pt"
+            _yolo = YOLO(str(_model_path))
         except Exception:
             _yolo = False  # sentinel: tried, unavailable — do not retry
     return _yolo if _yolo else None
@@ -187,6 +190,9 @@ def _detect_plates(frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
                     continue
                 if bw > frame_bgr.shape[1] * LP_MAX_W_FRAC:
                     continue
+                # Reject detections in upper part of frame — shop signs, billboards
+                if (by + bh / 2) < frame_bgr.shape[0] * LP_MIN_Y_FRAC:
+                    continue
                 boxes.append((bx, by, bw, bh))
         if boxes:
             return boxes
@@ -197,7 +203,7 @@ def _detect_plates(frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
     for (bbox, text, conf) in results:
         text_clean = re.sub(r'[^A-Z0-9]', '', text.upper())
         if not _LP_PATTERN.match(text_clean): continue
-        if not re.search(r'\d', text_clean): continue  # brand names (SHOEI, AIROH, ARAI) have no digits
+        if len(re.findall(r'\d', text_clean)) < 2: continue  # brand names (SHOEI→SH0EI=1 digit) filtered; real plates have ≥2 digits
         if conf < 0.4: continue
         xs, ys = [p[0] for p in bbox], [p[1] for p in bbox]
         bx, by = int(min(xs)), int(min(ys))
@@ -225,6 +231,192 @@ def _scale_to_orig(region, scale):
     return tuple(v * scale for v in region)
 
 
+def _iou(a, b):
+    """IoU between two (x, y, w, h) boxes."""
+    ax2, ay2 = a[0] + a[2], a[1] + a[3]
+    bx2, by2 = b[0] + b[2], b[1] + b[3]
+    ix1 = max(a[0], b[0]); iy1 = max(a[1], b[1])
+    ix2 = min(ax2, bx2);   iy2 = min(ay2, by2)
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    union = a[2] * a[3] + b[2] * b[3] - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _lk_track(cap, start_frame: int, end_frame: int, fps: float,
+              det_w: int, det_h: int, orig_w: int, orig_h: int,
+              seed_r: tuple, seed_frame: int, step: int,
+              forward: bool) -> dict:
+    """Track a plate box from seed_frame using Lucas-Kanade optical flow.
+
+    Returns {t_offset: (x,y,w,h)} for successfully tracked frames.
+    """
+    scale_x = det_w / orig_w
+    scale_y = det_h / orig_h
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, seed_frame)
+    ret, frame = cap.read()
+    if not ret:
+        return {}
+    prev_gray = cv2.cvtColor(cv2.resize(frame, (det_w, det_h)), cv2.COLOR_BGR2GRAY)
+
+    cx_det = (seed_r[0] + seed_r[2] / 2) * scale_x
+    cy_det = (seed_r[1] + seed_r[3] / 2) * scale_y
+    pts = np.array([[cx_det, cy_det]], dtype=np.float32).reshape(-1, 1, 2)
+
+    lk_params = dict(winSize=(31, 31), maxLevel=3,
+                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.01))
+
+    tracked: dict = {}
+    curr_r = seed_r
+
+    frame_seq = range(seed_frame + step, end_frame, step) if forward \
+        else range(seed_frame - step, start_frame - 1, -step)
+
+    for fnum in frame_seq:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fnum)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        curr_gray = cv2.cvtColor(cv2.resize(frame, (det_w, det_h)), cv2.COLOR_BGR2GRAY)
+
+        new_pts, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, pts, None, **lk_params)
+        if status is None or status[0][0] != 1:
+            break  # tracking lost
+
+        nx, ny = new_pts[0][0]
+        px, py = pts[0][0]
+        # Stop if point jumps too far between frames — indicates LK drifted to background
+        if abs(nx - px) > 80 or abs(ny - py) > 80:
+            break
+
+        new_r = (
+            int(nx / scale_x - curr_r[2] / 2),
+            int(ny / scale_y - curr_r[3] / 2),
+            curr_r[2],
+            curr_r[3],
+        )
+        t_off = (fnum - start_frame) / fps
+        if t_off >= 0.0:
+            tracked[t_off] = new_r
+
+        curr_r = new_r
+        pts = new_pts.copy()
+        prev_gray = curr_gray
+
+    return tracked
+
+
+def _dense_plate_clusters(clip_path: Path, clip_ss: float, duration: float) -> list[dict]:
+    """Per-frame plate tracking: YOLO on up to 60 frames + LK optical flow extension.
+
+    Phase 1: YOLO detections with IoU-based cluster matching.
+    Phase 2: LK flow extends each cluster forward and backward beyond YOLO keyframes.
+    Returns clusters with float time-offset keys (seconds from clip_ss).
+    """
+    cap = cv2.VideoCapture(str(clip_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    det_w  = max(1, orig_w // DETECT_SCALE)
+    det_h  = max(1, orig_h // DETECT_SCALE)
+
+    start_f = int(clip_ss * fps)
+    end_f   = int((clip_ss + duration) * fps)
+    total   = max(1, end_f - start_f)
+    step    = max(1, total // 60)  # at most 60 YOLO calls
+    recency = 2 * step / fps + 0.1
+
+    plate_clusters: list[dict] = []
+
+    # ── Phase 1: YOLO detection ───────────────────────────────────────────────
+    frame_num = start_f
+    while frame_num < end_f:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        t_off = (frame_num - start_f) / fps
+        small = cv2.resize(frame, (det_w, det_h))
+
+        for r in _detect_plates(small):
+            orig_r = _scale_to_orig(_pad(*r, PAD_LP, det_w, det_h), DETECT_SCALE)
+            cx = orig_r[0] + orig_r[2] / 2
+            cy = orig_r[1] + orig_r[3] / 2
+
+            best_pc, best_score = None, 0.0
+            for pc in plate_clusters:
+                if not pc["detections"]:
+                    continue
+                last_t = max(pc["detections"])
+                if t_off - last_t > recency:
+                    continue
+                last_r = pc["detections"][last_t]
+                iou = _iou(orig_r, last_r)
+                lcx = last_r[0] + last_r[2] / 2
+                lcy = last_r[1] + last_r[3] / 2
+                close = abs(cx - lcx) < 200 and abs(cy - lcy) < 200
+                # Allow centroid-only join (iou=0) when plate rotates: same plate, no overlap
+                score = iou if iou >= 0.15 else (0.05 if close else 0.0)
+                if score > best_score:
+                    best_score, best_pc = score, pc
+
+            if best_pc is not None:
+                best_pc["detections"][t_off] = orig_r
+            else:
+                plate_clusters.append({
+                    "type": "plate",
+                    "detections": {t_off: orig_r},
+                    "frame_w": orig_w,
+                    "frame_h": orig_h,
+                })
+        frame_num += step
+
+    # ── Filter: require ≥ DENSE_MIN_YOLO keyframe hits before LK extension ──
+    # Single-frame detections are usually shop signs / road signs (noise).
+    # Real plates visible for even 0.3 s get 2+ YOLO hits at step ~4 frames.
+    plate_clusters = [pc for pc in plate_clusters if len(pc["detections"]) >= DENSE_MIN_YOLO]
+
+    # ── Phase 2: LK optical flow extension ───────────────────────────────────
+    for pc in plate_clusters:
+        if not pc["detections"]:
+            continue
+        times = sorted(pc["detections"])
+
+        # Forward: extend from last YOLO keyframe to end of clip
+        last_t = times[-1]
+        if last_t < duration - 0.1:
+            last_fnum = start_f + int(last_t * fps)
+            fwd = _lk_track(cap, start_f, end_f, fps, det_w, det_h, orig_w, orig_h,
+                            pc["detections"][last_t], last_fnum, step, forward=True)
+            for t, r in fwd.items():
+                if t not in pc["detections"]:
+                    pc["detections"][t] = r
+
+        # Backward: extend from first YOLO keyframe to start of clip
+        first_t = times[0]
+        if first_t > 0.1:
+            first_fnum = start_f + int(first_t * fps)
+            bwd = _lk_track(cap, start_f, end_f, fps, det_w, det_h, orig_w, orig_h,
+                            pc["detections"][first_t], first_fnum, step, forward=False)
+            for t, r in bwd.items():
+                if t not in pc["detections"]:
+                    pc["detections"][t] = r
+
+    cap.release()
+
+    result = [pc for pc in plate_clusters if pc["detections"]]
+
+    # Clamp first/last keyframe to clip boundaries
+    for pc in result:
+        times = sorted(pc["detections"])
+        if times[0] > 0.05:
+            pc["detections"][0.0] = pc["detections"][times[0]]
+        if times[-1] < duration - 0.05:
+            pc["detections"][duration] = pc["detections"][times[-1]]
+
+    return result
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def detect_clip_regions(
@@ -234,56 +426,64 @@ def detect_clip_regions(
     ffmpeg: str = "ffmpeg",
     detect_speed: bool = True,
     detect_plates: bool = True,
+    dense: bool = False,
 ) -> list[dict]:
     """
     Returns list of 'clusters' (speedo, or individual vehicles).
-    Each cluster has 'detections': { frame_idx: (x,y,w,h) } in ORIGINAL resolution.
+    Each cluster has 'detections': { t_offset: (x,y,w,h) } in ORIGINAL resolution,
+    where t_offset is seconds from clip_ss (float).
+
+    dense=True: use per-frame cv2 tracking for plates (IoU-based, up to 60 keyframes).
     """
     _load_privacy_cfg()
     frames = _sample_frames(clip_path, clip_ss, duration, SAMPLE_COUNT, ffmpeg)
     if not frames: return []
     fh, fw = frames[0].shape[:2]
+    orig_w, orig_h = fw * DETECT_SCALE, fh * DETECT_SCALE
+    n = len(frames)
 
     speed_cluster = {"type": "speed", "detections": {}}
-    plate_clusters = []
+    plate_clusters: list[dict] = []
 
     for i, frame in enumerate(frames):
+        t_off = duration * (i + 0.5) / n
+
         if detect_speed:
             r = _detect_speedometer(frame)
             if r:
-                speed_cluster["detections"][i] = _scale_to_orig(_pad(*r, PAD_SPEED, fw, fh), DETECT_SCALE)
+                speed_cluster["detections"][t_off] = _scale_to_orig(_pad(*r, PAD_SPEED, fw, fh), DETECT_SCALE)
 
-        if detect_plates:
+        if detect_plates and not dense:
             for r in _detect_plates(frame):
                 orig_r = _scale_to_orig(_pad(*r, PAD_LP, fw, fh), DETECT_SCALE)
                 placed = False
                 cx, cy = orig_r[0] + orig_r[2]/2, orig_r[1] + orig_r[3]/2
                 for pc in plate_clusters:
-                    # Find a detection in THIS cluster from ANY previous frame to compare
                     for prev_r in pc["detections"].values():
                         pcx, pcy = prev_r[0] + prev_r[2]/2, prev_r[1] + prev_r[3]/2
                         if abs(cx - pcx) < 150 and abs(cy - pcy) < 150:
-                            pc["detections"][i] = orig_r
+                            pc["detections"][t_off] = orig_r
                             placed = True
                             break
                     if placed: break
                 if not placed:
-                    plate_clusters.append({"type": "plate", "detections": {i: orig_r}})
+                    plate_clusters.append({"type": "plate", "detections": {t_off: orig_r}})
+
+    if detect_plates and dense:
+        plate_clusters = _dense_plate_clusters(clip_path, clip_ss, duration)
 
     final_clusters = []
     if len(speed_cluster["detections"]) >= CONSENSUS_MIN:
+        speed_cluster["frame_w"] = orig_w
+        speed_cluster["frame_h"] = orig_h
         final_clusters.append(speed_cluster)
 
     for pc in plate_clusters:
-        if len(pc["detections"]) >= max(2, CONSENSUS_MIN - 1):
+        if len(pc["detections"]) >= 1:
+            if "frame_w" not in pc:
+                pc["frame_w"] = orig_w
+                pc["frame_h"] = orig_h
             final_clusters.append(pc)
-
-    # Store original-resolution frame dimensions so blur_vf can compute
-    # numeric crop bounds (ffmpeg's crop filter doesn't support main_w/main_h).
-    orig_w, orig_h = fw * DETECT_SCALE, fh * DETECT_SCALE
-    for c in final_clusters:
-        c["frame_w"] = orig_w
-        c["frame_h"] = orig_h
 
     return final_clusters
 
@@ -297,21 +497,22 @@ def blur_vf(clusters: list[dict], duration: float, pix_block: int = PIX_BLOCK) -
     prev = "0:v"
 
     for i, cluster in enumerate(clusters):
-        # 1. Calculate a global "max size" for this cluster's union (crop needs static size)
         all_det = list(cluster["detections"].values())
-        u = _union(all_det)
-        if not u: continue
-        
-        # Use union box size + 20% to allow for some movement outside detection points
-        bw, bh = int(u[2] * 1.1), int(u[3] * 1.1)
-        bw, bh = bw + (bw % 2), bh + (bh % 2) # ensure even
+        if not all_det: continue
+
+        # Box size = median individual detection size (NOT union of positions).
+        # Union spans the entire plate travel path → huge width → crop filter error.
+        widths  = sorted(d[2] for d in all_det)
+        heights = sorted(d[3] for d in all_det)
+        bw = int(widths[len(widths) // 2] * 1.3)
+        bh = int(heights[len(heights) // 2] * 1.3)
+        bw = bw + (bw % 2)
+        bh = bh + (bh % 2)
         
         # 2. Build interpolation expressions for X and Y
-        # Sample points are at T = dur * (i + 0.5) / SAMPLE_COUNT
+        # detections keys are float time offsets (seconds from clip start)
         pts = []
-        for idx, det in sorted(cluster["detections"].items()):
-            t = duration * (idx + 0.5) / SAMPLE_COUNT
-            # Center of the box
+        for t, det in sorted(cluster["detections"].items()):
             cx, cy = det[0] + det[2]/2, det[1] + det[3]/2
             pts.append((t, cx, cy))
         
@@ -336,6 +537,8 @@ def blur_vf(clusters: list[dict], duration: float, pix_block: int = PIX_BLOCK) -
         # so use numeric bounds from stored frame dimensions when available.
         _fw = cluster.get("frame_w", 0)
         _fh = cluster.get("frame_h", 0)
+        if _fw > 0: bw = min(bw, _fw - (_fw % 2))
+        if _fh > 0: bh = min(bh, _fh - (_fh % 2))
         if _fw > 0 and _fh > 0:
             final_x = f"clip({expr_x}-{bw/2:.1f},0,{max(0, _fw - bw)})"
             final_y = f"clip({expr_y}-{bh/2:.1f},0,{max(0, _fh - bh)})"

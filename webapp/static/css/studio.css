@@ -97,7 +97,23 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-score-hi  .m-thumb-img { border-color: var(--green-hi); }
 .m-score-mid .m-thumb-img { border-color: var(--green-mid); }
 .m-score-low .m-thumb-img { border-color: var(--yellow); }
-.m-thumb.banned .m-thumb-img { opacity: .3; border-color: var(--red); }
+.m-thumb.banned .m-thumb-img { opacity: .3; border: 2px solid var(--red); }
+.m-thumb.banned-new .m-thumb-img { opacity: .3; border: 2px dashed var(--red); }
+.m-thumb-photo .m-thumb-img { border: 2px solid #818cf8; }
+.m-pool-filter { font-size: 10px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+                 color: var(--sub); user-select: none; transition: color .1s, background .1s;
+                 letter-spacing: .04em; text-transform: uppercase; }
+.m-pool-filter:hover { color: var(--text); }
+.m-pool-filter.active { color: var(--text); background: var(--bg2); font-weight: 700; }
+
+/* ── Picture (color correction) modal ──────────────────────────────────── */
+.m-pic-row { display: grid; grid-template-columns: 100px 1fr 60px;
+             align-items: center; gap: 12px; }
+.m-pic-lbl { color: var(--sub); font-size: 12px; }
+.m-pic-val { color: var(--text); font-size: 11px; font-family: ui-monospace, monospace;
+             text-align: right; }
+.m-pic-row input[type=range] { width: 100%; accent-color: var(--blue); }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
 /* ── Timeline ────────────────────────────────────────────────────────── */
 #m-timeline-wrap { height: 200px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--bg0); }
@@ -127,7 +143,7 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
                 box-shadow: 0 8px 24px rgba(0,0,0,.6); z-index: 500; pointer-events: none; }
 #m-tl-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .m-clip.drag-over { border-color: var(--green-hi); box-shadow: 0 0 0 2px var(--green-hi); }
-.m-clip-insert { flex-shrink: 0; width: 0; min-height: 44px; border-radius: 2px;
+.m-clip-insert { flex-shrink: 0; width: 6px; min-height: 44px; border-radius: 2px;
                  transition: width .12s, background .12s; }
 .m-clip-insert.active { width: 36px; background: rgba(59,130,246,.25);
                         outline: 2px dashed var(--blue); outline-offset: -2px; }
