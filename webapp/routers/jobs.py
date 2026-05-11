@@ -424,6 +424,7 @@ async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> b
         if job.params.get("shorts_ncs"):       cmd.append("--ncs")
         if job.params.get("shorts_best"):      cmd.append("--best")
         if job.params.get("shorts_beat_sync"): cmd.append("--beat-sync")
+        if job.params.get("shorts_duration"):  cmd += ["--duration", str(job.params["shorts_duration"])]
         _smds = job.params.get("shorts_music_dirs") or []
         if isinstance(_smds, str): _smds = [s.strip() for s in _smds.split(",") if s.strip()]
         if not _smds:
@@ -1577,7 +1578,7 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_duration", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v

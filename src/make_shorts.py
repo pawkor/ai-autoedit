@@ -369,6 +369,25 @@ def _mark_track_used(track_path: Path, music_dirs: list[Path]):
     p.write_text(json.dumps(used, indent=2))
 
 
+def _best_used(auto_dir: Path) -> set[str]:
+    p = auto_dir / "shorts_best_used.json"
+    try:
+        return set(json.loads(p.read_text()) if p.exists() else [])
+    except Exception:
+        return set()
+
+
+def _mark_best_used(scene: str, auto_dir: Path):
+    p = auto_dir / "shorts_best_used.json"
+    try:
+        used: list[str] = json.loads(p.read_text()) if p.exists() else []
+    except Exception:
+        used = []
+    if scene not in used:
+        used.append(scene)
+    p.write_text(json.dumps(used, indent=2))
+
+
 _HISTORY_MIN_LIBRARY = 10   # reset history when library has fewer than this many tracks
 
 
@@ -496,9 +515,6 @@ def main():
     ap.add_argument("--version",    default="",               help="Force output version string (e.g. v03) — avoids race in batch mode")
     args = ap.parse_args()
 
-    if args.best:
-        args.duration = 30.0   # best-of-best is always 30 s
-
     xfade_dur = args.xfade_dur
 
     if args.seed is not None:
@@ -549,10 +565,13 @@ def main():
 
     # ── Scenes ────────────────────────────────────────────────────────────────
     raw: list[tuple[float, str]] = []
+    scene_offsets: dict[str, float] = {}
     with open(scores_csv, newline="") as f:
         for row in csv.DictReader(f):
             try:
                 raw.append((float(row["score"]), row["scene"]))
+                if "offset_sec" in row and row["offset_sec"]:
+                    scene_offsets[row["scene"]] = float(row["offset_sec"])
             except (KeyError, ValueError):
                 continue
     if not raw:
@@ -628,19 +647,70 @@ def main():
     # Account for xfade overlap: N*shot - (N-1)*xfade = duration
     # → N = (duration - xfade) / (shot - xfade). Add +4 as buffer for skipped scenes.
     _eff = max(args.shot - xfade_dur, 0.01)
-    n_shots = args.top if args.top > 0 else max(1, math.ceil((args.duration - xfade_dur) / _eff) + 4)
+    n_shots = args.top if args.top > 0 else max(1, math.ceil((args.duration - xfade_dur) / _eff))
 
+    _best_clip_path: "Path | None" = None
+    _run_multishot = not args.best
     if args.best:
-        # ── Best-of-best: single 30-second clip from the #1 CLIP-scored scene ─
+        # ── Best-of-best: single continuous clip, highest CLIP score, rotation ─
         best_pool = [(sc, sn) for sc, sn in scenes
-                     if (autocut_dir / f"{sn}.mp4").exists()
-                     and probe_duration(autocut_dir / f"{sn}.mp4") >= args.duration]
-        candidates = best_pool[:1]   # only the single top scene
-        hook_scene = candidates[0][1] if candidates else None
-        hook_score = candidates[0][0] if candidates else 0.0
-        if hook_scene:
-            print(f"Best-of-best: '{hook_scene}'  score={hook_score:.3f}  (#1 CLIP — 30s single scene)")
-    else:
+                     if (autocut_dir / f"{sn}.mp4").exists()]
+        if not best_pool:
+            print("Best-of-best: no clips available — falling back to multi-shot mode")
+            args.best = False
+            _run_multishot = True
+        else:
+            lock_path = auto_dir / "shorts_best.lock"
+            with open(lock_path, "w") as _lf:
+                fcntl.flock(_lf, fcntl.LOCK_EX)
+                try:
+                    used = _best_used(auto_dir)
+                    fresh = [(sc, sn) for sc, sn in best_pool if sn not in used]
+                    if not fresh:
+                        print("  Best-of-best: all clips used — resetting history")
+                        (auto_dir / "shorts_best_used.json").write_text("[]")
+                        fresh = best_pool
+                    chosen_sc, chosen_sn = fresh[0]
+                    _mark_best_used(chosen_sn, auto_dir)
+                finally:
+                    fcntl.flock(_lf, fcntl.LOCK_UN)
+            _clip_native = probe_duration(autocut_dir / f"{chosen_sn}.mp4")
+            # If clip is shorter than target, try to extract a longer window from source
+            if _clip_native < args.duration - 0.5 and chosen_sn in scene_offsets:
+                _src_stem = re.sub(r"-(clip|scene)-\d+$", "", chosen_sn)
+                _src_file = next(
+                    (p for ext in ("mp4", "MP4", "mov", "MOV", "MTS", "mts")
+                     for p in work_dir.rglob(f"{_src_stem}.{ext}")),
+                    None
+                )
+                if _src_file:
+                    _src_dur   = probe_duration(_src_file)
+                    _ss        = scene_offsets[chosen_sn]
+                    _available = _src_dur - _ss
+                    _extract   = min(args.duration, max(1.0, _available - 0.1))
+                    _ext_path  = autocut_dir / f"{chosen_sn}_best_ext.mp4"
+                    subprocess.run([
+                        "ffmpeg", "-y", "-ss", f"{_ss:.3f}", "-i", str(_src_file),
+                        "-t", f"{_extract:.4f}", "-c", "copy", str(_ext_path),
+                    ], capture_output=True)
+                    if _ext_path.exists() and probe_duration(_ext_path) > 1.0:
+                        _clip_native = probe_duration(_ext_path)
+                        # Swap chosen_sn to use extended clip path going forward
+                        chosen_sn_path = _ext_path
+                        print(f"Best-of-best: extended from source ({_extract:.1f}s window at ss={_ss:.1f}s)")
+                    else:
+                        chosen_sn_path = autocut_dir / f"{chosen_sn}.mp4"
+                else:
+                    chosen_sn_path = autocut_dir / f"{chosen_sn}.mp4"
+            else:
+                chosen_sn_path = autocut_dir / f"{chosen_sn}.mp4"
+            _best_clip_path = chosen_sn_path
+            args.duration = min(args.duration, max(1.0, _clip_native - 0.1))
+            candidates = [(chosen_sc, chosen_sn)]
+            hook_scene = chosen_sn
+            hook_score = chosen_sc
+            print(f"Best-of-best: '{hook_scene}'  score={hook_score:.3f}  ({args.duration:.1f}s / {_clip_native:.1f}s available)")
+    if _run_multishot:
         # ── Best-hook scene: random pick from top CLIP scenes → first shot ──────────
         top_n = max(1, min(8, len(scenes) // 5))
         top_candidates = [(sc, sn) for sc, sn in scenes[:top_n * 3]
@@ -745,7 +815,8 @@ def main():
         # ── Per-shot clips ────────────────────────────────────────────────────
         clips = []
         for i, (score, scene) in enumerate(candidates):
-            src = autocut_dir / f"{scene}.mp4"
+            src = (_best_clip_path if (_best_clip_path and args.best and i == 0)
+                   else autocut_dir / f"{scene}.mp4")
             if not src.exists():
                 print(f"  [{i+1:2d}] SKIP {scene}")
                 continue
@@ -825,6 +896,7 @@ def main():
             "-filter_complex", fc,
             "-map", f"{_map_label}",
             *_enc_xfade,
+            "-t", f"{args.duration:.4f}",
             "-an", str(video_only),
         ]
         r = subprocess.run(cmd_v, capture_output=True)

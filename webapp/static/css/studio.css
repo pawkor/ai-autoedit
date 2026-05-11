@@ -283,7 +283,7 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 #m-results-playing-info { flex-shrink: 0; padding: 8px 12px; font-size: 11px; color: var(--sub);
                            background: var(--bg0); white-space: nowrap; overflow: hidden;
                            text-overflow: ellipsis; }
-.m-results-list-col { width: 320px; flex-shrink: 0; display: flex; flex-direction: column;
+.m-results-list-col { width: 400px; flex-shrink: 0; display: flex; flex-direction: column;
                       border-left: 1px solid var(--border); overflow-y: auto; }
 .m-results-group { font-size: 9px; font-weight: 700; letter-spacing: .06em; color: var(--muted);
                    padding: 8px 12px 4px; text-transform: uppercase; }

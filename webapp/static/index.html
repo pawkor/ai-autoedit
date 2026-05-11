@@ -484,6 +484,13 @@
           <input id="m-shorts-count" class="m-input" type="number"
                  min="1" max="9" step="1" value="1" style="width:56px">
         </div>
+        <div class="m-shorts-count-row" style="margin-top:8px">
+          <span class="m-settings-label">Duration</span>
+          <input id="m-shorts-duration" type="range" min="5" max="30" step="1" value="15"
+                 style="flex:1;margin:0 8px"
+                 oninput="document.getElementById('m-shorts-dur-val').textContent=this.value+'s'">
+          <span id="m-shorts-dur-val" style="min-width:28px;text-align:right;font-size:13px">15s</span>
+        </div>
         <div class="m-analyze-opts" style="margin-top:10px">
           <label class="m-analyze-check">
             <input type="checkbox" id="m-shorts-text">

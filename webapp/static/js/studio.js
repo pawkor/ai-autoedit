@@ -285,6 +285,7 @@ function renderPool() {
       const div = document.createElement('div');
       div.className = 'm-thumb m-thumb-photo';
       div.title = ph.filename || 'photo';
+      div.draggable = true;
       // thumb_url already includes /api/file?path=... — use directly
       div.innerHTML = `
         <div class="m-thumb-img">
@@ -293,6 +294,12 @@ function renderPool() {
         </div>
         <div class="m-thumb-label"></div>`;
       div.querySelector('.m-thumb-label').textContent = ph.filename || '';
+      div.addEventListener('dragstart', e => {
+        _drag = { from: 'pool', type: 'photo', photo: ph };
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/plain', ph.filename || '');
+        div.addEventListener('dragend', () => { _drag = null; }, { once: true });
+      });
       grid.appendChild(div);
     }
   }
@@ -388,8 +395,9 @@ async function rebuildTimeline() {
 
   const _md = (typeof _musicDir !== 'undefined') ? _musicDir : '';
   clearTimeout(_savePatternTimer);
-  const _patInput = document.getElementById('m-cam-pattern');
-  const _camPattern = _patInput ? _patInput.value.trim() : '';
+  const _panelPat   = document.getElementById('m-cam-pattern')?.value.trim() ?? '';
+  const _settingsPat = document.getElementById('m-settings-cam-pattern')?.value.trim() ?? '';
+  const _camPattern = _panelPat || _settingsPat;
   // Clear manual timeline so dry-run rebuilds fresh from pattern.
   // Keep _overrides — backend hard-excludes banned scenes from the dry-run pool.
   _timeline = [];
@@ -397,7 +405,7 @@ async function rebuildTimeline() {
     selected_track: _pinnedTrack,
     manual_timeline: null,
     manual_overrides: _overrides,
-    cam_pattern: _camPattern,
+    ...(_camPattern ? { cam_pattern: _camPattern } : {}),
     ...(_md ? { music_dir: _md } : {}),
   });
   const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
@@ -636,7 +644,19 @@ function onClipDragStart(e) {
 // Insert at position: handles pool→timeline and timeline reorder
 function handleInsert(insertIdx) {
   if (!_drag) return;
-  if (_drag.from === 'pool') {
+  if (_drag.from === 'pool' && _drag.type === 'photo') {
+    const ph = _drag.photo;
+    const existingSlot = _timeline[insertIdx];
+    const dur = existingSlot ? existingSlot.duration : 3;
+    _timeline.splice(insertIdx, 0, {
+      type: 'photo',
+      scene: 'photo_' + ph.filename,
+      frame_url: ph.path,
+      duration: dur,
+      clip_score: 0,
+      energy: 0.5,
+    });
+  } else if (_drag.from === 'pool') {
     const frame = _frames.find(f => f.scene === _drag.scene);
     if (!frame) return;
     if (_isBanned(frame.scene)) delete _overrides[frame.scene];
@@ -1221,7 +1241,6 @@ function playResult(row, url, name, info) {
   document.querySelectorAll('.m-rf.playing').forEach(r => r.classList.remove('playing'));
   row.classList.add('playing');
   video.src = url.startsWith('/data/') ? url : '/api/file?path=' + encodeURIComponent(url);
-  video.play().catch(() => {});
   _resultsVideo = video;
   if (info_el) {
     const parts = [name];

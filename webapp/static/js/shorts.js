@@ -107,6 +107,7 @@ async function renderShorts() {
   }
 
   const count    = parseInt(document.getElementById('m-shorts-count')?.value) || 1;
+  const duration = parseInt(document.getElementById('m-shorts-duration')?.value) || 15;
   const text     = document.getElementById('m-shorts-text')?.checked ?? false;
   const multicam = document.getElementById('m-shorts-multicam')?.checked ?? false;
   const beat     = document.getElementById('m-shorts-beat')?.checked ?? false;
@@ -127,6 +128,7 @@ async function renderShorts() {
     shorts_multicam:  multicam,
     shorts_beat_sync: beat,
     shorts_best:      best,
+    shorts_duration:  duration,
     shorts_music_dirs: checkedDirs,
   };
 
