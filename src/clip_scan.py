@@ -45,7 +45,9 @@ import warnings
 from pathlib import Path
 
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+os.environ.setdefault("HUGGINGFACE_HUB_VERBOSITY", "error")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message="QuickGELU mismatch")
 
 import numpy as np
@@ -72,7 +74,8 @@ CAM_SOURCES  = _e("CAM_SOURCES", str(AUTO_DIR / "camera_sources.csv"))
 AUDIO_CAM    = _e("AUDIO_CAM", CAMERAS[0] if CAMERAS else "")
 
 BATCH_SIZE    = int(_e("CLIP_BATCH_SIZE",  _cfg.get("clip_scoring", "batch_size",  fallback="64")))
-NUM_WORKERS   = int(_e("CLIP_NUM_WORKERS", _cfg.get("clip_scoring", "num_workers", fallback=str(min(4, os.cpu_count() or 1)))))
+_default_workers = "0" if __import__("platform").system() == "Darwin" else str(min(4, os.cpu_count() or 1))
+NUM_WORKERS   = int(_e("CLIP_NUM_WORKERS", _cfg.get("clip_scoring", "num_workers", fallback=_default_workers)))
 INTERVAL_SEC  = float(_e("CLIP_SCAN_INTERVAL_SEC", "3"))
 CLIP_DUR_SEC  = float(_e("CLIP_SCAN_CLIP_DUR_SEC",  "8"))
 MIN_GAP_SEC   = float(_e("CLIP_SCAN_MIN_GAP_SEC",  "30"))
@@ -128,10 +131,12 @@ class _FrameDS(Dataset):
 
 def _score_frames(frame_paths: list[Path]) -> list[float]:
     """Score a list of frame paths. Returns float list same length."""
+    import platform as _plat
+    _nw = 0 if _plat.system() == "Darwin" else NUM_WORKERS
     ds = _FrameDS(frame_paths, preprocess)
-    loader = DataLoader(ds, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
+    loader = DataLoader(ds, batch_size=BATCH_SIZE, num_workers=_nw,
                         pin_memory=(DEVICE == "cuda"),
-                        prefetch_factor=2 if NUM_WORKERS > 0 else None)
+                        prefetch_factor=2 if _nw > 0 else None)
     scores_map: dict[str, float] = {}
     for imgs, paths, oks in loader:
         mask = oks.bool()
@@ -184,27 +189,11 @@ def _probe_duration(path: Path) -> float:
     except: return 0.0
 
 
-def _proxy_path(sf: Path) -> Path | None:
-    """Return proxy path if it exists."""
-    proxy_dir = AUTO_DIR / "proxy"
-    for cam in CAMERAS:
-        try:
-            rel = sf.relative_to(WORK_DIR / cam)
-            p = proxy_dir / cam / rel.with_suffix(".mp4")
-            if p.exists(): return p
-        except ValueError:
-            continue
-    p = proxy_dir / sf.with_suffix(".mp4").name
-    return p if p.exists() else None
-
-
 def _extract_frames_to_dir(src: Path, out_dir: Path, interval: float) -> list[Path]:
     """Extract 1 frame per interval sec → out_dir/000001.jpg, 000002.jpg, …"""
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Use proxy for faster decode if available
-    scan_src = _proxy_path(src) or src
     cmd = [
-        FFMPEG, "-y", "-i", str(scan_src),
+        FFMPEG, "-y", "-i", str(src),
         "-vf", f"fps=1/{interval},scale=trunc(iw/4)*2:trunc(ih/4)*2",
         "-q:v", "5", str(out_dir / "%06d.jpg"),
     ]
@@ -212,15 +201,22 @@ def _extract_frames_to_dir(src: Path, out_dir: Path, interval: float) -> list[Pa
     return sorted(out_dir.glob("*.jpg"))
 
 
+_X264_CRF    = str(_cfg.getint("video", "x264_crf",    fallback=15))
+_X264_PRESET = _cfg.get("video", "x264_preset", fallback="fast")
+
+
 def _extract_clip(src: Path, start: float, duration: float, out: Path):
-    """Extract clip from source with fast seek, re-encode to ensure clean boundaries."""
+    """Extract clip from source, re-encode to H264 for uniform codec in concat."""
     start = max(0.0, start)
     cmd = [
         FFMPEG, "-y",
         "-ss", f"{start:.3f}", "-i", str(src),
         "-t", f"{duration:.3f}",
-        "-c", "copy",
-        str(out),
+        "-c:v", "libx264", "-crf", _X264_CRF, "-preset", _X264_PRESET,
+        "-bf", "0",
+        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+        "-avoid_negative_ts", "make_zero",
+        str(out), "-loglevel", "error",
     ]
     subprocess.run(cmd, capture_output=True)
 
@@ -340,10 +336,12 @@ if all_clips:
     print(f"\nRe-scoring {len(peak_frame_paths)} peak frames for CSV...")
 
     # We need pos/neg separately — run batched inference again on saved frames
+    import platform as _plat
+    _nw = 0 if _plat.system() == "Darwin" else NUM_WORKERS
     ds = _FrameDS(peak_frame_paths, preprocess)
-    loader = DataLoader(ds, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
+    loader = DataLoader(ds, batch_size=BATCH_SIZE, num_workers=_nw,
                         pin_memory=(DEVICE == "cuda"),
-                        prefetch_factor=2 if NUM_WORKERS > 0 else None)
+                        prefetch_factor=2 if _nw > 0 else None)
     path_to_scores: dict[str, tuple] = {}
     path_to_emb:    dict[str, np.ndarray] = {}
 

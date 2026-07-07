@@ -7,9 +7,10 @@ async function openAppSettingsModal() {
   if (!modal) return;
   document.getElementById('m-app-settings-status').textContent = '';
 
-  const [settings, hw] = await Promise.all([
+  const [settings, hw, cfg] = await Promise.all([
     window._modernApi.get('/api/settings').catch(() => null),
     window._modernApi.get('/api/hw-info').catch(() => null),
+    window._modernApi.get('/api/config').catch(() => null),
   ]);
 
   _appHwInfo = hw;
@@ -25,6 +26,9 @@ async function openAppSettingsModal() {
 
   const concEl = document.getElementById('m-app-concurrent');
   if (concEl && settings) concEl.value = settings.max_concurrent_jobs ?? 1;
+
+  const dataRootEl = document.getElementById('m-app-data-root');
+  if (dataRootEl && cfg) dataRootEl.value = cfg.data_root ?? '';
 
   _initVolSlider('m-app-music-vol', 'm-app-music-vol-val', settings?.music_vol_pct ?? 100);
 
@@ -61,23 +65,44 @@ window.autoDetectSettings = autoDetectSettings;
 async function saveAppSettings() {
   const concurrent = parseInt(document.getElementById('m-app-concurrent')?.value) || 1;
   const musicVol   = parseInt(document.getElementById('m-app-music-vol')?.value)   ?? 100;
+  const dataRoot   = document.getElementById('m-app-data-root')?.value.trim() ?? '';
   const status     = document.getElementById('m-app-settings-status');
 
   const r = await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      max_concurrent_jobs: concurrent,
-      music_vol_pct:       musicVol,
-    }),
+    body: JSON.stringify({ max_concurrent_jobs: concurrent, music_vol_pct: musicVol }),
   });
-  if (!r.ok) {
-    if (status) status.textContent = '✗ Save failed';
-    return;
+  if (!r.ok) { if (status) status.textContent = '✗ Save failed'; return; }
+
+  if (dataRoot) {
+    await fetch('/api/config/data-root', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: dataRoot }),
+    });
+    if (status) status.textContent = 'Scanning projects…';
+    const scan = await fetch('/api/jobs/scan-root', { method: 'POST' }).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (scan?.imported > 0 && typeof refreshProjectList === 'function') refreshProjectList();
+    if (status) status.textContent = scan?.imported > 0 ? `✓ Saved — found ${scan.imported} project(s)` : '✓ Saved';
+  } else {
+    if (status) status.textContent = '✓ Saved';
   }
-  if (status) status.textContent = '✓ Saved';
   setTimeout(() => { if (status) status.textContent = ''; }, 2000);
 }
+
+async function _appPickDataRoot() {
+  if (typeof window.pickFolder === 'function') {
+    const path = await window.pickFolder();
+    if (path) {
+      const el = document.getElementById('m-app-data-root');
+      if (el) el.value = path;
+    }
+    return;
+  }
+  alert('Folder picker not available — type the path manually.');
+}
+window._appPickDataRoot = _appPickDataRoot;
 window.saveAppSettings = saveAppSettings;
 
 // ── Queue ─────────────────────────────────────────────────────────────────────

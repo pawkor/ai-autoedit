@@ -25,7 +25,8 @@ _UPLOAD_EXTS = _VIDEO_EXTS | {'.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'}
 
 @router.get("/api/file")
 async def serve_file(request: Request, path: str = Query(...), dl: int = Query(0)):
-    p = Path(path).resolve()
+    from webapp.routers.jobs import _expand_path
+    p = Path(_expand_path(path)).resolve()
     if not in_browse_root(p):
         raise HTTPException(403)
     if not p.exists():
@@ -161,7 +162,8 @@ async def delete_file_endpoint(path: str = Query(...)):
 
 @router.get("/api/browse")
 async def browse(path: str = Query(default=None)):
-    root = Path(path).resolve() if path else (DATA_ROOT or BROWSE_ROOT)
+    from webapp.routers.jobs import _expand_path
+    root = Path(_expand_path(path)).resolve() if path else (DATA_ROOT or BROWSE_ROOT)
     if not in_browse_root(root):
         raise HTTPException(403, "Outside allowed root")
     try:

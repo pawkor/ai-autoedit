@@ -45,10 +45,12 @@ SCRIPT_DIR = APP_DIR / "src"
 sys.path.insert(0, str(SCRIPT_DIR))
 import pipeline  # noqa: E402
 
-WEBAPP_DIR  = Path(__file__).resolve().parent
-STATIC_DIR  = WEBAPP_DIR / "static"
-JOBS_DIR    = WEBAPP_DIR / "jobs"
-BROWSE_ROOT = Path(os.environ.get("BROWSE_ROOT", str(Path.home())))
+WEBAPP_DIR    = Path(__file__).resolve().parent
+STATIC_DIR    = WEBAPP_DIR / "static"
+USER_DATA_DIR = Path(os.environ.get("AI_AUTOEDIT_DATA", str(WEBAPP_DIR)))
+USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+JOBS_DIR      = USER_DATA_DIR / "jobs"
+BROWSE_ROOT   = Path(os.environ.get("BROWSE_ROOT", "/"))
 
 JOBS_DIR.mkdir(exist_ok=True)
 
@@ -69,7 +71,7 @@ def in_browse_root(p: Path) -> bool:
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 ENABLE_AUTH  = os.environ.get("ENABLE_AUTH", "false").lower() in ("1", "true", "yes")
-USERS_FILE   = WEBAPP_DIR / "users.json"
+USERS_FILE   = USER_DATA_DIR / "users.json"
 _sessions: dict[str, str] = {}   # token → username
 
 
@@ -111,7 +113,7 @@ def _get_session_user(request) -> Optional[str]:
 
 def _load_wcfg() -> configparser.ConfigParser:
     cp = configparser.ConfigParser()
-    cp.read(str(WEBAPP_DIR / "config.ini"))
+    cp.read(str(USER_DATA_DIR / "config.ini"))
     return cp
 
 
@@ -125,7 +127,7 @@ def save_wcfg(data: dict):
         cp["webapp"] = {}
     for k, v in data.items():
         cp["webapp"][k] = str(v)
-    with open(WEBAPP_DIR / "config.ini", "w") as f:
+    with open(USER_DATA_DIR / "config.ini", "w") as f:
         cp.write(f)
 
 
@@ -274,9 +276,6 @@ shorts_semaphore: asyncio.Semaphore = asyncio.Semaphore(4)
 
 _threshold_searches: dict[str, dict] = {}
 _threshold_tasks:    dict[str, asyncio.Task] = {}
-
-_proxy_tasks:  dict[str, asyncio.Task] = {}
-_proxy_status: dict[str, dict] = {}
 
 _rebuild_tasks: dict[str, dict] = {}   # task_id → {progress, total, done, ok}
 

@@ -47,7 +47,11 @@ const api = {
     try {
       const r = await fetch(url, { method: 'POST',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      return r.ok ? r.json() : null;
+      if (r.ok) return r.json();
+      const txt = await r.text().catch(() => '');
+      let detail = '';
+      try { detail = JSON.parse(txt)?.detail || txt; } catch { detail = txt; }
+      return { _error: detail || `HTTP ${r.status}` };
     } catch { return null; }
   },
   async patch(url, body = {}) {
@@ -183,6 +187,7 @@ async function loadPool(id) {
   _buildCamFilters();
   _refreshSourceFilterButtons();
   renderPool();
+  if (_frames.length > 0 || _photos.length > 0) enableActions(true);
 }
 
 // Refresh selected photos (called after Photos modal save)
@@ -414,7 +419,9 @@ async function rebuildTimeline() {
 
   if (!data?.sequence) {
     const meta = document.getElementById('m-timeline-meta');
-    if (meta) meta.textContent = 'failed — check server log';
+    const msg = data?._error || 'check server log';
+    if (meta) meta.textContent = `failed: ${msg}`;
+    alert(`Sequence failed:\n${msg}`);
     return;
   }
   _timeline = data.sequence;
@@ -922,8 +929,11 @@ function clearLog() {
 window.clearLog = clearLog;
 
 // ── Preview (NVENC stream) ────────────────────────────────────────────────────
+let _previewActive = false;
+
 async function previewTimeline() {
   if (!_jobId) return;
+  _previewActive = true;
   const btn = document.getElementById('m-btn-preview');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Sequencing…'; }
 
@@ -936,29 +946,47 @@ async function previewTimeline() {
   }
   const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
   if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
-  if (!data?.sequence?.length) { alert('Preview failed — check server log.'); return; }
+  if (!data?.sequence?.length) { if (_previewActive) alert('Preview failed:\n' + (data?._error || 'check server log')); return; }
   if (!_timeline.length) _timeline = data.sequence;
   _timelineMusic = data.music || null;
   drawTimeline();
 
   const video = document.getElementById('m-preview-video');
   const modal = document.getElementById('m-preview-modal');
+  if (modal) modal.style.display = 'flex';
   if (video) {
-    video.src = `/api/jobs/${_jobId}/preview-stream?t=${Date.now()}`;
-    video.load();
-    if (modal) modal.style.display = 'flex';
-    const _onFirstData = () => {
-      video.removeEventListener('progress', _onFirstData);
-      setTimeout(() => video.play().catch(() => {}), 5000);
-    };
-    video.addEventListener('progress', _onFirstData);
-  } else if (modal) {
-    modal.style.display = 'flex';
+    video.src = '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Encoding…'; }
+    const hlsNative = video.canPlayType('application/vnd.apple.mpegurl') !== '';
+    if (hlsNative) {
+      // Safari / WKWebView — HLS native
+      const hls = await api.post(`/api/jobs/${_jobId}/preview-hls`);
+      if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+      if (hls?.url) {
+        video.src = hls.url;
+        video.addEventListener('canplay', () => video.play().catch(() => {}), {once: true});
+      } else {
+        if (_previewActive) alert('Preview stream failed:\n' + (hls?._error || 'check server log'));
+      }
+    } else {
+      // Chrome / Firefox — full MP4 (no native HLS)
+      video.src = `/api/jobs/${_jobId}/preview-stream`;
+      video.addEventListener('canplay', () => {
+        if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+        video.play().catch(() => {});
+      }, {once: true});
+      video.addEventListener('error', () => {
+        if (!_previewActive) return;
+        if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+        alert('Preview failed — check server log');
+      }, {once: true});
+    }
   }
 }
 window.previewTimeline = previewTimeline;
 
 function closePreviewModal() {
+  _previewActive = false;
   const modal = document.getElementById('m-preview-modal');
   if (modal) modal.style.display = 'none';
   const video = document.getElementById('m-preview-video');
@@ -1400,7 +1428,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (btn) btn.textContent = t === 'dark' ? '☽' : '☀';
   if (typeof applyI18nModern === 'function') applyI18nModern();
   const cfg = await api.get('/api/config');
-  if (cfg?.browse_root) _browseRoot = cfg.browse_root;
+  if (cfg?.data_root) _browseRoot = cfg.data_root;
+  else if (cfg?.browse_root && cfg.browse_root !== '/') _browseRoot = cfg.browse_root;
   const savedTile = parseInt(localStorage.getItem('tileSize')) || 120;
   setTileSize(savedTile);
   _connectStats();

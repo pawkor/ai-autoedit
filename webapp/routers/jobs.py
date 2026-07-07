@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from webapp.state import (
     APP_DIR,
+    USER_DATA_DIR,
     SCRIPT_DIR,
     JOBS_DIR,
     BROWSE_ROOT,
@@ -30,8 +31,6 @@ from webapp.state import (
     shorts_semaphore,
     _threshold_searches,
     _threshold_tasks,
-    _proxy_tasks,
-    _proxy_status,
     _LogList,
     Job,
     _run_job,
@@ -71,7 +70,8 @@ _JOB_CONFIG_MAP = {
     "no_music":     ("job", "no_music"),
     "music_genre":  ("job", "music_genre"),
     "music_artist": ("job", "music_artist"),
-    "music_dir":    ("music", "dir"),
+    "music_dir":      ("music", "dir"),
+    "selected_track": ("music", "selected_track"),
     "positive":     ("clip_prompts", "positive"),
     "negative":     ("clip_prompts", "negative"),
     "yt_title":     ("youtube", "title"),
@@ -86,6 +86,7 @@ _JOB_CONFIG_MAP = {
     "clip_scan_interval":  ("clip_scan", "interval_sec"),
     "clip_scan_clip_dur":  ("clip_scan", "clip_dur_sec"),
     "clip_scan_min_gap":   ("clip_scan", "min_gap_sec"),
+    "beats_auto":          ("music_driven", "beats_auto"),
     "beats_fast":          ("music_driven", "beats_fast"),
     "beats_mid":           ("music_driven", "beats_mid"),
     "beats_slow":          ("music_driven", "beats_slow"),
@@ -103,9 +104,54 @@ _JOB_CONFIG_MAP = {
 }
 
 
+_DATA_DIR_PATH_FIELDS = {"music_dir", "photos_dir", "shorts_music_dir", "shorts_music_dirs"}
+
+
+def _current_data_root() -> str:
+    """Return active data root for $DATA_DIR expansion — /data (Docker) or wcfg value (macOS)."""
+    _d = Path("/data")
+    try:
+        if _d.is_dir() and any(_d.iterdir()):
+            return "/data"
+    except PermissionError:
+        pass
+    stored = wcfg("data_root", "")
+    return stored if stored and Path(stored).is_dir() else ""
+
+
+def _expand_path(path: str) -> str:
+    """Expand $DATA_DIR or /data/ prefix in a single path string."""
+    if not path:
+        return path
+    root = _current_data_root()
+    if not root:
+        return path
+    if "$DATA_DIR" in path:
+        return path.replace("$DATA_DIR", root)
+    if root != "/data" and path.startswith("/data/"):
+        return root + path[5:]
+    return path
+
+
+def _expand_data_dir(result: dict) -> dict:
+    """Replace $DATA_DIR placeholder and auto-map legacy /data/ prefix to current data root."""
+    root = _current_data_root()
+    if not root:
+        return result
+    for field in _DATA_DIR_PATH_FIELDS:
+        v = result.get(field)
+        if not isinstance(v, str) or not v:
+            continue
+        if "$DATA_DIR" in v:
+            result[field] = v.replace("$DATA_DIR", root)
+        elif root != "/data" and v.startswith("/data/"):
+            result[field] = root + v[5:]  # /data/music → /Volumes/.../music
+    return result
+
+
 def read_job_config(work_dir: Path) -> dict:
     global_cp = configparser.ConfigParser()
-    global_cp.read(str(APP_DIR / "config.ini"))
+    global_cp.read([str(APP_DIR / "config.ini"), str(USER_DATA_DIR / "global_config.ini")])
 
     local_cp = configparser.ConfigParser()
     cfg_path = work_dir / "config.ini"
@@ -117,7 +163,9 @@ def read_job_config(work_dir: Path) -> dict:
         for cp in (local_cp, global_cp):
             try:
                 raw = cp.get(section, key)
-                if field in ("no_intro", "no_music", "clip_first"):
+                if not raw.strip():
+                    continue
+                if field in ("no_intro", "no_music", "clip_first", "beats_auto"):
                     result[field] = raw.strip().lower() in ("true", "1", "yes")
                 elif field == "sd_min_scene":
                     v = float(raw.rstrip('s').strip())
@@ -143,7 +191,13 @@ def read_job_config(work_dir: Path) -> dict:
             if offsets:
                 result["cam_offsets"] = offsets
             break
-    return result
+    for cp in (local_cp, global_cp):
+        if cp.has_section("cam_crop_16x9"):
+            crops = {k: v.strip() in ("1", "true", "yes") for k, v in cp.items("cam_crop_16x9") if v.strip()}
+            if crops:
+                result["cam_crop_16x9"] = crops
+            break
+    return _expand_data_dir(result)
 
 
 def _read_scenes_csv(csv_path: Path) -> "pd.DataFrame":
@@ -225,6 +279,11 @@ def save_job_config(work_dir: Path, params: dict):
     if cam_offsets is not None and isinstance(cam_offsets, dict):
         offsets_update = {"cam_offsets": {k: str(int(v)) for k, v in cam_offsets.items() if v is not None}}
         update_config_ini(work_dir / "config.ini", offsets_update)
+
+    cam_crop = params.get("cam_crop_16x9")
+    if cam_crop is not None and isinstance(cam_crop, dict):
+        crop_update = {"cam_crop_16x9": {k: ("1" if v else "0") for k, v in cam_crop.items()}}
+        update_config_ini(work_dir / "config.ini", crop_update)
 
 
 def save_prompts_to_config(cfg_path: Path, positive: str, negative: str):
@@ -595,6 +654,47 @@ async def import_job(data: dict):
     return {"id": job_id}
 
 
+@router.post("/api/jobs/scan-root")
+async def scan_root():
+    """Scan DATA_ROOT for processed projects (dirs with _autoframe/) and import them."""
+    import webapp.state as _state
+    root = _state.DATA_ROOT
+    if not root or not root.is_dir():
+        raise HTTPException(400, "data_root not configured or not a directory")
+
+    existing_dirs = {
+        Path(j.params.get("work_dir", "")).resolve()
+        for j in jobs.values()
+    }
+
+    imported = 0
+    for autoframe_dir in sorted(root.rglob("_autoframe")):
+        if not autoframe_dir.is_dir():
+            continue
+        work_dir = autoframe_dir.parent.resolve()
+        if not in_browse_root(work_dir):
+            continue
+        if work_dir in existing_dirs:
+            continue
+        params = read_job_config(work_dir)
+        params["work_dir"] = str(work_dir)
+        params.setdefault("work_subdir", "_autoframe")
+        job_id = str(uuid.uuid4())[:8]
+        job = Job(job_id, params)
+        job.status = "done"
+        job.log = _LogList(JOBS_DIR / f"{job_id}.log", ["[scanned from data root]"])
+        mp4s = list(work_dir.glob("*-v*.mp4")) + list(work_dir.glob("*_v*.mp4"))
+        if mp4s:
+            job.started_at = min(p.stat().st_mtime for p in mp4s)
+            job.ended_at   = max(p.stat().st_mtime for p in mp4s)
+        jobs[job_id] = job
+        job.save()
+        existing_dirs.add(work_dir)
+        imported += 1
+
+    return {"imported": imported}
+
+
 @router.post("/api/jobs")
 async def create_job(params: JobParams, analyze_only: bool = Query(default=True), draft: bool = Query(default=False)):
     work_dir = Path(params.work_dir).resolve()
@@ -758,46 +858,6 @@ async def cancel_threshold_search(search_id: str):
         task.cancel()
     _threshold_searches.pop(search_id, None)
     return {"ok": True}
-
-
-@router.post("/api/jobs/{job_id}/start-proxy")
-async def start_proxy(job_id: str):
-    import pipeline as _pipeline
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404)
-    existing = _proxy_tasks.get(job_id)
-    if existing and not existing.done():
-        return {"ok": True, "already_running": True}
-
-    _proxy_status[job_id] = {"done": False, "total": 0, "finished": 0, "current_file": ""}
-
-    async def _run():
-        try:
-            async for update in _pipeline.create_proxy(job.params, job.work_dir()):
-                _proxy_status[job_id] = update
-        except asyncio.CancelledError:
-            _proxy_status[job_id] = {"done": True, "cancelled": True,
-                                     "total": _proxy_status.get(job_id, {}).get("total", 0),
-                                     "finished": _proxy_status.get(job_id, {}).get("finished", 0)}
-        except Exception as e:
-            _proxy_status[job_id] = {"done": True, "error": str(e)}
-        finally:
-            _proxy_tasks.pop(job_id, None)
-
-    task = asyncio.create_task(_run())
-    _proxy_tasks[job_id] = task
-    return {"ok": True}
-
-
-@router.get("/api/jobs/{job_id}/proxy-status")
-async def get_proxy_status(job_id: str):
-    if job_id not in jobs:
-        raise HTTPException(404)
-    st = _proxy_status.get(job_id)
-    if st is None:
-        return {"done": False, "total": 0, "finished": 0, "current_file": "", "not_started": True}
-    return st
 
 
 @router.get("/api/jobs/{job_id}")
@@ -1005,6 +1065,10 @@ async def render_short(job_id: str, data: dict = Body(default={})):
 @router.post("/api/jobs/{job_id}/preview-sequence")
 async def preview_sequence(job_id: str):
     """Run music_driven --dry-run → return preview_sequence.json content."""
+    return await _preview_sequence_inner(job_id)
+
+
+async def _preview_sequence_inner(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
@@ -1025,11 +1089,11 @@ async def preview_sequence(job_id: str):
             import random as _rnd2
             selected = _rnd2.choice(music_files)
     if selected:
-        music_path_str = selected
+        music_path_str = _expand_path(selected)
     else:
         music_dir = job.params.get("music_dir") or ""
         if music_dir:
-            music_path_str = music_dir
+            music_path_str = _expand_path(music_dir)
 
     if not music_path_str:
         raise HTTPException(400, "No music track selected")
@@ -1078,7 +1142,9 @@ async def preview_sequence(job_id: str):
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
         if proc.returncode != 0:
-            raise HTTPException(500, f"Dry-run failed:\n{stdout.decode(errors='replace')[-2000:]}")
+            err = stdout.decode(errors='replace')[-2000:]
+            print(f"[preview-sequence] dry-run failed (rc={proc.returncode}):\n{err}", flush=True)
+            raise HTTPException(500, f"Dry-run failed:\n{err}")
     except asyncio.TimeoutError:
         raise HTTPException(504, "Dry-run timed out (>60s)")
 
@@ -1177,15 +1243,10 @@ async def preview_render(job_id: str):
     return {"url": str(output)}
 
 
-@router.get("/api/jobs/{job_id}/preview-stream")
-async def preview_stream(job_id: str):
-    """Stream preview via NVENC: reads preview_sequence.json → concat → fMP4 pipe."""
-    import os as _os
-    import tempfile as _tmp
-
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404)
+def _build_preview_inputs(job, max_clips: int = 0) -> dict:
+    """Build ffmpeg inputs/filter for preview endpoints. Returns dict with all needed parts."""
+    import platform as _plat
+    import random as _rndp
 
     auto_dir = job.auto_dir()
     seq_path = auto_dir / "preview_sequence.json"
@@ -1197,24 +1258,19 @@ async def preview_stream(job_id: str):
     if not sequence:
         raise HTTPException(400, "Empty sequence")
 
-    # Read ffmpeg binary from global config (jellyfin-ffmpeg has NVENC)
     _gcfg = configparser.ConfigParser()
     _gcfg.read(str(APP_DIR / "config.ini"))
     ffmpeg_bin = _gcfg.get("paths", "ffmpeg", fallback="ffmpeg")
 
-    music_path_str = (
-        job.params.get("selected_track") or
-        job.params.get("music_file") or
-        data.get("music", "")
+    music_path_str = _expand_path(
+        job.params.get("selected_track") or job.params.get("music_file") or data.get("music", "")
     )
+    if music_path_str and Path(music_path_str).is_dir():
+        _cands = [f for f in Path(music_path_str).iterdir()
+                  if f.suffix.lower() in (".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg")]
+        music_path_str = str(_rndp.choice(_cands)) if _cands else ""
     music_ss = float(sequence[0].get("music_start", 0.0))
 
-    # DJI clips = H264, VID/helmet clips = HEVC — ffconcat uses a single decoder and
-    # cannot switch codecs mid-stream → freeze at every cam switch.
-    # Fix: one -i per slot with -ss clip_ss -t duration (fast seek, ~1 extra frame at most
-    # because both camera types have keyframes every 0.3-0.5s), then filter_complex concat.
-    # Each input gets its own decoder instance so H264/HEVC mix is handled correctly.
-    # Photo slots get -loop 1 + -framerate so a still image becomes a fixed-duration video.
     valid_slots: list[tuple] = []
     for slot in sequence:
         dur = float(slot.get("duration", 0))
@@ -1230,7 +1286,11 @@ async def preview_stream(job_id: str):
             if cp and Path(cp).exists():
                 valid_slots.append(("video", slot, cp, ss, dur))
 
-    # Per-project color correction (built from [color_correct] sliders)
+    if not valid_slots:
+        raise HTTPException(400, "No valid clips found in sequence")
+    if max_clips > 0:
+        valid_slots = valid_slots[:max_clips]
+
     _local_cp = configparser.ConfigParser()
     _local_cp.read([str(APP_DIR / "config.ini"),
                     str(Path(job.params.get("work_dir", "")) / "config.ini")])
@@ -1239,79 +1299,267 @@ async def preview_stream(job_id: str):
     from color_correct import chain_from_cp as _cc_chain
     cc_chain = _cc_chain(_local_cp)
 
-    cf = _tmp.NamedTemporaryFile(suffix=".txt", mode="w", delete=False, prefix="pvs_dummy_")
-    cf.close()
-    concat_name = cf.name
+    has_music = bool(music_path_str and Path(music_path_str).exists())
+    _norm_pad  = ("fps=30,setpts=PTS-STARTPTS,"
+                  "scale=1280:720:force_original_aspect_ratio=decrease,"
+                  "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1")
+    _norm_crop = ("fps=30,setpts=PTS-STARTPTS,"
+                  "scale=1280:720:force_original_aspect_ratio=increase,"
+                  "crop=1280:720,setsar=1")
+    cam_crop = job.params.get("cam_crop_16x9") or {}
+
+    import re as _re_cam
+    _single_cam_crop = len(cam_crop) == 1 and next(iter(cam_crop.values()), False)
+    def _per_cam_filter(clip_path: str) -> str:
+        cam = _re_cam.sub(r'-(scene|clip)-\d+$', '', Path(clip_path).stem)
+        use_crop = cam_crop.get(cam) if cam in cam_crop else (_single_cam_crop if cam_crop else False)
+        base = _norm_crop if use_crop else _norm_pad
+        return (base + "," + cc_chain) if cc_chain else base
+
+    inputs: list[str] = []
+    filter_parts: list[str] = []
+    for i, item in enumerate(valid_slots):
+        if item[0] == "photo":
+            _, _s, path, dur = item
+            inputs += ["-loop", "1", "-framerate", "30", "-t", f"{dur:.4f}", "-i", path]
+            vf = (_norm_pad + "," + cc_chain) if cc_chain else _norm_pad
+        else:
+            _, _s, clip_path, ss, dur = item
+            inputs += ["-ss", f"{ss:.4f}", "-t", f"{dur:.4f}", "-i", clip_path]
+            vf = _per_cam_filter(clip_path)
+        filter_parts.append(f"[{i}:v]{vf}[v{i}]")
+    n = len(valid_slots)
+    filter_parts.append("".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[out]")
+
+    if _plat.system() == "Darwin":
+        vcodec = ["-c:v", "h264_videotoolbox", "-b:v", "3M", "-g", "30", "-pix_fmt", "yuv420p"]
+    else:
+        vcodec = ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30", "-pix_fmt", "yuv420p"]
+
+    return dict(ffmpeg_bin=ffmpeg_bin, inputs=inputs, filter_parts=filter_parts,
+                n=n, vcodec=vcodec, has_music=has_music,
+                music_path_str=music_path_str, music_ss=music_ss,
+                valid_slots=valid_slots)
+
+
+_hls_procs: dict[str, "asyncio.subprocess.Process"] = {}
+
+
+@router.post("/api/jobs/{job_id}/preview-hls")
+async def start_preview_hls(job_id: str):
+    """Start HLS render in background; return playlist URL after first segment appears."""
+    import shutil as _sh, traceback as _tb
+
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+
+    auto_dir = job.auto_dir()
+    hls_dir  = auto_dir / "preview_hls"
+    playlist = hls_dir / "playlist.m3u8"
 
     try:
-        has_music = bool(music_path_str and Path(music_path_str).exists())
+        # Kill stale HLS proc if still running
+        old = _hls_procs.pop(job_id, None)
+        if old and old.returncode is None:
+            old.kill()
 
-        # Common per-slot normalisation — every input ends up at 1280×720, 30 fps, sar 1.
-        # fps=30 placed FIRST regenerates timestamps cleanly — needed for -loop 1
-        # photo inputs whose PTS otherwise stays at 0 and corrupts the concat output.
-        _norm = ("fps=30,setpts=PTS-STARTPTS,"
-                 "scale=1280:720:force_original_aspect_ratio=decrease,"
-                 "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1")
-        _post = (_norm + "," + cc_chain) if cc_chain else _norm
+        _sh.rmtree(hls_dir, ignore_errors=True)
+        hls_dir.mkdir(parents=True, exist_ok=True)
 
-        inputs = []
-        filter_parts = []
-        for i, item in enumerate(valid_slots):
-            kind = item[0]
-            if kind == "photo":
-                _, _slot, path, dur = item
-                inputs += ["-loop", "1", "-framerate", "30", "-t", f"{dur:.4f}", "-i", path]
-            else:  # video
-                _, _slot, clip_path, ss, dur = item
-                inputs += ["-ss", f"{ss:.4f}", "-t", f"{dur:.4f}", "-i", clip_path]
-            filter_parts.append(f"[{i}:v]{_post}[v{i}]")
-        n = len(valid_slots)
-        concat_in = "".join(f"[v{i}]" for i in range(n))
-        filter_parts.append(f"{concat_in}concat=n={n}:v=1:a=0[out]")
+        # Limit preview clips to avoid OOM; filter_complex is smoother than concat demuxer
+        MAX_PREVIEW_CLIPS = 40
+        p = _build_preview_inputs(job, max_clips=MAX_PREVIEW_CLIPS)
 
-        cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
-        cmd += inputs
-        if has_music:
-            cmd += ["-ss", f"{music_ss:.4f}", "-i", music_path_str]
-        cmd += ["-filter_complex", ";".join(filter_parts), "-map", "[out]"]
-        cmd += ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30", "-pix_fmt", "yuv420p"]
-        if has_music:
-            cmd += ["-map", f"{n}:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
+        hls_vcodec = ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30", "-pix_fmt", "yuv420p"]
+        hls_tail = ["-avoid_negative_ts", "make_zero",
+                    "-f", "hls", "-hls_time", "3", "-hls_playlist_type", "event",
+                    "-hls_flags", "append_list",
+                    "-hls_segment_filename", str(hls_dir / "seg%03d.ts"),
+                    str(playlist)]
+
+        cmd = [p["ffmpeg_bin"], "-y", "-hide_banner", "-loglevel", "error"]
+        cmd += p["inputs"]
+        if p["has_music"]:
+            cmd += ["-ss", f"{p['music_ss']:.4f}", "-i", p["music_path_str"]]
+        cmd += ["-filter_complex", ";".join(p["filter_parts"]), "-map", "[out]"]
+        cmd += hls_vcodec
+        if p["has_music"]:
+            cmd += ["-map", f"{p['n']}:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
         else:
             cmd += ["-an"]
-        cmd += ["-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
+        cmd += hls_tail
 
-        async def _stream():
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:
-                while True:
-                    chunk = await proc.stdout.read(65536)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                if proc.returncode is None:
-                    proc.kill()
-                try:
-                    _os.unlink(concat_name)
-                except OSError:
-                    pass
+        print(f"[preview-hls] starting: {p['n']} clips, music={p['has_music']}", flush=True)
 
-        return StreamingResponse(
-            _stream(),
-            media_type="video/mp4",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
-    except Exception:
-        try:
-            _os.unlink(cf.name)
-        except OSError:
-            pass
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        _hls_procs[job_id] = proc
+
+        # Wait for 3 segments (~9s of content) before returning URL
+        for _ in range(60):
+            if playlist.exists() and len(list(hls_dir.glob("seg*.ts"))) >= 3:
+                break
+            if proc.returncode is not None:
+                err = (await proc.stderr.read()).decode(errors="replace")[-2000:]
+                print(f"[preview-hls] ffmpeg failed (rc={proc.returncode}):\n{err}", flush=True)
+                raise HTTPException(500, f"HLS encode failed:\n{err}")
+            await asyncio.sleep(0.5)
+
+        if not playlist.exists():
+            proc.kill()
+            raise HTTPException(500, "HLS init timed out (no playlist after 30s)")
+
+        return {"url": f"/api/jobs/{job_id}/preview-hls/playlist.m3u8"}
+
+    except HTTPException:
         raise
+    except Exception as _exc:
+        _tb.print_exc()
+        raise HTTPException(500, f"preview-hls error: {_exc}") from _exc
+
+
+@router.get("/api/jobs/{job_id}/preview-hls/{filename}")
+async def serve_preview_hls(job_id: str, filename: str):
+    """Serve HLS playlist and segments."""
+    import re as _re
+    from fastapi.responses import FileResponse as _FR2
+    if not _re.match(r'^(playlist\.m3u8|seg\d+\.ts)$', filename):
+        raise HTTPException(400)
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    p = job.auto_dir() / "preview_hls" / filename
+    if not p.exists():
+        raise HTTPException(404)
+    if filename.endswith(".m3u8"):
+        return _FR2(str(p), media_type="application/vnd.apple.mpegurl",
+                    headers={"Cache-Control": "no-store, no-cache"})
+    return _FR2(str(p), media_type="video/mp2t",
+                headers={"Cache-Control": "max-age=3600"})
+
+
+@router.get("/api/jobs/{job_id}/preview-stream")
+async def preview_stream(job_id: str):
+    """Stream preview: per-clip SW decode → raw YUV420p pipe → single NVENC encoder → fMP4.
+
+    Handles mixed H264/HEVC without codec lock: each clip decoded independently,
+    raw frames piped to one persistent NVENC encoder. Zero temp files, instant start.
+    """
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+
+    auto_dir = job.auto_dir()
+    seq_path = auto_dir / "preview_sequence.json"
+    if not seq_path.exists():
+        raise HTTPException(400, "Rebuild timeline first (preview_sequence.json missing)")
+
+    data = json.loads(seq_path.read_text())
+    sequence = data.get("sequence", [])
+    if not sequence:
+        raise HTTPException(400, "Empty sequence")
+
+    _gcfg = configparser.ConfigParser()
+    _gcfg.read(str(APP_DIR / "config.ini"))
+    ffmpeg_bin = _gcfg.get("paths", "ffmpeg", fallback="ffmpeg")
+    ffprobe_bin = str(Path(ffmpeg_bin).parent / "ffprobe")
+
+    music_path_str = (
+        job.params.get("selected_track") or
+        job.params.get("music_file") or
+        data.get("music", "")
+    )
+    music_ss = float(sequence[0].get("music_start", 0.0))
+    has_music = bool(music_path_str and Path(music_path_str).exists())
+
+    # Probe first valid clip for output dimensions after scale=1280:-2
+    W, H = 1280, 720
+    for slot in sequence:
+        cp = slot.get("clip_path", "")
+        if cp and Path(cp).exists():
+            _p = await asyncio.create_subprocess_exec(
+                ffprobe_bin, "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height", "-of", "csv=p=0", cp,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            _out, _ = await _p.communicate()
+            _parts = _out.decode().strip().split(",")
+            if len(_parts) == 2:
+                sw, sh = int(_parts[0]), int(_parts[1])
+                H = (sh * W // sw) & ~1
+            break
+
+    enc_cmd = [
+        ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{W}x{H}", "-r", "30",
+        "-i", "pipe:0",
+    ]
+    if has_music:
+        enc_cmd += ["-ss", f"{music_ss:.4f}", "-i", music_path_str]
+    enc_cmd += ["-map", "0:v:0", "-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30"]
+    if has_music:
+        enc_cmd += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
+    else:
+        enc_cmd += ["-an"]
+    enc_cmd += ["-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
+
+    async def _stream():
+        enc = await asyncio.create_subprocess_exec(
+            *enc_cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+        async def _feed():
+            try:
+                for slot in sequence:
+                    cp = slot.get("clip_path", "")
+                    if not cp or not Path(cp).exists():
+                        continue
+                    ss  = float(slot.get("clip_ss", 0))
+                    dur = float(slot.get("duration", 0))
+                    dec = await asyncio.create_subprocess_exec(
+                        ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                        "-ss", f"{ss:.4f}", "-i", cp, "-t", f"{dur:.4f}",
+                        "-vf", f"scale={W}:{H}:flags=fast_bilinear",
+                        "-pix_fmt", "yuv420p", "-r", "30",
+                        "-f", "rawvideo", "pipe:1",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    while True:
+                        chunk = await dec.stdout.read(131072)
+                        if not chunk:
+                            break
+                        enc.stdin.write(chunk)
+                        await enc.stdin.drain()
+                    await dec.wait()
+            finally:
+                enc.stdin.close()
+
+        feed_task = asyncio.create_task(_feed())
+        try:
+            while True:
+                chunk = await enc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            feed_task.cancel()
+            try:
+                await feed_task
+            except asyncio.CancelledError:
+                pass
+            if enc.returncode is None:
+                enc.kill()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="video/mp4",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/api/jobs/{job_id}/render-music-driven")
@@ -1578,7 +1826,7 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_duration", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "beats_auto", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_duration", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cam_crop_16x9", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v

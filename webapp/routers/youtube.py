@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse
 import re
 
 from webapp.state import (
-    WEBAPP_DIR,
+    USER_DATA_DIR,
     BROWSE_ROOT,
     in_browse_root,
     jobs,
@@ -25,8 +25,8 @@ router = APIRouter()
 
 # ── YouTube OAuth setup ───────────────────────────────────────────────────────
 
-YT_SECRETS = WEBAPP_DIR / "youtube_client_secrets.json"
-YT_TOKEN   = WEBAPP_DIR / "youtube_token.json"
+YT_SECRETS = USER_DATA_DIR / "youtube_client_secrets.json"
+YT_TOKEN   = USER_DATA_DIR / "youtube_token.json"
 YT_SCOPES  = ["https://www.googleapis.com/auth/youtube",
               "https://www.googleapis.com/auth/yt-analytics.readonly"]
 
@@ -239,7 +239,7 @@ async def yt_auth(origin: str = Query(...)):
         redirect_uri=f"{origin}/api/youtube/callback",
     )
     auth_url, state = flow.authorization_url(access_type="offline", prompt="consent")
-    (WEBAPP_DIR / "youtube_flow.json").write_text(json.dumps({
+    (USER_DATA_DIR / "youtube_flow.json").write_text(json.dumps({
         "state": state, "redirect_uri": f"{origin}/api/youtube/callback",
     }))
     return {"url": auth_url}
@@ -252,7 +252,7 @@ async def yt_callback(code: str = Query(None), error: str = Query(None)):
         return HTMLResponse(f"<h2>YouTube auth error: {_html.escape(error)}</h2><p>Close this tab and try again.</p><script>setTimeout(()=>window.close(),4000)</script>")
     if not code:
         return HTMLResponse("<h2>No authorization code received.</h2><p>Close this tab and try again.</p><script>setTimeout(()=>window.close(),4000)</script>")
-    flow_file = WEBAPP_DIR / "youtube_flow.json"
+    flow_file = USER_DATA_DIR / "youtube_flow.json"
     if not flow_file.exists():
         return HTMLResponse("<h2>OAuth flow not started — please try again.</h2>")
     flow_data = json.loads(flow_file.read_text())

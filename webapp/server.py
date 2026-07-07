@@ -29,6 +29,9 @@ from webapp.routers import jobs as jobs_router
 
 app = FastAPI(title="autoframe")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# /css/ and /js/ are served by nginx in Docker; without nginx (launcher mode) FastAPI must handle them.
+app.mount("/css", StaticFiles(directory=str(STATIC_DIR / "css")), name="css")
+app.mount("/js",  StaticFiles(directory=str(STATIC_DIR / "js")),  name="js")
 
 
 # ── Static routes ─────────────────────────────────────────────────────────────

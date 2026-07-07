@@ -40,8 +40,9 @@ async function openProjectModal() {
         || [job.params.cam_a, job.params.cam_b].filter(Boolean);
       const toLoad = cams.length ? cams : [];
       const offsets = job.params.cam_offsets || {};
+      const crops   = job.params.cam_crop_16x9 || {};
       for (const cam of toLoad)
-        _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs, offsets[cam] ?? 0);
+        _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs, offsets[cam] ?? 0, crops[cam] ?? false);
 
       // Load settings fields
       const _titleParts = (job.params.title ?? cfg?.title ?? '').split('\n');
@@ -49,6 +50,13 @@ async function openProjectModal() {
       set('m-settings-title',        _titleParts[0] ?? '');
       set('m-settings-intro-card',   _titleParts.slice(1).join('\n'));
       set('m-settings-cam-pattern',  cfg?.cam_pattern ?? '');
+      const _beatsAuto = cfg?.beats_auto !== false;
+      const _beatsAutoEl = document.getElementById('m-settings-beats-auto');
+      if (_beatsAutoEl) {
+        _beatsAutoEl.checked = _beatsAuto;
+        const _manual = document.getElementById('m-beats-manual');
+        if (_manual) _manual.style.display = _beatsAuto ? 'none' : 'flex';
+      }
       set('m-settings-beats-fast',   cfg?.beats_fast  ?? '');
       set('m-settings-beats-mid',    cfg?.beats_mid   ?? '');
       set('m-settings-beats-slow',   cfg?.beats_slow  ?? '');
@@ -76,6 +84,12 @@ window.closeSettingsModal = closeProjectModal;
 
 // ── Directory browser ─────────────────────────────────────────────────────────
 async function analyzeToggleBrowser() {
+  // On macOS desktop app, use native folder picker (handles TCC permissions).
+  if (typeof window.pickFolder === 'function') {
+    const path = await window.pickFolder();
+    if (path) await _selectBrowserPath(path);
+    return;
+  }
   if (_analyzeBrowserOpen) { _closeBrowser(); return; }
   _analyzeBrowserOpen = true;
   const dir = document.getElementById('m-analyze-dir').value.trim();
@@ -97,10 +111,14 @@ async function _loadBrowser(path) {
   if (entries) entries.innerHTML =
     '<div style="padding:4px;color:var(--muted)">Loading…</div>';
 
-  const url = path
-    ? `/api/browse?path=${encodeURIComponent(path)}`
-    : '/api/browse';
-  const data = await window._modernApi.get(url);
+  let data;
+  if (window.aeBrowse) {
+    try { data = JSON.parse(await window.aeBrowse(path || '')); } catch { data = null; }
+  }
+  if (!data) {
+    const url = path ? `/api/browse?path=${encodeURIComponent(path)}` : '/api/browse';
+    data = await window._modernApi.get(url);
+  }
   if (!data) {
     if (entries) entries.innerHTML =
       '<div style="padding:4px;color:var(--red)">Error loading directory</div>';
@@ -110,11 +128,12 @@ async function _loadBrowser(path) {
   const pathEl = document.getElementById('m-analyze-browser-path');
   if (pathEl) {
     pathEl.innerHTML = '';
-    if (data.parent) {
+    const parentPath = data.parent ?? (data.path && data.path !== '/' ? (data.path.replace(/\/[^/]+\/?$/, '') || '/') : null);
+    if (parentPath) {
       const up = document.createElement('button');
       up.className = 'm-btn m-btn-ghost m-btn-sm';
       up.textContent = '↑ ..';
-      up.onclick = () => _loadBrowser(data.parent);
+      up.onclick = () => _loadBrowser(parentPath);
       pathEl.appendChild(up);
     }
     const span = document.createElement('span');
@@ -189,6 +208,12 @@ async function _selectBrowserPath(path) {
 
 async function _fetchAnalyzeSubdirs(dir) {
   if (!dir) return [];
+  if (window.aeSubdirs) {
+    try {
+      const result = JSON.parse(await window.aeSubdirs(dir));
+      if (Array.isArray(result) && result.length > 0) return result;
+    } catch {}
+  }
   const data = await window._modernApi.get(
     `/api/subdirs?dir=${encodeURIComponent(dir)}`
   );
@@ -196,7 +221,7 @@ async function _fetchAnalyzeSubdirs(dir) {
 }
 
 // ── Camera rows ───────────────────────────────────────────────────────────────
-function _appendAnalyzeCamRow(container, selected, subdirs, offset = 0) {
+function _appendAnalyzeCamRow(container, selected, subdirs, offset = 0, crop = false) {
   const row = document.createElement('div');
   row.className = 'm-analyze-cam-row';
 
@@ -232,12 +257,23 @@ function _appendAnalyzeCamRow(container, selected, subdirs, offset = 0) {
   offSuffix.style.cssText = 'font-size:11px;color:var(--muted);flex-shrink:0';
   offSuffix.textContent = 's';
 
+  const cropCb = document.createElement('input');
+  cropCb.type = 'checkbox';
+  cropCb.className = 'm-cam-crop';
+  cropCb.checked = !!crop;
+  cropCb.title = 'Crop 4:3 → 16:9 (center crop, loses ~12% top/bottom)';
+  cropCb.style.cssText = 'margin-left:8px;cursor:pointer';
+
+  const cropLabel = document.createElement('span');
+  cropLabel.style.cssText = 'font-size:11px;color:var(--muted);flex-shrink:0';
+  cropLabel.textContent = '4:3→16:9';
+
   const rm = document.createElement('button');
   rm.className = 'm-btn m-btn-ghost m-btn-sm';
   rm.textContent = '−'; rm.title = 'Remove camera';
   rm.onclick = () => { row.remove(); _relabelAnalyzeCams(container); _onCamListChange(); };
 
-  row.append(label, sel, offLabel, offInput, offSuffix, rm);
+  row.append(label, sel, offLabel, offInput, offSuffix, cropCb, cropLabel, rm);
   container.appendChild(row);
 }
 
@@ -331,10 +367,12 @@ async function runAnalyze() {
     .querySelectorAll('.m-analyze-cam-row')];
   const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
   const camOffsets = {};
+  const camCrops   = {};
   camRows.forEach(r => {
     const name = r.querySelector('select')?.value.trim();
     const off  = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
-    if (name) camOffsets[name] = off;
+    const crop = r.querySelector('.m-cam-crop')?.checked ?? false;
+    if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; }
   });
   const clipFirst  = document.getElementById('m-analyze-clip-first').checked;
   const clipDur    = parseFloat(document.getElementById('m-analyze-clip-dur').value)     || 6;
@@ -353,6 +391,7 @@ async function runAnalyze() {
     work_dir:              dir,
     cameras:               cameras.length ? cameras : null,
     cam_offsets:           Object.keys(camOffsets).length ? camOffsets : null,
+    cam_crop_16x9:         Object.keys(camCrops).length  ? camCrops  : null,
     clip_first:            clipFirst,
     clip_scan_clip_dur:    clipDur,
     clip_scan_interval:    interval,
@@ -426,16 +465,18 @@ async function saveAnalyzeSettings() {
       ?.querySelectorAll('.m-analyze-cam-row') || [])];
     const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
     const camOffsets = {};
+    const camCrops  = {};
     camRows.forEach(r => {
       const name = r.querySelector('select')?.value.trim();
       const off  = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
-      if (name) camOffsets[name] = off;
+      const crop = r.querySelector('.m-cam-crop')?.checked ?? false;
+      if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; }
     });
     if (cameras.length) {
       saves.push(fetch(`/api/jobs/${jobId}/params`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cameras, cam_offsets: camOffsets }),
+        body: JSON.stringify({ cameras, cam_offsets: camOffsets, cam_crop_16x9: camCrops }),
       }).catch(() => {}));
     }
 
@@ -513,6 +554,7 @@ async function saveProjectModal() {
       blur_speedometer_cams: document.getElementById('m-settings-blur-speed')?.value.trim()   || null,
       blur_plates:           document.getElementById('m-settings-blur-plates')?.checked ?? false,
       cam_pattern:           document.getElementById('m-settings-cam-pattern')?.value.trim()  || '',
+      beats_auto:            document.getElementById('m-settings-beats-auto')?.checked ?? true,
       beats_fast:            parseInt(document.getElementById('m-settings-beats-fast')?.value)  || null,
       beats_mid:             parseInt(document.getElementById('m-settings-beats-mid')?.value)   || null,
       beats_slow:            parseInt(document.getElementById('m-settings-beats-slow')?.value)  || null,

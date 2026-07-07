@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ai-autoedit — Setting up</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #0d0d0d; color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
+
+.root { display: grid; grid-template-columns: 1fr 1fr; height: 100vh; }
+
+/* ── Left: slideshow ── */
+.slides { position: relative; background: #111; overflow: hidden; }
+.slide { position: absolute; inset: 0; opacity: 0; transition: opacity 1s ease; }
+.slide.active { opacity: 1; }
+.slide img { width: 100%; height: 100%; object-fit: contain; object-position: center top; }
+.slide-overlay { position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgba(0,0,0,.35) 0%, transparent 60%); }
+
+/* ── Right: progress ── */
+.panel {
+  display: flex; flex-direction: column; gap: 20px;
+  padding: 40px 40px 32px; background: #0d0d0d;
+  border-left: 1px solid #1a1a1a;
+  overflow: hidden;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-name { font-size: 18px; font-weight: 700; letter-spacing: -.5px; color: #fff; }
+.brand-tag { font-size: 11px; color: #555; background: #181818;
+  border: 1px solid #272727; border-radius: 4px; padding: 2px 7px; }
+
+.status { font-size: 26px; font-weight: 700; color: #fff; line-height: 1.25;
+  min-height: 64px; margin-top: auto; }
+
+.progress-wrap { background: #1a1a1a; border-radius: 999px; height: 6px; overflow: hidden; }
+.progress-bar {
+  height: 100%; width: 0%; border-radius: 999px;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  transition: width .5s cubic-bezier(.4,0,.2,1);
+}
+
+.step-label { font-size: 12px; color: #666; font-family: 'SF Mono', 'Menlo', monospace; }
+
+.log-box {
+  flex: 1; min-height: 0; background: #0a0a0a; border: 1px solid #1e1e1e; border-radius: 10px;
+  padding: 14px 16px; overflow-y: auto;
+  font-family: 'SF Mono', 'Menlo', 'Courier New', monospace; font-size: 11px;
+  line-height: 1.65; color: #555;
+}
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-line.step { color: #3b82f6; }
+.log-line.warn  { color: #f59e0b; }
+.log-line.ok    { color: #22c55e; }
+.log-line.err   { color: #ef4444; }
+
+.footer { font-size: 11px; color: #333; }
+</style>
+</head>
+<body>
+<div class="root">
+
+  <div class="slides" id="slides">
+    <div class="slide-overlay"></div>
+  </div>
+
+  <div class="panel">
+    <div class="brand">
+      <span class="brand-name">ai-autoedit</span>
+      <span class="brand-tag">first-run setup</span>
+    </div>
+
+    <div class="status" id="status">Setting up your environment…</div>
+
+    <div>
+      <div class="progress-wrap"><div class="progress-bar" id="bar"></div></div>
+      <div style="height:8px"></div>
+      <div class="step-label" id="step-label">Starting…</div>
+    </div>
+
+    <div class="log-box" id="log"></div>
+    <div class="footer">This runs once. Future launches open instantly.</div>
+  </div>
+
+</div>
+<script>
+fetch('/api/screenshots').then(r => r.json()).then(imgs => {
+  const el = document.getElementById('slides');
+  imgs.forEach((src, i) => {
+    const d = document.createElement('div');
+    d.className = 'slide' + (i === 0 ? ' active' : '');
+    const img = document.createElement('img');
+    img.src = src;
+    d.appendChild(img);
+    el.insertBefore(d, el.firstChild);
+  });
+  if (imgs.length > 1) {
+    let cur = 0;
+    setInterval(() => {
+      const ss = el.querySelectorAll('.slide');
+      ss[cur].classList.remove('active');
+      cur = (cur + 1) % ss.length;
+      ss[cur].classList.add('active');
+    }, 7000);
+  }
+}).catch(() => {});
+
+const STEPS = 5;
+let stepsDone = 0;
+const barEl  = document.getElementById('bar');
+const statEl = document.getElementById('status');
+const stepEl = document.getElementById('step-label');
+const logEl  = document.getElementById('log');
+
+function appendLog(msg, cls) {
+  const d = document.createElement('div');
+  d.className = 'log-line' + (cls ? ' ' + cls : '');
+  d.textContent = msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+const es = new EventSource('/events');
+es.onmessage = ev => {
+  let data;
+  try { data = JSON.parse(ev.data); } catch { return; }
+  if (data.type === 'log') {
+    const cls = data.step ? 'step' : data.warn ? 'warn' : data.err ? 'err' : '';
+    appendLog(data.msg, cls);
+    if (data.step) {
+      stepEl.textContent = data.msg;
+      stepsDone = Math.min(stepsDone + 1, STEPS);
+      barEl.style.width = Math.round(stepsDone / STEPS * 90) + '%';
+    }
+  } else if (data.type === 'done') {
+    barEl.style.width = '100%';
+    statEl.textContent = 'Ready!';
+    stepEl.textContent = 'Opening ai-autoedit…';
+  } else if (data.type === 'navigate') {
+    window.location.href = data.url;
+  }
+};
+es.onerror = () => {
+  setTimeout(() => { window.location.href = 'http://localhost:8000'; }, 2000);
+};
+</script>
+</body>
+</html>

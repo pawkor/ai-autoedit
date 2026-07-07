@@ -42,3 +42,7 @@ package-lock.json
 chats
 *.pt
 .aider*
+
+# Launcher build output
+dist/
+venv/

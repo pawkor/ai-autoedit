@@ -182,6 +182,14 @@ const TRANS = {
       'm.lbl_interval':'Interval:',
       'm.lbl_min_gap':'Min gap:',
       'm.lbl_score_all':'Score all cams',
+      'm.tip_clip_first':'Skip scene detection. Sample frames every N seconds, extract clips around CLIP score peaks. Faster for long recordings.',
+      'm.tip_clip_dur':'Duration of each extracted clip (seconds). Shorter = more precise cuts, longer = more context per clip.',
+      'm.tip_interval':'How often to sample a frame for CLIP scoring (seconds). Lower = more detail, slower analysis.',
+      'm.tip_min_gap':'Minimum time between extracted clips (seconds). Prevents overlapping clips from the same moment.',
+      'm.tip_score_all':'Run CLIP scoring on all cameras. Required for music-driven multicam. Auto-enabled with CLIP-first.',
+      'm.tip_cam_pattern':'Camera cut pattern. ab = strict alternation, aabaab = 2:1 rhythm, aabb = pairs. Empty = auto group-2.',
+      'm.tip_beats_shot':'Beats per shot per energy level. Rock/metal → lower (2/3/4). Pop/RnB → default (3/4/6). Ignored when auto is on.',
+      'm.tip_beats_auto':'Auto mode: shot duration driven by music energy. Quiet intro → long shots, loud chorus → fast cuts.',
       'm.lbl_description':'Description',
       'm.ph_description':'Describe the footage (location, activity, mood)…',
       'm.btn_gen_prompts':'✦ Generate prompts',
@@ -447,6 +455,14 @@ const TRANS = {
       'm.lbl_interval':'Interwał:',
       'm.lbl_min_gap':'Min odstęp:',
       'm.lbl_score_all':'Scoruj wszystkie kamery',
+      'm.tip_clip_first':'Pomija detekcję scen. Próbkuje klatki co N sekund, wycina klipy wokół peaków CLIP. Szybsze dla długich nagrań.',
+      'm.tip_clip_dur':'Czas trwania wycinanego klipu (sekundy). Krótszy = dokładniejsze cięcia, dłuższy = więcej kontekstu.',
+      'm.tip_interval':'Co ile sekund próbkować klatkę do oceny CLIP. Niższy = więcej detali, wolniejsza analiza.',
+      'm.tip_min_gap':'Minimalny odstęp między wycinanymi klipami (sekundy). Zapobiega nakładaniu się klipów z tego samego momentu.',
+      'm.tip_score_all':'Ocenia CLIP-em wszystkie kamery. Wymagane dla music-driven multicam. Włącza się automatycznie z CLIP-first.',
+      'm.tip_cam_pattern':'Wzorzec cięcia kamer. ab = ścisłe przeplatanie, aabaab = rytm 2:1, aabb = pary. Puste = auto grupa-2.',
+      'm.tip_beats_shot':'Beaty na ujęcie wg poziomu energii. Rock/metal → mniej (2/3/4). Pop/RnB → domyślne (3/4/6). Ignorowane w trybie auto.',
+      'm.tip_beats_auto':'Tryb auto: czas ujęcia dopasowany do energii muzyki. Ciche intro → długie ujęcia, głośny refren → szybkie cięcia.',
       'm.lbl_description':'Opis',
       'm.ph_description':'Opisz materiał (lokalizacja, aktywność, nastrój)…',
       'm.btn_gen_prompts':'✦ Generuj prompty',
@@ -553,6 +569,10 @@ function applyI18nModern() {
   document.querySelectorAll('[data-i18n-ph]').forEach(el => {
     const v = _tm(el.dataset.i18nPh);
     if (v !== el.dataset.i18nPh) el.placeholder = v;
+  });
+  document.querySelectorAll('[data-i18n-tip]').forEach(el => {
+    const v = _tm(el.dataset.i18nTip);
+    if (v !== el.dataset.i18nTip) el.dataset.tip = v;
   });
   const lb = document.getElementById('m-lang-btn');
   if (lb) lb.textContent = currentLang === 'en' ? 'PL' : 'EN';

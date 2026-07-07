@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Body
 
 from webapp.state import (
-    WEBAPP_DIR,
+    USER_DATA_DIR,
     BROWSE_ROOT,
     in_browse_root,
 )
@@ -27,8 +27,8 @@ _IG_USER_ID    = os.environ.get("IG_USER_ID", "")
 _IG_API_VER    = "v20.0"
 _IG_GRAPH      = f"https://graph.facebook.com/{_IG_API_VER}"
 
-_IG_TOKEN_FILE       = WEBAPP_DIR / "ig_token.json"
-_IG_LAST_UPLOAD_FILE = WEBAPP_DIR / "ig_last_upload.json"
+_IG_TOKEN_FILE       = USER_DATA_DIR / "ig_token.json"
+_IG_LAST_UPLOAD_FILE = USER_DATA_DIR / "ig_last_upload.json"
 
 _ig_uploads: dict[str, dict] = {}
 

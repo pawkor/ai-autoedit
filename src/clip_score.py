@@ -6,7 +6,9 @@ import warnings
 import configparser
 
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+os.environ.setdefault("HUGGINGFACE_HUB_VERBOSITY", "error")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
 
 import numpy as np
 import torch

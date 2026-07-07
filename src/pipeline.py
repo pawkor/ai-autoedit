@@ -268,9 +268,17 @@ async def apply_postprocess(
             final     = auto_dir / "highlight_final.mp4"
 
             yield "  intro/outro [1/3] intro card..."
+            _crop_map = dict(cp.items("cam_crop_16x9")) if cp.has_section("cam_crop_16x9") else {}
+            _use_intro_crop = bool(_crop_map) and all(
+                v.strip() in ("1", "true", "yes") for v in _crop_map.values()
+            )
+            _scale_intro = (
+                f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+                if _use_intro_crop else
+                f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+            )
             vf_intro = (
-                f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+                f"{_scale_intro},"
                 f"drawtext=text='{line1}':fontfile={font}:fontsize={fsize_title}:"
                 f"fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2-80:"
                 f"shadowcolor=black:shadowx=4:shadowy=4,"
@@ -486,18 +494,6 @@ def _back_cam_sources(cam_src_csv: Path, main_cam: str) -> set[str]:
                 if r.get("camera") != main_cam}
 
 
-def _proxy_path(sf: Path, work_dir: Path, auto_dir: Path, cameras: list) -> Path:
-    """Return proxy file path for source file sf."""
-    proxy_dir = auto_dir / "proxy"
-    for cam in cameras:
-        try:
-            rel = sf.relative_to(work_dir / cam)
-            return proxy_dir / cam / rel.with_suffix(".mp4")
-        except ValueError:
-            continue
-    return proxy_dir / sf.with_suffix(".mp4").name
-
-
 async def estimate(params: dict, work_dir: Path) -> dict:
     """
     Run select_scenes.py with DRY_RUN=1 and return
@@ -639,146 +635,6 @@ async def find_threshold_iter(params: dict, work_dir: Path, target_sec: float):
         yield {**best, "done": True}
     else:
         yield {"done": True, "error": "No result"}
-
-
-async def create_proxy(params: dict, work_dir: Path):
-    """
-    Async generator — creates 480p/20fps CFR proxy files for scene detection.
-    Yields progress dicts: {done, total, current_file, finished, error?}
-    Final dict: {done: True, finished, total}
-    """
-    cp          = _load_cfg(work_dir)
-    ffmpeg      = os.path.expanduser(_s(cp, "paths", "ffmpeg", "ffmpeg"))
-    work_subdir = _s(cp, "paths", "work_subdir", "_autoframe")
-    auto_dir    = work_dir / work_subdir
-
-    _raw_cams = params.get("cameras") or []
-    if isinstance(_raw_cams, str):
-        _raw_cams = [c.strip() for c in _raw_cams.split(",") if c.strip()]
-    if not _raw_cams:
-        _ca = str(params.get("cam_a") or "")
-        _cb = str(params.get("cam_b") or "")
-        _raw_cams = [c for c in [_ca, _cb] if c]
-    cameras = _raw_cams
-
-    def _is_source(f: Path) -> bool:
-        n = f.name.lower()
-        return n.endswith(".mp4") and not n.startswith("highlight") and not n.endswith(".lrv")
-
-    # Build per-camera file lists
-    if cameras:
-        cam_files = {cam: sorted(f for f in (work_dir / cam).iterdir() if _is_source(f))
-                     for cam in cameras}
-    else:
-        cam_files = {"": sorted(f for f in work_dir.iterdir() if _is_source(f))}
-
-    source_files = [f for fs in cam_files.values() for f in fs]
-    file_cam     = {f: cam for cam, fs in cam_files.items() for f in fs}
-
-    total        = len(source_files)
-    finished     = 0
-    failed_files: list[str] = []
-    cam_finished = {cam: 0 for cam in cam_files}
-    cam_totals   = {cam: len(fs) for cam, fs in cam_files.items()}
-
-    def _cams_st():
-        return {cam: {"total": cam_totals[cam], "finished": cam_finished[cam]}
-                for cam in cam_files}
-
-    # Detect NVENC availability — prefer GPU for proxy encoding
-    _use_nvenc = False
-    _nvenc_check = await asyncio.create_subprocess_exec(
-        ffmpeg, "-hide_banner", "-encoders",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-    )
-    _enc_out, _ = await _nvenc_check.communicate()
-    if b"h264_nvenc" in _enc_out:
-        _use_nvenc = True
-
-    # Limit concurrent encodes: GPU=4 (NVENC sessions), CPU=half cores (cap 8)
-    _max_parallel = min(12, max(1, (os.cpu_count() or 2) // 2))
-    _enc_sem = asyncio.Semaphore(_max_parallel)
-
-    queue: asyncio.Queue = asyncio.Queue()
-    current_files: dict = {cam: "" for cam in cam_files}
-
-    async def _encode_one(cam: str, sf: Path):
-        nonlocal finished
-        proxy     = _proxy_path(sf, work_dir, auto_dir, cameras)
-        proxy_tmp = proxy.with_suffix(".mp4.tmp")
-
-        if proxy.exists():
-            finished += 1
-            cam_finished[cam] += 1
-            await queue.put({"cam": cam, "file": sf.name})
-            return
-
-        if proxy_tmp.exists():
-            await queue.put({"cam": cam, "file": sf.name, "skipped": True})
-            return
-
-        proxy.parent.mkdir(parents=True, exist_ok=True)
-        await queue.put({"cam": cam, "file": sf.name})
-
-        async with _enc_sem:
-            # Proxy is 480p — CPU libx264 ultrafast is faster than NVENC here
-            # (NVENC bottlenecked by CPU decode/scale, PCI-E transfer overhead not worth it)
-            enc_args = [
-                "-y", "-i", str(sf),
-                "-vf", "scale=-2:480,fps=20",
-                "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
-                "-fps_mode", "cfr", "-an", "-f", "mp4",
-            ]
-            proc = await asyncio.create_subprocess_exec(
-                ffmpeg, *enc_args, str(proxy_tmp),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr_bytes = await proc.communicate()
-
-        if proc.returncode == 0 and proxy_tmp.exists():
-            proxy_tmp.rename(proxy)
-            finished += 1
-            cam_finished[cam] += 1
-        else:
-            proxy_tmp.unlink(missing_ok=True)
-            err_msg = stderr_bytes.decode("utf-8", errors="replace").strip().splitlines()
-            err_tail = " | ".join(err_msg[-3:]) if err_msg else f"rc={proc.returncode}"
-            failed_files.append(sf.name)
-            await queue.put({"cam": cam, "file": sf.name,
-                             "error": f"ffmpeg failed for {sf.name}: {err_tail}"})
-
-    async def _run_cam(cam: str, files: list):
-        tasks = [asyncio.create_task(_encode_one(cam, sf)) for sf in files]
-        await asyncio.gather(*tasks)
-        await queue.put({"cam": cam, "done": True})
-
-    cam_tasks = [asyncio.create_task(_run_cam(cam, files))
-                 for cam, files in cam_files.items()]
-    n_done = 0
-    try:
-        while n_done < len(cam_tasks):
-            msg = await queue.get()
-            if msg.get("done"):
-                n_done += 1
-                continue
-            current_files[msg["cam"]] = msg.get("file", "")
-            upd: dict = {
-                "done": False, "total": total, "finished": finished,
-                "current_cam": msg["cam"], "current_file": msg.get("file", ""),
-                "current_files": dict(current_files), "cams": _cams_st(),
-            }
-            if "error" in msg:
-                upd["error"] = msg["error"]
-            yield upd
-    except (asyncio.CancelledError, GeneratorExit):
-        for t in cam_tasks:
-            t.cancel()
-        await asyncio.gather(*cam_tasks, return_exceptions=True)
-        raise
-
-    yield {"done": True, "total": total, "finished": finished, "cams": _cams_st(),
-           **({"failed_files": failed_files} if failed_files else {})}
 
 
 async def run(params: dict, work_dir: Path,
@@ -1055,8 +911,7 @@ async def run(params: dict, work_dir: Path,
         _cal_threshold = int(float(sd_threshold))
         import tempfile as _tempfile, csv as _csv_cal
         for _attempt in range(3):
-            _proxy_s   = _proxy_path(_sample, work_dir, auto_dir, cameras)
-            _detect_s  = str(_proxy_s) if _proxy_s.exists() else str(_sample)
+            _detect_s  = str(_sample)
             with _tempfile.TemporaryDirectory() as _tmpdir:
                 _cp = await asyncio.create_subprocess_exec(
                     "scenedetect", "-i", _detect_s,
@@ -1100,18 +955,8 @@ async def run(params: dict, work_dir: Path,
 
         async def _detect_one(sf):
             async with sem:
-                proxy      = _proxy_path(sf, work_dir, auto_dir, cameras)
-                proxy_tmp  = proxy.with_suffix(".mp4.tmp")
-                # Wait for in-progress proxy (poll every 2s, up to 30 min)
-                for _ in range(900):
-                    if proxy.exists():
-                        break
-                    if not proxy_tmp.exists():
-                        break  # proxy not started — use original
-                    await asyncio.sleep(2)
-                detect_src = str(proxy) if proxy.exists() else str(sf)
                 proc = await asyncio.create_subprocess_exec(
-                    "scenedetect", "-i", detect_src,
+                    "scenedetect", "-i", str(sf),
                     "detect-content", "--threshold", sd_threshold,
                     "--min-scene-len", sd_min_scene,
                     "list-scenes", "-o", str(auto_dir / "csv"),
@@ -1119,13 +964,6 @@ async def run(params: dict, work_dir: Path,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 await proc.wait()
-            # scenedetect names CSV after the input stem; if we used proxy,
-            # rename to the original stem so the rest of pipeline finds it.
-            if proxy.exists():
-                proxy_csv = auto_dir / "csv" / f"{proxy.stem}-Scenes.csv"
-                orig_csv  = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
-                if proxy_csv.exists() and not orig_csv.exists():
-                    proxy_csv.rename(orig_csv)
             csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
             count = max(0, sum(1 for _ in open(csv)) - 2) if csv.exists() else 0
             status = "✓" if csv.exists() else "✗"

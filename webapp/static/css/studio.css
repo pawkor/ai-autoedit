@@ -380,3 +380,28 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-rf-yt:disabled, .m-rf-ig:disabled { opacity: .4; cursor: not-allowed; }
 .m-rf-yt.linked { color: var(--green-hi); border-color: var(--green-hi); background: transparent; }
 .m-rf-ig.linked { color: var(--purple); border-color: var(--purple); background: transparent; }
+
+/* ── Tooltips (data-tip) ───────────────────────────────────────────────────── */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: var(--bg0, #1a1a1a);
+  color: var(--text, #e8e8e8);
+  border: 1px solid var(--border, #333);
+  border-radius: 5px;
+  padding: 5px 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: normal;
+  width: 220px;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s ease 1s;
+  z-index: 9999;
+}
+[data-tip]:hover::after { opacity: 1; }

@@ -320,32 +320,37 @@
         <div class="m-modal-section-hd" style="margin-top:14px"
              data-i18n="m.sec_analyze">Analyze</div>
         <div class="m-analyze-opts" style="margin-top:4px">
-          <label class="m-analyze-check">
+          <label class="m-analyze-check"
+                 data-i18n-tip="m.tip_clip_first" data-tip="Skip scene detection. Sample frames every N seconds, extract clips around CLIP score peaks. Faster for long recordings.">
             <input type="checkbox" id="m-analyze-clip-first" checked>
             <span data-i18n="m.lbl_clip_first">CLIP-first</span>
           </label>
-          <label class="m-analyze-check" style="margin-left:8px">
+          <label class="m-analyze-check" style="margin-left:8px"
+                 data-i18n-tip="m.tip_clip_dur" data-tip="Duration of each extracted clip (seconds). Shorter = more precise cuts, longer = more context per clip.">
             <span data-i18n="m.lbl_clip_dur">Clip dur:</span>
             <input id="m-analyze-clip-dur" class="m-input" type="number"
                    min="2" max="30" step="0.5" value="6"
                    style="width:56px;margin-left:4px">
             <span>s</span>
           </label>
-          <label class="m-analyze-check" style="margin-left:8px">
+          <label class="m-analyze-check" style="margin-left:8px"
+                 data-i18n-tip="m.tip_interval" data-tip="How often to sample a frame for CLIP scoring (seconds). Lower = more detail, slower analysis.">
             <span data-i18n="m.lbl_interval">Interval:</span>
             <input id="m-analyze-interval" class="m-input" type="number"
                    min="1" max="30" step="1" value="3"
                    style="width:56px;margin-left:4px">
             <span>s</span>
           </label>
-          <label class="m-analyze-check" style="margin-left:8px">
+          <label class="m-analyze-check" style="margin-left:8px"
+                 data-i18n-tip="m.tip_min_gap" data-tip="Minimum time between extracted clips (seconds). Prevents overlapping clips from the same moment.">
             <span data-i18n="m.lbl_min_gap">Min gap:</span>
             <input id="m-analyze-min-gap" class="m-input" type="number"
                    min="5" max="300" step="5" value="15"
                    style="width:56px;margin-left:4px">
             <span>s</span>
           </label>
-          <label class="m-analyze-check" style="margin-left:8px">
+          <label class="m-analyze-check" style="margin-left:8px"
+                 data-i18n-tip="m.tip_score_all" data-tip="Run CLIP scoring on all cameras. Required for music-driven multicam. Auto-enabled with CLIP-first.">
             <input type="checkbox" id="m-analyze-score-all">
             <span data-i18n="m.lbl_score_all">Score all cams</span>
           </label>
@@ -405,8 +410,8 @@
         <div class="m-settings-row">
           <span class="m-settings-label"
                 data-i18n="m.lbl_cam_pattern"
-                data-i18n-title="m.lbl_cam_pattern"
-                title="Camera cut pattern. Letters map to cameras in order (a=first, b=second…). Repeats cyclically. ab = strict alternation, aabaab = two-one rhythm, aabb = pairs. Empty = auto group-2.">Cam pattern</span>
+                data-i18n-tip="m.tip_cam_pattern"
+                data-tip="Camera cut pattern. ab = alternation, aabaab = 2:1 rhythm, aabb = pairs. Empty = auto.">Cam pattern</span>
           <input id="m-settings-cam-pattern" class="m-input"
                  type="text" placeholder="ab, aabaab, aabb… (empty = auto)"
                  style="width:180px;font-family:monospace">
@@ -414,19 +419,29 @@
         <div class="m-settings-row" style="margin-top:4px">
           <span class="m-settings-label"
                 data-i18n="m.lbl_beats_shot"
-                title="Beats per shot for each energy level. Rock/metal → lower (2/3/4). Pop/RnB → default (3/4/6).">Beats/shot</span>
-          <span class="m-section-meta" style="margin-right:4px"
-                data-i18n="m.lbl_fast">fast</span>
-          <input id="m-settings-beats-fast" class="m-input" type="number"
-                 min="1" max="16" step="1" style="width:46px" placeholder="3">
-          <span class="m-section-meta" style="margin:0 4px"
-                data-i18n="m.lbl_mid">mid</span>
-          <input id="m-settings-beats-mid" class="m-input" type="number"
-                 min="1" max="16" step="1" style="width:46px" placeholder="4">
-          <span class="m-section-meta" style="margin:0 4px"
-                data-i18n="m.lbl_slow">slow</span>
-          <input id="m-settings-beats-slow" class="m-input" type="number"
-                 min="1" max="16" step="1" style="width:46px" placeholder="6">
+                data-i18n-tip="m.tip_beats_shot"
+                data-tip="Beats per shot per energy level. Rock/metal → lower (2/3/4). Pop/RnB → default (3/4/6).">Beats/shot</span>
+          <label style="display:flex;align-items:center;gap:4px;margin-right:8px;cursor:pointer"
+                 data-i18n-tip="m.tip_beats_auto"
+                 data-tip="Auto: clip duration adapts to music energy — quiet intro → long shots, loud chorus → short cuts.">
+            <input id="m-settings-beats-auto" type="checkbox" checked
+                   onchange="document.getElementById('m-beats-manual').style.display=this.checked?'none':'flex'">
+            <span class="m-section-meta">auto</span>
+          </label>
+          <span id="m-beats-manual" style="display:none;align-items:center">
+            <span class="m-section-meta" style="margin-right:4px"
+                  data-i18n="m.lbl_fast">fast</span>
+            <input id="m-settings-beats-fast" class="m-input" type="number"
+                   min="1" max="16" step="1" style="width:46px" placeholder="3">
+            <span class="m-section-meta" style="margin:0 4px"
+                  data-i18n="m.lbl_mid">mid</span>
+            <input id="m-settings-beats-mid" class="m-input" type="number"
+                   min="1" max="16" step="1" style="width:46px" placeholder="4">
+            <span class="m-section-meta" style="margin:0 4px"
+                  data-i18n="m.lbl_slow">slow</span>
+            <input id="m-settings-beats-slow" class="m-input" type="number"
+                   min="1" max="16" step="1" style="width:46px" placeholder="6">
+          </span>
         </div>
 
         <!-- Shorts -->
@@ -738,7 +753,7 @@
             style="position:absolute;top:12px;right:14px;z-index:1;background:rgba(0,0,0,.6);
                    border:1px solid rgba(255,255,255,.2);color:#fff;font-size:18px;line-height:1;
                    padding:4px 10px;border-radius:5px;cursor:pointer">✕</button>
-    <video id="m-preview-video" controls
+    <video id="m-preview-video" controls playsinline webkit-playsinline
            style="width:100%;height:100%;object-fit:contain;display:block"></video>
   </div>
 
@@ -779,6 +794,20 @@
                  min="0" max="100" step="1" style="flex:1">
           <span id="m-app-music-vol-val" class="m-section-meta" style="min-width:2.5ch;text-align:right">70</span>
           <span class="m-section-meta" style="margin-left:2px">%</span>
+        </div>
+
+        <!-- Data root -->
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+          <div class="m-settings-row">
+            <span class="m-settings-label">Data root</span>
+            <input id="m-app-data-root" class="m-input m-settings-input"
+                   placeholder="/Volumes/pawkor/moto  or  /data">
+            <button class="m-btn m-btn-ghost m-btn-sm" style="margin-left:4px;flex-shrink:0"
+                    onclick="_appPickDataRoot()" title="Browse">📁</button>
+          </div>
+          <div class="m-section-meta" style="margin-top:2px">
+            Use <code>$DATA_DIR</code> in config.ini for portable paths, e.g. <code>music_dir = $DATA_DIR/music</code>
+          </div>
         </div>
 
         <!-- YouTube -->

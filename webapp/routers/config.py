@@ -151,9 +151,9 @@ async def save_job_prompts(job_id: str, data: dict):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    description = data.get("description", "").strip()
-    positive    = data.get("positive", "").strip()
-    negative    = data.get("negative", "").strip()
+    description = (data.get("description") or "").strip()
+    positive    = (data.get("positive")    or "").strip()
+    negative    = (data.get("negative")    or "").strip()
     if description:
         job.params["description"] = description
         job.save()

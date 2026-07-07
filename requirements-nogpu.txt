@@ -1,0 +1,34 @@
+# Requirements for macOS / Windows (no CUDA).
+# torch + torchvision are installed separately by the launcher (CPU build).
+# This file is used by: launcher/main.go setup step 4
+
+# Web app
+fastapi==0.135.3
+uvicorn[standard]==0.34.0
+aiofiles==25.1.0
+python-multipart==0.0.27
+websockets==14.2
+
+# AI pipeline (torch installed separately via launcher)
+open_clip_torch==3.3.0
+opencv-python-headless==4.13.0.92
+scenedetect==0.6.7.1
+pandas==3.0.1
+librosa==0.11.0
+soundfile==0.13.1
+numpy==2.4.4
+tqdm==4.67.3
+Pillow==12.2.0
+ffmpeg-python==0.2.0
+psutil==7.2.2
+anthropic==0.89.0
+google-api-python-client==2.131.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+boto3==1.35.99
+yt-dlp==2026.3.17
+prometheus_client==0.21.1
+
+# Privacy & OCR
+ultralytics>=8.3.0
+easyocr>=1.7.1

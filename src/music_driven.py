@@ -73,8 +73,7 @@ def analyze_music(music_path: Path) -> dict:
     tempo = float(np.squeeze(tempo))  # librosa ≥0.10 returns 0-dim array
     beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=hop).tolist()
 
-    # PLP (Predominant Local Pulse) — rhythmic intensity, not just loudness.
-    # Captures verse/chorus/bridge boundaries more accurately than RMS.
+    # PLP (Predominant Local Pulse) — rhythmic intensity per beat.
     pulse = librosa.beat.plp(onset_envelope=onset_env, sr=sr, hop_length=hop)
     pulse_times = librosa.times_like(pulse, sr=sr, hop_length=hop)
 
@@ -85,16 +84,135 @@ def analyze_music(music_path: Path) -> dict:
     else:
         beat_energy = np.ones(len(beat_times)) * 0.5
 
-    print(f" {duration:.1f}s  {tempo:.0f} BPM  {len(beat_times)} beats")
+    # Onset strength on percussive component only (HPSS).
+    # Full-mix onset_strength misses sparse kick/bass hits when guitar/piano fill the spectrum.
+    # HPSS isolates transient attacks → "dum dum" bass hits dominate instead of drowning.
+    try:
+        _, y_perc = librosa.effects.hpss(y, margin=4.0)
+        onset_env_perc = librosa.onset.onset_strength(y=y_perc, sr=sr, hop_length=hop)
+    except Exception:
+        onset_env_perc = onset_env  # fallback to full-mix onset
+    onset_times = librosa.times_like(onset_env_perc, sr=sr, hop_length=hop)
+    onset_at_beats = np.interp(beat_times, onset_times, onset_env_perc)
+    o_min, o_max = onset_at_beats.min(), onset_at_beats.max()
+    if o_max > o_min:
+        onset_at_beats = (onset_at_beats - o_min) / (o_max - o_min)
+    else:
+        onset_at_beats = np.ones(len(beat_times)) * 0.5
+
+    # Section-level energy: RMS smoothed over ~4s windows.
+    # This captures intro/verse/chorus/outro dynamics rather than per-beat pulse.
+    # Used in auto mode to vary shot duration by musical section, not individual beats.
+    _sec_hop = int(sr * 0.1)   # 100ms hop for fine resolution
+    _sec_win = int(sr * 4.0)   # 4-second window — section granularity
+    rms = librosa.feature.rms(y=y, frame_length=_sec_win, hop_length=_sec_hop)[0]
+    rms_times = librosa.times_like(rms, sr=sr, hop_length=_sec_hop)
+    # Additional smoothing: running average of 2s to remove transients
+    _smooth_win = max(1, int(2.0 / 0.1))
+    try:
+        from scipy.ndimage import uniform_filter1d as _uf1d
+        rms_smooth = _uf1d(rms.astype(float), size=_smooth_win)
+    except ImportError:
+        rms_smooth = rms.astype(float)
+    section_energy = np.interp(beat_times, rms_times, rms_smooth)
+    s_min, s_max = section_energy.min(), section_energy.max()
+    if s_max > s_min:
+        section_energy = (section_energy - s_min) / (s_max - s_min)
+    else:
+        section_energy = np.ones(len(beat_times)) * 0.5
+
+    # Normalize raw percussive envelope for peak detection (stored for build_schedule_peaks)
+    oep_max = onset_env_perc.max()
+    onset_env_perc_norm = (onset_env_perc / oep_max).tolist() if oep_max > 0 else onset_env_perc.tolist()
+
+    print(f" {duration:.1f}s  {tempo:.0f} BPM  {len(beat_times)} beats  "
+          f"section_e=[{section_energy.min():.2f}..{section_energy.max():.2f}]")
     return {
-        "duration": duration,
-        "tempo":      tempo,
-        "beat_times": beat_times,
-        "beat_energy": beat_energy.tolist(),
+        "duration":         duration,
+        "tempo":            tempo,
+        "beat_times":       beat_times,
+        "beat_energy":      beat_energy.tolist(),
+        "onset_energy":     onset_at_beats.tolist(),
+        "section_energy":   section_energy.tolist(),
+        "onset_env_perc":   onset_env_perc_norm,  # raw percussive envelope for peak-based cutting
+        "sr":               sr,
+        "hop":              hop,
     }
 
 
 # ── Cut schedule ──────────────────────────────────────────────────────────────
+
+def _build_schedule_peaks(
+    onset_env_perc: list[float],
+    beat_times: list[float],
+    section_energy: list[float] | None,
+    min_shot_sec: float,
+    max_shot_sec: float,
+    sr: int,
+    hop: int,
+) -> list[dict]:
+    """
+    Peak-based auto schedule: cut points driven by percussive onset peaks
+    (HPSS-isolated), not a beat grid. Catches sparse "dum dum" events at exact
+    timestamps regardless of beat alignment.
+    """
+    import librosa
+
+    oep = np.array(onset_env_perc, dtype=float)
+    # onset_detect with backtrack=True: snaps detected onset BACK to the local energy
+    # minimum just before the peak — i.e. the exact moment the transient starts.
+    # This is what the ear hears as "the beat", not the peak maximum.
+    min_wait = max(1, int(min_shot_sec * sr / hop))
+    onset_frames = librosa.onset.onset_detect(
+        onset_envelope=oep,
+        sr=sr,
+        hop_length=hop,
+        backtrack=True,
+        delta=0.06,        # sensitivity: 6% above baseline to qualify as onset
+        wait=min_wait,
+        units="frames",
+    )
+    peak_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=hop)
+    # Fake props for energy (onset strength at each detected frame)
+    props = {"peak_heights": oep[onset_frames].tolist() if len(onset_frames) else []}
+
+    track_dur = beat_times[-1] + (beat_times[-1] - beat_times[-2]) if len(beat_times) > 1 else beat_times[-1] + 1.0
+    cut_times = np.concatenate([[0.0], peak_times, [track_dur]])
+
+    _bt = np.array(beat_times)
+    _se = np.array(section_energy) if section_energy else None
+
+    schedule: list[dict] = []
+    for j in range(len(cut_times) - 1):
+        t_start = float(cut_times[j])
+        t_end   = float(cut_times[j + 1])
+        dur = t_end - t_start
+        if dur < 0.4:
+            continue
+        # Section energy at slot start for clip matching (high energy → dynamic clip)
+        if _se is not None and len(_bt) > 0:
+            idx = int(np.searchsorted(_bt, t_start))
+            idx = min(idx, len(_se) - 1)
+            sec = float(_se[idx])
+        else:
+            sec = 0.5
+        # Peak strength at cut point (j>0 → peaks[j-1])
+        peak_strength = float(props["peak_heights"][j - 1]) if j > 0 and j - 1 < len(props.get("peak_heights", [])) else sec
+        schedule.append({
+            "start":    t_start,
+            "end":      t_end,
+            "duration": dur,
+            "energy":   max(sec, peak_strength),
+            "n_beats":  max(1, round(dur * 60.0 / (60.0 / max(1.0, float(_bt[1] - _bt[0]) * 60.0)) if len(_bt) > 1 else dur)),
+        })
+
+    if schedule:
+        durs = [s["duration"] for s in schedule]
+        print(f"  Schedule (peaks): {len(schedule)} slots  {len(onset_frames)} cut pts  "
+              f"min={min(durs):.1f}s  max={max(durs):.1f}s  avg={sum(durs)/len(durs):.1f}s  "
+              f"total={schedule[-1]['end']:.1f}s")
+    return schedule
+
 
 def build_schedule(
     beat_times: list[float],
@@ -103,14 +221,29 @@ def build_schedule(
     beats_fast: int = 3,
     beats_mid: int = 4,
     beats_slow: int = 6,
+    auto: bool = False,
+    min_shot_sec: float = 1.5,
+    max_shot_sec: float = 8.0,
+    section_energy: list[float] | None = None,
+    onset_energy: list[float] | None = None,
+    onset_env_perc: list[float] | None = None,
+    sr: int = 22050,
+    hop: int = 512,
 ) -> list[dict]:
     """
     Group consecutive beats into shot slots.
-    Very high energy (>0.85) → beats_ultra_fast beats/shot  (~peak chorus hit)
-    High energy      (>0.65) → beats_fast beats/shot        (~chorus)
-    Medium energy             → beats_mid  beats/shot
-    Low energy       (<0.35) → beats_slow beats/shot        (~verse/scenic)
+    Auto mode: peak-based cutting from percussive HPSS envelope (onset_env_perc).
+    Manual mode: per-beat PLP energy thresholds → fixed beats/shot counts.
     """
+    import math as _m
+
+    # Auto mode → peak-based cutting (ignores beat grid)
+    if auto and onset_env_perc:
+        return _build_schedule_peaks(onset_env_perc, beat_times, section_energy,
+                                     min_shot_sec, max_shot_sec, sr, hop)
+
+    _sec_e   = section_energy or beat_energy
+    _onset_e = onset_energy   or beat_energy
     schedule: list[dict] = []
     n = len(beat_times)
     i = 0
@@ -136,14 +269,15 @@ def build_schedule(
             })
         i = end_i
 
-    n_ultra = sum(1 for s in schedule if s["n_beats"] == beats_ultra_fast)
-    n_fast  = sum(1 for s in schedule if s["n_beats"] == beats_fast)
-    n_mid   = sum(1 for s in schedule if s["n_beats"] == beats_mid)
-    n_slow  = sum(1 for s in schedule if s["n_beats"] == beats_slow)
-    print(f"  Schedule: {len(schedule)} slots  "
-          f"ultra={n_ultra}({beats_ultra_fast}b)  fast={n_fast}({beats_fast}b)  "
-          f"mid={n_mid}({beats_mid}b)  slow={n_slow}({beats_slow}b)  "
-          f"total={schedule[-1]['end']:.1f}s")
+    if schedule:
+        n_ultra = sum(1 for s in schedule if s["n_beats"] == beats_ultra_fast)
+        n_fast  = sum(1 for s in schedule if s["n_beats"] == beats_fast)
+        n_mid   = sum(1 for s in schedule if s["n_beats"] == beats_mid)
+        n_slow  = sum(1 for s in schedule if s["n_beats"] == beats_slow)
+        print(f"  Schedule: {len(schedule)} slots  "
+              f"ultra={n_ultra}({beats_ultra_fast}b)  fast={n_fast}({beats_fast}b)  "
+              f"mid={n_mid}({beats_mid}b)  slow={n_slow}({beats_slow}b)  "
+              f"total={schedule[-1]['end']:.1f}s")
     return schedule
 
 
@@ -484,7 +618,8 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
            resolution: str = "", framerate: str = "60",
            blur_speed_cams: list[str] | None = None,
            blur_plates: bool = False,
-           color_correct: str = "") -> None:
+           color_correct: str = "",
+           cam_crop: dict | None = None) -> None:
     """
     Trim each clip to its slot duration, concat, overlay music.
     Uses NVENC if available (detected by nvenc flag).
@@ -499,20 +634,31 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
     )
 
     # Build -vf filter: normalise resolution + fps so all clips are compatible for concat
-    if resolution:
-        w, h = resolution.split(":")
-        _vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-               f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
-               f"fps={framerate}")
-        if color_correct:
-            _vf = _vf + "," + color_correct
-        vf_args = ["-vf", _vf]
-    elif color_correct:
-        _vf = color_correct
-        vf_args = ["-vf", _vf]
-    else:
-        _vf = ""
-        vf_args = []
+    _cam_crop_map = cam_crop or {}
+
+    def _build_vf(camera: str = "") -> tuple[str, list[str]]:
+        """Return (_vf string, vf_args list) for a given camera name."""
+        if resolution:
+            w, h = resolution.split(":")
+            _use_crop = _cam_crop_map.get(camera)
+            if not _use_crop and camera in ("", "unknown") and len(_cam_crop_map) == 1:
+                _use_crop = next(iter(_cam_crop_map.values()))
+            if _use_crop:
+                _scale = (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+                          f"crop={w}:{h}")
+            else:
+                _scale = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2")
+            vf = f"{_scale},setsar=1,fps={framerate}"
+            if color_correct:
+                vf += "," + color_correct
+            return vf, ["-vf", vf]
+        elif color_correct:
+            return color_correct, ["-vf", color_correct]
+        return "", []
+
+    # Default (no camera info) — used for photos and privacy filtergraph prefix
+    _vf, vf_args = _build_vf("")
 
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
@@ -632,12 +778,13 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
             # must be applied before any scale filter that changes frame dimensions.
             _prv_regs = _privacy_regions.get(i, [])
             _fc_script_path = None
+            _entry_vf, _entry_vf_args = _build_vf(entry.get("camera", ""))
             if _prv_regs:
                 import tempfile
                 from privacy import blur_vf as _blur_vf_fn
                 _prv_filter = _blur_vf_fn(_prv_regs, dur)  # [0:v] → [privacy_out]
                 if resolution:
-                    _fc = _prv_filter + f";[privacy_out]{_vf}[out]"
+                    _fc = _prv_filter + f";[privacy_out]{_entry_vf}[out]"
                     _fc_map = "[out]"
                 else:
                     _fc = _prv_filter
@@ -650,7 +797,7 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                     _fc_script_path = _tf.name
                 vf_final = ["-filter_complex_script", _fc_script_path, "-map", _fc_map]
             else:
-                vf_final = vf_args
+                vf_final = _entry_vf_args
 
             cmd = [
                 ffmpeg, "-y",
@@ -811,6 +958,11 @@ def assemble(
     # Privacy: blur speedometer + license plates
     _blur_speed_cams = [c.strip() for c in _cp.get("privacy", "blur_speedometer_cams", fallback="").split(",") if c.strip()]
     _blur_plates     = _cp.getboolean("privacy", "blur_plates", fallback=False)
+    # Per-camera 4:3→16:9 center-crop map.
+    _cam_crop_16x9: dict = {}
+    if _cp.has_section("cam_crop_16x9"):
+        _cam_crop_16x9 = {k: v.strip() in ("1", "true", "yes")
+                          for k, v in _cp.items("cam_crop_16x9") if v.strip()}
     # Per-project color correction (applied during per-clip re-encode).
     # Built from [color_correct] sliders (brightness/gamma/contrast/saturation/temperature),
     # with legacy vf_chain= still honoured as a manual override.
@@ -890,7 +1042,7 @@ def assemble(
         render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
                resolution=_resolution, framerate=_framerate,
                blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates,
-               color_correct=_color_correct)
+               color_correct=_color_correct, cam_crop=_cam_crop_16x9)
         _music_vol = _cp.getfloat("music", "music_volume", fallback=0.7)
         (auto_dir / "music_info.json").write_text(
             _json.dumps({"music_path": str(music_path), "music_ss": music_ss, "music_vol": _music_vol})
@@ -1003,7 +1155,7 @@ def assemble(
     # Load CLIP scores; hard-exclude banned scenes and negative-dominant scenes
     _all_scores: dict[str, float] = {}
     _neg_excluded = 0
-    _BRIGHTNESS_BAN = 50.0
+    _BRIGHTNESS_BAN = float(_cp.get("music_driven", "brightness_ban", fallback="50.0") or "50.0")
     _dark_excluded = 0
     with open(scores_csv) as f:
         for row in csv.DictReader(f):
@@ -1068,18 +1220,23 @@ def assemble(
     _card_dur = _cp.getfloat("intro_outro", "duration", fallback=3.0) if not _no_intro else 0.0
 
     # 2. Build cut schedule (beats per shot configurable via [music_driven] in config.ini)
-    _beats_ultra_fast = int(_cp.get("music_driven", "beats_ultra_fast", fallback="2"))
-    _beats_fast = int(_cp.get("music_driven", "beats_fast", fallback="3"))
-    _beats_mid  = int(_cp.get("music_driven", "beats_mid",  fallback="4"))
-    _beats_slow = int(_cp.get("music_driven", "beats_slow", fallback="6"))
+    def _cpint(s, k, fb): v = _cp.get(s, k, fallback=fb); return int(v) if v.strip() else int(fb)
+    def _cpfloat(s, k, fb): v = _cp.get(s, k, fallback=fb); return float(v) if v.strip() else float(fb)
+    _beats_ultra_fast = _cpint("music_driven", "beats_ultra_fast", "2")
+    _beats_auto = _cp.getboolean("music_driven", "beats_auto", fallback=True)
+    _beats_fast = _cpint("music_driven", "beats_fast", "3")
+    _beats_mid  = _cpint("music_driven", "beats_mid",  "4")
+    _beats_slow = _cpint("music_driven", "beats_slow", "6")
+    _min_shot_sec = _cpfloat("music_driven", "min_shot_sec", "1.5")
+    _max_shot_sec = _cpfloat("music_driven", "max_shot_sec", "8.0")
     # BPM-adaptive: ensure minimum clip durations regardless of tempo.
     # At high BPM (e.g. 117) default 3 beats = 1.5s → slideshow.
     import math as _math
     _bpm = music_info.get("tempo", 120.0)
     _beat_sec = 60.0 / _bpm
-    _min_ultra = float(_cp.get("music_driven", "min_clip_ultra_sec", fallback="0.8"))
-    _min_fast = float(_cp.get("music_driven", "min_clip_fast_sec", fallback="1.5"))
-    _min_mid  = float(_cp.get("music_driven", "min_clip_mid_sec",  fallback="2.5"))
+    _min_ultra = _cpfloat("music_driven", "min_clip_ultra_sec", "0.8")
+    _min_fast = _cpfloat("music_driven", "min_clip_fast_sec", "1.5")
+    _min_mid  = _cpfloat("music_driven", "min_clip_mid_sec",  "2.5")
     _min_slow = float(_cp.get("music_driven", "min_clip_slow_sec", fallback="4.0"))
     _beats_ultra_fast = max(_beats_ultra_fast, _math.ceil(_min_ultra / _beat_sec))
     _beats_fast = max(_beats_fast, _math.ceil(_min_fast / _beat_sec))
@@ -1090,8 +1247,19 @@ def assemble(
           f"fast={_beats_fast}({_beats_fast*_beat_sec:.1f}s) "
           f"mid={_beats_mid}({_beats_mid*_beat_sec:.1f}s) "
           f"slow={_beats_slow}({_beats_slow*_beat_sec:.1f}s)")
+    _section_energy  = music_info.get("section_energy")
+    _onset_energy    = music_info.get("onset_energy")
+    _onset_env_perc  = music_info.get("onset_env_perc")
+    _music_sr        = music_info.get("sr", 22050)
+    _music_hop       = music_info.get("hop", 512)
     schedule = build_schedule(beat_times, beat_energy,
-                              _beats_ultra_fast, _beats_fast, _beats_mid, _beats_slow)
+                              _beats_ultra_fast, _beats_fast, _beats_mid, _beats_slow,
+                              auto=_beats_auto,
+                              min_shot_sec=_min_shot_sec, max_shot_sec=_max_shot_sec,
+                              section_energy=_section_energy,
+                              onset_energy=_onset_energy,
+                              onset_env_perc=_onset_env_perc,
+                              sr=_music_sr, hop=_music_hop)
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
 
@@ -1101,7 +1269,9 @@ def assemble(
     # Find the beat nearest to (first_beat + card_dur), rebuild schedule from there,
     # set music_ss so that beat aligns exactly with the intro card end.
     music_ss = schedule[0]["start"]
-    if _card_dur > 0 and beat_times:
+    # In peak-based auto mode, the schedule is already built from exact percussive events
+    # — skip beat-grid intro sync (which would destroy peak alignment).
+    if _card_dur > 0 and beat_times and not (_beats_auto and _onset_env_perc):
         _target = music_ss + _card_dur
         _sync_idx = min(range(len(beat_times)), key=lambda _i: abs(beat_times[_i] - _target))
         _sync_beat = beat_times[_sync_idx]
@@ -1422,7 +1592,7 @@ def assemble(
     render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
            resolution=_resolution, framerate=_framerate,
            blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates,
-           color_correct=_color_correct)
+           color_correct=_color_correct, cam_crop=_cam_crop_16x9)
 
     # Write music info so apply_postprocess() can mix music over the final video
     # (after intro/outro are added), ensuring the fade covers the outro too.
