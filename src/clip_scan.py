@@ -31,9 +31,11 @@ Environment variables:
   CLIP_SCAN_MIN_GAP_SEC    minimum seconds between clips (default 30)
   CLIP_SCAN_SMOOTH         rolling-average window in frames (default 3)
   CLIP_SCAN_THRESHOLD      minimum score to consider as a peak (default 0.0)
+  CLIP_SCAN_PHASE          all | reselect | reextract (default: all)
 """
 import configparser
 import csv
+import json as _json
 import logging
 import os
 import re
@@ -82,6 +84,11 @@ MIN_GAP_SEC   = float(_e("CLIP_SCAN_MIN_GAP_SEC",  "30"))
 SMOOTH_WIN    = int(_e("CLIP_SCAN_SMOOTH", "3"))
 SCORE_FLOOR   = float(_e("CLIP_SCAN_THRESHOLD", "0.0"))
 NEG_WEIGHT    = _cfg.getfloat("clip_scoring", "neg_weight", fallback=0.5)
+CLIP_SCAN_PHASE = _e("CLIP_SCAN_PHASE", "all")   # all | reselect | reextract
+
+# Intermediate cache dirs
+_raw_scores_dir = AUTO_DIR / "frame_raw_scores"   # per-source raw CLIP scores
+_peaks_dir      = AUTO_DIR / "selected_peaks"     # per-source peak timestamps
 
 def _parse_prompts(raw):
     return [l.strip() for l in raw.strip().splitlines() if l.strip()]
@@ -96,7 +103,7 @@ if not POSITIVE_PROMPTS or not NEGATIVE_PROMPTS:
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".ts"}
 
 
-# ── CLIP model ────────────────────────────────────────────────────────────────
+# ── CLIP model (lazy — skipped for reextract) ─────────────────────────────────
 if torch.cuda.is_available():    DEVICE = "cuda"
 elif torch.backends.mps.is_available(): DEVICE = "mps"
 else:                            DEVICE = "cpu"
@@ -104,17 +111,23 @@ else:                            DEVICE = "cpu"
 print(f"Device: {DEVICE}")
 if DEVICE == "cuda":
     print(f"GPU: {torch.cuda.get_device_name(0)}")
-print(f"Interval: {INTERVAL_SEC}s  Clip dur: {CLIP_DUR_SEC}s  Min gap: {MIN_GAP_SEC}s")
+print(f"Phase: {CLIP_SCAN_PHASE}  Interval: {INTERVAL_SEC}s  Clip dur: {CLIP_DUR_SEC}s  Min gap: {MIN_GAP_SEC}s")
 
-model, _, preprocess = open_clip.create_model_and_transforms('ViT-L-14', pretrained='openai')
-tokenizer = open_clip.get_tokenizer('ViT-L-14')
-model = model.to(DEVICE).eval()
+_model = _preprocess = _tokenizer = _pos_feat = _neg_feat = None
 
-with torch.no_grad():
-    pos_tok = tokenizer(POSITIVE_PROMPTS).to(DEVICE)
-    neg_tok = tokenizer(NEGATIVE_PROMPTS).to(DEVICE)
-    pos_feat = model.encode_text(pos_tok); pos_feat /= pos_feat.norm(dim=-1, keepdim=True)
-    neg_feat = model.encode_text(neg_tok); neg_feat /= neg_feat.norm(dim=-1, keepdim=True)
+def _ensure_model():
+    global _model, _preprocess, _tokenizer, _pos_feat, _neg_feat
+    if _model is not None:
+        return
+    print("Loading CLIP model...")
+    _model, _, _preprocess = open_clip.create_model_and_transforms('ViT-L-14', pretrained='openai')
+    _tokenizer = open_clip.get_tokenizer('ViT-L-14')
+    _model = _model.to(DEVICE).eval()
+    with torch.no_grad():
+        pos_tok = _tokenizer(POSITIVE_PROMPTS).to(DEVICE)
+        neg_tok = _tokenizer(NEGATIVE_PROMPTS).to(DEVICE)
+        _pos_feat = _model.encode_text(pos_tok); _pos_feat /= _pos_feat.norm(dim=-1, keepdim=True)
+        _neg_feat = _model.encode_text(neg_tok); _neg_feat /= _neg_feat.norm(dim=-1, keepdim=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -131,9 +144,10 @@ class _FrameDS(Dataset):
 
 def _score_frames(frame_paths: list[Path]) -> list[float]:
     """Score a list of frame paths. Returns float list same length."""
+    _ensure_model()
     import platform as _plat
     _nw = 0 if _plat.system() == "Darwin" else NUM_WORKERS
-    ds = _FrameDS(frame_paths, preprocess)
+    ds = _FrameDS(frame_paths, _preprocess)
     loader = DataLoader(ds, batch_size=BATCH_SIZE, num_workers=_nw,
                         pin_memory=(DEVICE == "cuda"),
                         prefetch_factor=2 if _nw > 0 else None)
@@ -147,8 +161,8 @@ def _score_frames(frame_paths: list[Path]) -> list[float]:
             device_type=DEVICE if DEVICE != "mps" else "cpu",
             enabled=(DEVICE == "cuda"),
         ):
-            f = model.encode_image(t); f /= f.norm(dim=-1, keepdim=True)
-            pf = pos_feat.to(f.dtype); nf = neg_feat.to(f.dtype)
+            f = _model.encode_image(t); f /= f.norm(dim=-1, keepdim=True)
+            pf = _pos_feat.to(f.dtype); nf = _neg_feat.to(f.dtype)
             s = (f @ pf.T).mean(1) - (f @ nf.T).mean(1) * NEG_WEIGHT
         for path, sc in zip(vp, s.float().cpu().tolist()):
             scores_map[path] = sc
@@ -199,6 +213,16 @@ def _extract_frames_to_dir(src: Path, out_dir: Path, interval: float) -> list[Pa
     ]
     subprocess.run(cmd, capture_output=True)
     return sorted(out_dir.glob("*.jpg"))
+
+
+def _extract_single_frame(src: Path, ts: float, out: Path):
+    """Extract one frame at timestamp ts from src."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        FFMPEG, "-y", "-ss", f"{ts:.3f}", "-i", str(src),
+        "-vframes", "1", "-q:v", "5", str(out), "-loglevel", "error",
+    ]
+    subprocess.run(cmd, capture_output=True)
 
 
 _X264_CRF    = str(_cfg.getint("video", "x264_crf",    fallback=15))
@@ -259,75 +283,156 @@ frames_dir  = AUTO_DIR / "frames"
 autocut_dir.mkdir(parents=True, exist_ok=True)
 frames_dir.mkdir(parents=True, exist_ok=True)
 
-min_gap_frames = max(1, int(MIN_GAP_SEC / INTERVAL_SEC))
-all_clips: list[dict] = []   # {scene, score, pos_score, neg_score, emb, is_main}
+all_clips: list[dict] = []
 
-# ── Per-file scan → score → peaks → extract ──────────────────────────────────
-for sf_idx, sf in enumerate(source_files, 1):
-    cam = next((c for c in CAMERAS if f"/{c}/" in str(sf)), CAMERAS[0] if CAMERAS else "")
-    is_main = (cam == AUDIO_CAM or not CAMERAS)
-    dur = _probe_duration(sf)
-    if dur < INTERVAL_SEC:
-        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: too short ({dur:.1f}s), skipped")
-        continue
 
-    n_frames_expected = max(1, int(dur / INTERVAL_SEC))
-    print(f"  [{sf_idx}/{len(source_files)}] {sf.name} ({dur:.0f}s, ~{n_frames_expected} frames)...")
-
-    with tempfile.TemporaryDirectory(prefix="clip_scan_") as tmp:
-        tmp_dir = Path(tmp)
-        frame_paths = _extract_frames_to_dir(sf, tmp_dir, INTERVAL_SEC)
-        if not frame_paths:
-            print(f"    WARNING: no frames extracted — skipping")
+# ── Phase: reextract — re-cut clips only, keep frames + CSVs ─────────────────
+if CLIP_SCAN_PHASE == "reextract":
+    for sf_idx, sf in enumerate(source_files, 1):
+        peaks_path = _peaks_dir / f"{sf.stem}.json"
+        if not peaks_path.exists():
+            print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: no cached peaks — skipping")
             continue
+        pd = _json.loads(peaks_path.read_text())
+        cam = next((c for c in CAMERAS if f"/{c}/" in str(sf)), CAMERAS[0] if CAMERAS else "")
+        is_main = (cam == AUDIO_CAM or not CAMERAS)
+        for old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
+            old.unlink()
+        for i, peak in enumerate(pd["peaks"], 1):
+            clip_start = max(0.0, peak["ts"] - CLIP_DUR_SEC / 2)
+            scene_name = f"{sf.stem}-clip-{i:03d}"
+            _extract_clip(sf, clip_start, CLIP_DUR_SEC, autocut_dir / f"{scene_name}.mp4")
+            all_clips.append({"scene": scene_name, "score": peak["score"],
+                               "pos_score": 0.0, "neg_score": 0.0,
+                               "is_main": is_main, "offset_sec": clip_start})
+        pd["clip_dur"] = CLIP_DUR_SEC
+        (_peaks_dir / f"{sf.stem}.json").write_text(_json.dumps(pd))
+        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: {len(pd['peaks'])} clips re-extracted")
 
-        # Score
-        t0 = time.time()
-        raw_scores = _score_frames(frame_paths)
-        elapsed = time.time() - t0
-        print(f"    Scored {len(raw_scores)} frames in {elapsed:.1f}s")
+    _dur_cache = {f"{c['scene']}.mp4": CLIP_DUR_SEC for c in all_clips}
+    (AUTO_DIR / "duration_cache.json").write_text(_json.dumps(_dur_cache))
+    print(f"\nRe-extracted: {len(all_clips)} clips with dur={CLIP_DUR_SEC}s  (frames+CSVs unchanged)")
+    sys.exit(0)
 
-        # Smooth + find peaks
-        smoothed = _smooth(raw_scores, SMOOTH_WIN)
-        peak_idxs = _find_peaks(smoothed, min_gap_frames, SCORE_FLOOR)
+
+# ── Phase: reselect — reload raw scores, re-pick peaks, re-extract ────────────
+if CLIP_SCAN_PHASE == "reselect":
+    _ensure_model()
+    min_gap_frames = max(1, int(MIN_GAP_SEC / INTERVAL_SEC))
+    for sf_idx, sf in enumerate(source_files, 1):
+        raw_path = _raw_scores_dir / f"{sf.stem}.json"
+        if not raw_path.exists():
+            print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: no cached raw scores — skipping")
+            continue
+        raw_data   = _json.loads(raw_path.read_text())
+        raw_scores = raw_data["scores"]
+        timestamps = raw_data["timestamps"]
+        cam = next((c for c in CAMERAS if f"/{c}/" in str(sf)), CAMERAS[0] if CAMERAS else "")
+        is_main = (cam == AUDIO_CAM or not CAMERAS)
+        for old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
+            old.unlink()
+        for old in frames_dir.glob(f"{sf.stem}-clip-*_f0.jpg"):
+            old.unlink()
+        smoothed   = _smooth(raw_scores, SMOOTH_WIN)
+        peak_idxs  = _find_peaks(smoothed, min_gap_frames, SCORE_FLOOR)
         if not peak_idxs:
-            print(f"    No peaks found")
+            print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: no peaks")
+            continue
+        _peaks_list = []
+        for i, peak_i in enumerate(peak_idxs, 1):
+            peak_ts    = timestamps[peak_i]
+            clip_start = max(0.0, peak_ts - CLIP_DUR_SEC / 2)
+            scene_name = f"{sf.stem}-clip-{i:03d}"
+            _extract_clip(sf, clip_start, CLIP_DUR_SEC, autocut_dir / f"{scene_name}.mp4")
+            _extract_single_frame(sf, peak_ts, frames_dir / f"{scene_name}_f0.jpg")
+            all_clips.append({"scene": scene_name, "score": raw_scores[peak_i],
+                               "pos_score": 0.0, "neg_score": 0.0,
+                               "is_main": is_main, "offset_sec": clip_start})
+            _peaks_list.append({"ts": peak_ts, "score": smoothed[peak_i], "clip_name": scene_name})
+        _peaks_dir.mkdir(parents=True, exist_ok=True)
+        (_peaks_dir / f"{sf.stem}.json").write_text(
+            _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC, "peaks": _peaks_list}))
+        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: {len(peak_idxs)} peaks")
+
+
+# ── Phase: all — full scan → score → peaks → extract ─────────────────────────
+if CLIP_SCAN_PHASE == "all":
+    _ensure_model()
+    min_gap_frames = max(1, int(MIN_GAP_SEC / INTERVAL_SEC))
+    _raw_scores_dir.mkdir(parents=True, exist_ok=True)
+    _peaks_dir.mkdir(parents=True, exist_ok=True)
+
+    for sf_idx, sf in enumerate(source_files, 1):
+        cam = next((c for c in CAMERAS if f"/{c}/" in str(sf)), CAMERAS[0] if CAMERAS else "")
+        is_main = (cam == AUDIO_CAM or not CAMERAS)
+        dur = _probe_duration(sf)
+        if dur < INTERVAL_SEC:
+            print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: too short ({dur:.1f}s), skipped")
             continue
 
-        print(f"    Peaks: {len(peak_idxs)}  (scores: {[round(smoothed[i],3) for i in peak_idxs[:8]]})")
+        n_frames_expected = max(1, int(dur / INTERVAL_SEC))
+        print(f"  [{sf_idx}/{len(source_files)}] {sf.name} ({dur:.0f}s, ~{n_frames_expected} frames)...")
 
-        # Extract clips + keep peak frame
-        cam_clip_n = sum(1 for c in all_clips if c["scene"].startswith(sf.stem + "-clip-"))
-        for peak_i in peak_idxs:
-            peak_ts = peak_i * INTERVAL_SEC  # approximate timestamp
-            clip_start = max(0.0, peak_ts - CLIP_DUR_SEC / 2)
-            clip_n = cam_clip_n + 1
-            cam_clip_n += 1
-            scene_name = f"{sf.stem}-clip-{clip_n:03d}"
+        with tempfile.TemporaryDirectory(prefix="clip_scan_") as tmp:
+            tmp_dir = Path(tmp)
+            frame_paths = _extract_frames_to_dir(sf, tmp_dir, INTERVAL_SEC)
+            if not frame_paths:
+                print(f"    WARNING: no frames extracted — skipping")
+                continue
 
-            # Extract clip
-            clip_out = autocut_dir / f"{scene_name}.mp4"
-            clip_newly_created = not clip_out.exists()
-            if clip_newly_created:
-                _extract_clip(sf, clip_start, CLIP_DUR_SEC, clip_out)
+            t0 = time.time()
+            raw_scores = _score_frames(frame_paths)
+            elapsed = time.time() - t0
+            print(f"    Scored {len(raw_scores)} frames in {elapsed:.1f}s")
 
-            # Copy peak frame → frames/ for gallery
-            # Always overwrite when clip was just created (avoids stale frame from deleted+recreated clip)
-            peak_frame_src = frame_paths[peak_i]
-            peak_frame_dst = frames_dir / f"{scene_name}_f0.jpg"
-            if clip_newly_created or not peak_frame_dst.exists():
-                import shutil
-                peak_frame_dst.unlink(missing_ok=True)
-                shutil.copy2(peak_frame_src, peak_frame_dst)
+            # Save raw scores for future reselect
+            _timestamps = [i * INTERVAL_SEC for i in range(len(raw_scores))]
+            (_raw_scores_dir / f"{sf.stem}.json").write_text(
+                _json.dumps({"interval": INTERVAL_SEC, "timestamps": _timestamps, "scores": raw_scores})
+            )
 
-            all_clips.append({
-                "scene":      scene_name,
-                "score":      raw_scores[peak_i],
-                "pos_score":  0.0,   # re-scored below if needed
-                "neg_score":  0.0,
-                "is_main":    is_main,
-                "offset_sec": clip_start,  # seconds into source file (for sync-ban)
-            })
+            smoothed   = _smooth(raw_scores, SMOOTH_WIN)
+            peak_idxs  = _find_peaks(smoothed, min_gap_frames, SCORE_FLOOR)
+            if not peak_idxs:
+                print(f"    No peaks found")
+                continue
+
+            print(f"    Peaks: {len(peak_idxs)}  (scores: {[round(smoothed[i],3) for i in peak_idxs[:8]]})")
+
+            cam_clip_n  = sum(1 for c in all_clips if c["scene"].startswith(sf.stem + "-clip-"))
+            _peaks_list = []
+            for peak_i in peak_idxs:
+                peak_ts    = peak_i * INTERVAL_SEC
+                clip_start = max(0.0, peak_ts - CLIP_DUR_SEC / 2)
+                cam_clip_n += 1
+                scene_name  = f"{sf.stem}-clip-{cam_clip_n:03d}"
+
+                clip_out = autocut_dir / f"{scene_name}.mp4"
+                clip_newly_created = not clip_out.exists()
+                if clip_newly_created:
+                    _extract_clip(sf, clip_start, CLIP_DUR_SEC, clip_out)
+
+                peak_frame_src = frame_paths[peak_i]
+                peak_frame_dst = frames_dir / f"{scene_name}_f0.jpg"
+                if clip_newly_created or not peak_frame_dst.exists():
+                    import shutil
+                    peak_frame_dst.unlink(missing_ok=True)
+                    shutil.copy2(peak_frame_src, peak_frame_dst)
+
+                all_clips.append({
+                    "scene":      scene_name,
+                    "score":      raw_scores[peak_i],
+                    "pos_score":  0.0,
+                    "neg_score":  0.0,
+                    "is_main":    is_main,
+                    "offset_sec": clip_start,
+                })
+                _peaks_list.append({"ts": peak_ts, "score": smoothed[peak_i], "clip_name": scene_name})
+
+            # Save selected peaks for future reextract
+            (_peaks_dir / f"{sf.stem}.json").write_text(
+                _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC, "peaks": _peaks_list})
+            )
 
 
 # ── Re-score peak frames for accurate pos/neg columns ─────────────────────────
@@ -335,10 +440,10 @@ if all_clips:
     peak_frame_paths = [frames_dir / f"{c['scene']}_f0.jpg" for c in all_clips]
     print(f"\nRe-scoring {len(peak_frame_paths)} peak frames for CSV...")
 
-    # We need pos/neg separately — run batched inference again on saved frames
+    _ensure_model()
     import platform as _plat
     _nw = 0 if _plat.system() == "Darwin" else NUM_WORKERS
-    ds = _FrameDS(peak_frame_paths, preprocess)
+    ds = _FrameDS(peak_frame_paths, _preprocess)
     loader = DataLoader(ds, batch_size=BATCH_SIZE, num_workers=_nw,
                         pin_memory=(DEVICE == "cuda"),
                         prefetch_factor=2 if _nw > 0 else None)
@@ -354,8 +459,8 @@ if all_clips:
             device_type=DEVICE if DEVICE != "mps" else "cpu",
             enabled=(DEVICE == "cuda"),
         ):
-            f = model.encode_image(t); f /= f.norm(dim=-1, keepdim=True)
-            pf = pos_feat.to(f.dtype); nf = neg_feat.to(f.dtype)
+            f = _model.encode_image(t); f /= f.norm(dim=-1, keepdim=True)
+            pf = _pos_feat.to(f.dtype); nf = _neg_feat.to(f.dtype)
             ps = (f @ pf.T).mean(1); ns = (f @ nf.T).mean(1)
             fs = ps - ns * NEG_WEIGHT
         embs = f.float().cpu().numpy()
@@ -411,7 +516,7 @@ if all_clips:
         print(f"Aesthetic scoring skipped: {e}")
         for clip in all_clips: clip.setdefault("aesthetic_score", float("nan"))
 
-    # ── Brightness (median Y-channel) ─────────────────────────────────────────
+    # Brightness (median Y-channel)
     try:
         import cv2 as _cv2
         for clip in all_clips:
@@ -429,7 +534,7 @@ if all_clips:
         for clip in all_clips:
             clip.setdefault("avg_brightness", float("nan"))
 
-    # ── Write CSVs ────────────────────────────────────────────────────────────
+    # Write CSVs
     fieldnames = ["scene", "score", "pos_score", "neg_score", "aesthetic_score", "offset_sec", "avg_brightness"]
     main_clips = [c for c in all_clips if c["is_main"]]
     all_clips_sorted  = sorted(all_clips, key=lambda c: c["score"], reverse=True)
@@ -442,8 +547,7 @@ if all_clips:
         w = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
         w.writeheader(); w.writerows(main_clips_sorted)
 
-    # Write duration_cache.json so the gallery knows each clip's length
-    import json as _json
+    # Write duration_cache.json
     _dur_cache = {f"{c['scene']}.mp4": CLIP_DUR_SEC for c in all_clips}
     (AUTO_DIR / "duration_cache.json").write_text(_json.dumps(_dur_cache))
 

@@ -2590,6 +2590,107 @@ async def get_photos(job_id: str):
     return {"photos": result}
 
 
+@router.get("/api/jobs/{job_id}/suggest-clip-params")
+async def suggest_clip_params(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+
+    work_dir = job.work_dir()
+    VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".ts"}
+    _gcfg = configparser.ConfigParser()
+    _gcfg.read(str(APP_DIR / "config.ini"))
+    ffprobe_bin = _gcfg.get("paths", "ffprobe", fallback="ffprobe")
+
+    async def _duration(f: Path) -> float:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ffprobe_bin, "-v", "quiet", "-print_format", "json",
+                "-show_entries", "format=duration",
+                str(f),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await proc.communicate()
+            info = json.loads(out)
+            return float(info.get("format", {}).get("duration", 0))
+        except Exception:
+            return 0.0
+
+    video_files = [
+        f for f in work_dir.rglob("*")
+        if f.suffix.lower() in VIDEO_EXT and "_autoframe" not in f.parts
+    ]
+    if not video_files:
+        raise HTTPException(422, "No video files found in work_dir")
+
+    durations = await asyncio.gather(*[_duration(f) for f in video_files])
+    total_sec = sum(durations)
+    if total_sec <= 0:
+        raise HTTPException(422, "Could not read durations from video files")
+
+    raw_gap  = total_sec / 80
+    min_gap  = max(15, min(120, round(raw_gap / 5) * 5))
+    interval = max(2, round(min_gap / 15))
+    clip_dur = min(10, max(4, round(min_gap * 0.3 / 2) * 2))
+
+    return {
+        "clip_dur":  clip_dur,
+        "interval":  interval,
+        "min_gap":   min_gap,
+        "total_sec": round(total_sec),
+    }
+
+
+@router.get("/api/suggest-clip-params")
+async def suggest_clip_params_by_dir(work_dir: str = Query(...)):
+    wd = Path(work_dir)
+    if not wd.is_dir():
+        raise HTTPException(404, "Directory not found")
+
+    VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".ts"}
+    _gcfg = configparser.ConfigParser()
+    _gcfg.read(str(APP_DIR / "config.ini"))
+    ffprobe_bin = _gcfg.get("paths", "ffprobe", fallback="ffprobe")
+
+    async def _duration(f: Path) -> float:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ffprobe_bin, "-v", "quiet", "-print_format", "json",
+                "-show_entries", "format=duration",
+                str(f),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await proc.communicate()
+            info = json.loads(out)
+            return float(info.get("format", {}).get("duration", 0))
+        except Exception:
+            return 0.0
+
+    video_files = [
+        f for f in wd.rglob("*")
+        if f.suffix.lower() in VIDEO_EXT and "_autoframe" not in f.parts
+    ]
+    if not video_files:
+        raise HTTPException(422, "No video files found in directory")
+
+    durations = await asyncio.gather(*[_duration(f) for f in video_files])
+    total_sec = sum(durations)
+    if total_sec <= 0:
+        raise HTTPException(422, "Could not read durations from video files")
+
+    raw_gap  = total_sec / 80
+    min_gap  = max(15, min(120, round(raw_gap / 5) * 5))
+    interval = max(2, round(min_gap / 15))
+    clip_dur = min(10, max(4, round(min_gap * 0.3 / 2) * 2))
+
+    return {
+        "clip_dur":  clip_dur,
+        "interval":  interval,
+        "min_gap":   min_gap,
+        "total_sec": round(total_sec),
+    }
+
+
 @router.delete("/api/jobs/{job_id}/result-file")
 async def delete_result_file(job_id: str, filename: str = Query(...)):
     job = jobs.get(job_id)

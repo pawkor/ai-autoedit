@@ -779,68 +779,120 @@ async def run(params: dict, work_dir: Path,
     # ── [2/6]–[5/6] Scene extraction + CLIP scoring ──────────────────────────
     if clip_first:
         # ── CLIP-first mode: dense scan → peaks → clip extraction ─────────────
-        yield ""
-        yield "[2/6] CLIP-first scan (interval={:.0f}s, clip={:.0f}s, gap={:.0f}s)...".format(
-            float(params.get("clip_scan_interval") or 3),
-            float(params.get("clip_scan_clip_dur") or 8),
-            float(params.get("clip_scan_min_gap")  or 30),
-        )
-        # Clear stale clips and frames from previous runs (both scenedetect and old clip-first)
-        _stale_clips  = (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
-                         list((auto_dir / "autocut").glob("*-clip-*.mp4")))
-        _stale_frames = list((auto_dir / "frames").glob("*.jpg"))
-        if _stale_clips:
-            for _sf in _stale_clips:
-                _sf.unlink()
-            yield f"  Cleared {len(_stale_clips)} old clip(s)"
-        if _stale_frames:
-            for _sf in _stale_frames:
-                _sf.unlink()
-            yield f"  Cleared {len(_stale_frames)} old frame(s)"
+        import hashlib as _hashlib
         _safe_env_cs = {k: v for k, v in os.environ.items()
                         if k not in ("ANTHROPIC_API_KEY", "LAST_FM_API_KEY")}
-        _is_dual_cs = bool(cameras and len(cameras) > 1)
-        scan_env = {
-            **_safe_env_cs,
-            "WORK_DIR":              str(work_dir),
-            "AUTO_DIR":              str(auto_dir),
-            "CAMERAS":               ",".join(cameras),
-            "FFMPEG":                ffmpeg,
-            "FFPROBE":               ffprobe,
-            "OUTPUT_CSV":            str(auto_dir / "scene_scores.csv"),
-            "OUTPUT_CSV_ALLCAM":     str(auto_dir / "scene_scores_allcam.csv"),
-            "CAM_SOURCES":           str(auto_dir / "camera_sources.csv"),
-            "AUDIO_CAM":             cam_a,
-            "CLIP_SCAN_INTERVAL_SEC":str(params.get("clip_scan_interval") or 3),
-            "CLIP_SCAN_CLIP_DUR_SEC":str(params.get("clip_scan_clip_dur")  or 8),
-            "CLIP_SCAN_MIN_GAP_SEC": str(params.get("clip_scan_min_gap")   or 30),
-            **({"CLIP_BATCH_SIZE":  str(params["batch_size"])}  if params.get("batch_size")  else {}),
-            **({"CLIP_NUM_WORKERS": str(params["clip_workers"])} if params.get("clip_workers") else {}),
-        }
-        scan_proc = await asyncio.create_subprocess_exec(
-            sys.executable, str(SCRIPT_DIR / "clip_scan.py"),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(work_dir),
-            env=scan_env,
-        )
-        async for raw in scan_proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            if line:
-                yield f"  {line}"
-        await scan_proc.wait()
-        scores_csv = auto_dir / "scene_scores.csv"
-        if not scores_csv.exists():
-            raise RuntimeError("CLIP scan failed — no scene_scores.csv produced.")
-        scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
-        yield f"  [3/6]–[5/6] skipped (CLIP-first mode)"
-        yield f"  Clips: {len(scene_files)}  Scores: {scores_csv.name}"
+        _is_dual_cs  = bool(cameras and len(cameras) > 1)
         _cam_src_csv = auto_dir / "camera_sources.csv"
-        import hashlib as _hashlib
-        _cur_hash = _hashlib.sha256(
-            (params.get("positive", "") + "\n---\n" + params.get("negative", "")).encode()
-        ).hexdigest()
-        (auto_dir / "scores_prompts.hash").write_text(_cur_hash)
+
+        # Determine which phase of clip_scan is needed based on 3-tier hash
+        _p_interval = str(params.get("clip_scan_interval") or 3)
+        _p_gap      = str(params.get("clip_scan_min_gap")  or 30)
+        _p_dur      = str(params.get("clip_scan_clip_dur") or 8)
+
+        _h_interval_cur = _hashlib.sha256(_p_interval.encode()).hexdigest()
+        _h_gap_cur      = _hashlib.sha256(f"{_p_interval}:{_p_gap}".encode()).hexdigest()
+        _h_params_cur   = _hashlib.sha256(f"{_p_interval}:{_p_gap}:{_p_dur}".encode()).hexdigest()
+
+        _f_interval = auto_dir / "clip_interval.hash"
+        _f_gap      = auto_dir / "clip_gap.hash"
+        _f_params   = auto_dir / "clip_scan_params.hash"
+
+        _h_interval_prev = _f_interval.read_text().strip() if _f_interval.exists() else ""
+        _h_gap_prev      = _f_gap.read_text().strip()      if _f_gap.exists()      else ""
+        _h_params_prev   = _f_params.read_text().strip()   if _f_params.exists()   else ""
+
+        _clips_exist      = bool(list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+        _frames_exist     = bool(list((auto_dir / "frames").glob("*.jpg")))
+        _raw_scores_exist = bool(list((auto_dir / "frame_raw_scores").glob("*.json"))) \
+                            if (auto_dir / "frame_raw_scores").exists() else False
+        _peaks_exist      = bool(list((auto_dir / "selected_peaks").glob("*.json"))) \
+                            if (auto_dir / "selected_peaks").exists() else False
+
+        if _h_interval_cur != _h_interval_prev or not _clips_exist or not _frames_exist:
+            _scan_phase = "all"
+        elif _h_gap_cur != _h_gap_prev and _raw_scores_exist:
+            _scan_phase = "reselect"
+        elif _h_params_cur != _h_params_prev and _peaks_exist:
+            _scan_phase = "reextract"
+        elif _h_params_cur == _h_params_prev and _clips_exist and _frames_exist:
+            _scan_phase = None   # fully cached
+        else:
+            _scan_phase = "all"  # fallback
+
+        yield ""
+        if _scan_phase is None:
+            _clip_count = len(list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+            yield (f"[2/6] CLIP-first: params unchanged — "
+                   f"{_clip_count} clips cached, skipping rescan")
+        else:
+            _phase_label = {
+                "all":       "full scan",
+                "reselect":  "re-select peaks (min_gap changed)",
+                "reextract": "re-extract clips (clip_dur changed)",
+            }[_scan_phase]
+            yield "[2/6] CLIP-first {} (interval={}s, clip={}s, gap={}s)...".format(
+                _phase_label,
+                float(params.get("clip_scan_interval") or 3),
+                float(params.get("clip_scan_clip_dur") or 8),
+                float(params.get("clip_scan_min_gap")  or 30),
+            )
+            # Full scan: clear all old clips and frames upfront
+            if _scan_phase == "all":
+                _stale_clips  = (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
+                                 list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+                _stale_frames = list((auto_dir / "frames").glob("*.jpg"))
+                if _stale_clips:
+                    for _sf in _stale_clips: _sf.unlink()
+                    yield f"  Cleared {len(_stale_clips)} old clip(s)"
+                if _stale_frames:
+                    for _sf in _stale_frames: _sf.unlink()
+                    yield f"  Cleared {len(_stale_frames)} old frame(s)"
+            scan_env = {
+                **_safe_env_cs,
+                "WORK_DIR":              str(work_dir),
+                "AUTO_DIR":              str(auto_dir),
+                "CAMERAS":               ",".join(cameras),
+                "FFMPEG":                ffmpeg,
+                "FFPROBE":               ffprobe,
+                "OUTPUT_CSV":            str(auto_dir / "scene_scores.csv"),
+                "OUTPUT_CSV_ALLCAM":     str(auto_dir / "scene_scores_allcam.csv"),
+                "CAM_SOURCES":           str(_cam_src_csv),
+                "AUDIO_CAM":             cam_a,
+                "CLIP_SCAN_INTERVAL_SEC":_p_interval,
+                "CLIP_SCAN_CLIP_DUR_SEC":_p_dur,
+                "CLIP_SCAN_MIN_GAP_SEC": _p_gap,
+                "CLIP_SCAN_PHASE":       _scan_phase,
+                **({"CLIP_BATCH_SIZE":  str(params["batch_size"])}  if params.get("batch_size")  else {}),
+                **({"CLIP_NUM_WORKERS": str(params["clip_workers"])} if params.get("clip_workers") else {}),
+            }
+            scan_proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(SCRIPT_DIR / "clip_scan.py"),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(work_dir),
+                env=scan_env,
+            )
+            async for raw in scan_proc.stdout:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    yield f"  {line}"
+            await scan_proc.wait()
+            scores_csv = auto_dir / "scene_scores.csv"
+            if _scan_phase != "reextract" and not scores_csv.exists():
+                raise RuntimeError("CLIP scan failed — no scene_scores.csv produced.")
+            scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
+            yield f"  [3/6]–[5/6] skipped (CLIP-first mode)"
+            yield f"  Clips: {len(scene_files)}"
+            # Update hashes
+            _f_interval.write_text(_h_interval_cur)
+            _f_gap.write_text(_h_gap_cur)
+            _f_params.write_text(_h_params_cur)
+            if _scan_phase in ("all", "reselect"):
+                # Write prompts hash — clip_scan.py scored with current prompts
+                (auto_dir / "scores_prompts.hash").write_text(_hashlib.sha256(
+                    (params.get("positive", "") + "\n---\n" + params.get("negative", "")).encode()
+                ).hexdigest())
 
     # ── [2/6] Scene detection (parallel) ─────────────────────────────────────
     if clip_first:
@@ -1242,8 +1294,55 @@ async def run(params: dict, work_dir: Path,
     ).hexdigest()
 
     if clip_first:
-        _csv_count = len(pd.read_csv(scores_csv)) if scores_csv.exists() else 0
-        yield f"  Cached ({_csv_count} scenes, from CLIP-first scan)"
+        if _scan_phase is None:
+            # Scan skipped — check if prompts changed and re-score if needed
+            _saved_hash_cf = prompts_hash_file.read_text().strip() if prompts_hash_file.exists() else ""
+            _cur_hash_cf   = _hashlib.sha256(
+                (params.get("positive", "") + "\n---\n" + params.get("negative", "")).encode()
+            ).hexdigest()
+            if _saved_hash_cf != _cur_hash_cf or not scores_csv.exists():
+                yield "  Prompts changed — re-scoring existing clips..."
+                _score_all_cf = _is_dual_cs or bool(params.get("score_all_cams"))
+                rescore_env = {
+                    **_safe_env_cs,
+                    "FRAMES_DIR":      str(auto_dir / "frames") + "/",
+                    "OUTPUT_CSV":      str(scores_csv),
+                    "EMBEDDINGS_FILE": str(auto_dir / "scene_embeddings.npz"),
+                    "CAM_SOURCES":     str(_cam_src_csv),
+                    "AUDIO_CAM":       cam_a,
+                    **({"SCORE_ALL_CAMS":    "1",
+                        "OUTPUT_CSV_ALLCAM": str(auto_dir / "scene_scores_allcam.csv")}
+                       if _score_all_cf else {}),
+                    **({"CLIP_BATCH_SIZE":  str(params["batch_size"])}  if params.get("batch_size")  else {}),
+                    **({"CLIP_NUM_WORKERS": str(params["clip_workers"])} if params.get("clip_workers") else {}),
+                }
+                _gpu_lock_fd = open(_GPU_LOCK_FILE, "w")
+                try:
+                    yield "  Waiting for GPU..."
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: fcntl.flock(_gpu_lock_fd, fcntl.LOCK_EX))
+                    rescore_proc = await asyncio.create_subprocess_exec(
+                        sys.executable, str(SCRIPT_DIR / "clip_score.py"),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
+                        cwd=str(work_dir),
+                        env=rescore_env,
+                    )
+                    async for raw in rescore_proc.stdout:
+                        line = raw.decode("utf-8", errors="replace").rstrip()
+                        if line:
+                            yield f"  {line}"
+                    await rescore_proc.wait()
+                finally:
+                    fcntl.flock(_gpu_lock_fd, fcntl.LOCK_UN)
+                    _gpu_lock_fd.close()
+                prompts_hash_file.write_text(_cur_hash_cf)
+            else:
+                _csv_count = len(pd.read_csv(scores_csv)) if scores_csv.exists() else 0
+                yield f"  Cached ({_csv_count} scenes)"
+        else:
+            _csv_count = len(pd.read_csv(scores_csv)) if scores_csv.exists() else 0
+            yield f"  Cached ({_csv_count} scenes, from CLIP-first scan)"
     if not clip_first and scores_csv.exists():
         try:
             _check_df = pd.read_csv(scores_csv)

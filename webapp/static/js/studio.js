@@ -166,7 +166,6 @@ async function openProject(id) {
   drawTimeline();
   if (typeof loadMusicList === 'function') await loadMusicList(id);
   loadResults();
-  _checkProxyStatus();
 }
 window.openProject = openProject;
 
@@ -1024,90 +1023,6 @@ async function cancelRender() {
 }
 window.cancelRender = cancelRender;
 
-// ── Proxy generation ──────────────────────────────────────────────────────────
-let _proxyPollTimer = null;
-let _proxyStartTime = null;
-let _proxyLastFile  = null;
-
-async function startProxy() {
-  if (!_jobId) return;
-  _proxyStartTime = Date.now();
-  _proxyLastFile  = null;
-  const btn = document.getElementById('m-btn-proxy');
-  if (btn) btn.disabled = true;
-  clearLog();
-  _appendLog('[proxy] Starting…');
-  _showStatus('proxy', 'Starting…', null, 'running');
-  await fetch(`/api/jobs/${_jobId}/start-proxy`, { method: 'POST' });
-  _pollProxyStatus();
-}
-window.startProxy = startProxy;
-
-function _pollProxyStatus() {
-  clearTimeout(_proxyPollTimer);
-  if (!_jobId) return;
-  const btn = document.getElementById('m-btn-proxy');
-  fetch(`/api/jobs/${_jobId}/proxy-status`)
-    .then(r => r.ok ? r.json() : null)
-    .then(st => {
-      if (!st) return;
-      if (st.done) {
-        const txt = st.error ? `✗ ${st.error}` : `✓ ${st.finished}/${st.total} done`;
-        _appendLog(`[proxy] ${txt}`);
-        _showStatus('proxy', txt, st.error ? 0 : 100, st.error ? 'error' : 'done');
-        setTimeout(_hideStatus, 4000);
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent = st.error ? '⬡ Proxy' : '✓ Proxy';
-        }
-        _proxyStartTime = null;
-        _proxyLastFile  = null;
-      } else {
-        const cur = st.current_file ? st.current_file.split('/').pop() : '';
-        if (cur && cur !== _proxyLastFile) {
-          _proxyLastFile = cur;
-          _appendLog(`[proxy] ${st.finished + 1}/${st.total}  ${cur}`);
-        }
-        const pct = st.total > 0 ? Math.round(st.finished / st.total * 100) : null;
-        let label = st.total > 0 ? `${st.finished} / ${st.total}` : '…';
-        if (_proxyStartTime && st.finished > 0 && st.total > st.finished) {
-          const elapsed = (Date.now() - _proxyStartTime) / 1000;
-          const eta = elapsed / st.finished * (st.total - st.finished);
-          label += `  ETA ${_fmtEta(eta)}`;
-        }
-        _showStatus('proxy', label, pct, 'running');
-        _proxyPollTimer = setTimeout(_pollProxyStatus, 2000);
-      }
-    })
-    .catch(() => { _proxyPollTimer = setTimeout(_pollProxyStatus, 5000); });
-}
-
-function _checkProxyStatus() {
-  if (!_jobId) return;
-  const btn = document.getElementById('m-btn-proxy');
-  fetch(`/api/jobs/${_jobId}/proxy-status`)
-    .then(r => r.ok ? r.json() : null)
-    .then(st => {
-      if (!st || st.not_started) { if (btn) btn.disabled = false; return; }
-      if (!st.done) {
-        _proxyStartTime = _proxyStartTime || Date.now();
-        _pollProxyStatus();
-      } else {
-        if (btn) {
-          if (st.finished > 0) {
-            btn.disabled = true;
-            btn.textContent = '✓ Proxy';
-          } else {
-            btn.disabled = false;
-          }
-        }
-      }
-    })
-    .catch(() => {});
-}
-window._checkProxyStatus = _checkProxyStatus;
-
-
 // ── Results modal ─────────────────────────────────────────────────────────────
 let _resultsVideo = null;
 let _resultsData  = {};       // cached {name: info}
@@ -1299,7 +1214,7 @@ function fmtSec(s) {
 }
 
 function enableActions(on) {
-  ['m-btn-rebuild', 'm-btn-preview', 'm-btn-render', 'm-btn-shorts', 'm-btn-proxy'].forEach(id => {
+  ['m-btn-rebuild', 'm-btn-preview', 'm-btn-render', 'm-btn-shorts'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = !on; });
 }
 

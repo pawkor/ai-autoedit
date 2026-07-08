@@ -22,7 +22,6 @@ const TRANS = {
       'tab.results':         'Results',
       // sections
       'sec.source':          'Source',
-      'sec.proxy':           'Proxy media',
       'sec.scene_detect':    'Scene detection <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(requires Analyze)</span>',
       'sec.scene_sel':       'Scene selection',
       'sec.intro_music':     'Intro / music',
@@ -145,7 +144,6 @@ const TRANS = {
       'm.title_render':'Render highlight video',
       'm.title_theme':'Toggle theme',
       'm.title_legacy_top':'Settings & Legacy UI',
-      'm.title_proxy':'Generate 480p proxy for faster re-analysis',
       'm.title_project':'Open project settings',
       'm.title_music':'Open music library',
       'm.title_photos':'Open photo browser',
@@ -297,7 +295,6 @@ const TRANS = {
       'tab.results':         'Wyniki',
       // sections
       'sec.source':          'Źródło',
-      'sec.proxy':           'Proxy media',
       'sec.scene_detect':    'Detekcja scen <span style="color:var(--muted);font-weight:normal;text-transform:none;letter-spacing:0">(wymaga analizy)</span>',
       'sec.scene_sel':       'Dobór scen',
       'sec.intro_music':     'Intro / muzyka',
@@ -418,7 +415,6 @@ const TRANS = {
       'm.title_render':'Renderuj highlight',
       'm.title_theme':'Zmień motyw',
       'm.title_legacy_top':'Ustawienia i Legacy UI',
-      'm.title_proxy':'Generuj proxy 480p dla szybszej analizy',
       'm.title_project':'Otwórz ustawienia projektu',
       'm.title_music':'Otwórz bibliotekę muzyki',
       'm.title_photos':'Otwórz przeglądarkę zdjęć',

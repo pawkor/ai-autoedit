@@ -353,10 +353,29 @@ async function analyzeRefreshCams(dir) {
   if (!camList || camList.querySelectorAll('.m-analyze-cam-row').length) return;
   _analyzeSubdirs = await _fetchAnalyzeSubdirs(dir);
   camList.innerHTML = '';
-  for (const cam of _analyzeSubdirs.slice(0, 2))
+  const detected = _analyzeSubdirs.slice(0, 2);
+  for (const cam of detected)
     _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs);
+  // Auto-fill params for new project
+  _autoSuggestOnDirSelect(dir, detected);
 }
 window.analyzeRefreshCams = analyzeRefreshCams;
+
+async function _autoSuggestOnDirSelect(dir, cams) {
+  try {
+    const r = await fetch(`/api/suggest-clip-params?work_dir=${encodeURIComponent(dir)}`);
+    const data = r.ok ? await r.json() : null;
+    if (data?.clip_dur != null) {
+      document.getElementById('m-analyze-clip-dur').value = data.clip_dur;
+      document.getElementById('m-analyze-interval').value = data.interval;
+      document.getElementById('m-analyze-min-gap').value  = data.min_gap;
+    }
+  } catch {}
+  if (cams.length === 2) {
+    const patEl = document.getElementById('m-settings-cam-pattern');
+    if (patEl && !patEl.value.trim()) patEl.value = 'abab';
+  }
+}
 
 // ── Run analyze ───────────────────────────────────────────────────────────────
 async function runAnalyze() {
@@ -387,6 +406,8 @@ async function runAnalyze() {
   if (btn)    btn.disabled = true;
   if (status) status.textContent = 'Starting…';
 
+  const camPattern  = document.getElementById('m-settings-cam-pattern')?.value.trim() || undefined;
+
   const params = {
     work_dir:              dir,
     cameras:               cameras.length ? cameras : null,
@@ -399,6 +420,7 @@ async function runAnalyze() {
     score_all_cams:        scoreAll,
     positive,
     negative,
+    cam_pattern:           camPattern,
   };
 
   // Re-use existing job when dir matches current project
@@ -441,7 +463,7 @@ async function saveAnalyzeSettings() {
 
   const positive    = document.getElementById('m-analyze-positive')?.value.trim()    || null;
   const negative    = document.getElementById('m-analyze-negative')?.value.trim()    || null;
-  const description = document.getElementById('m-analyze-description')?.value.trim() || null;
+  const description = document.getElementById('m-analyze-description')?.value.trim() || undefined;
   const clipFirst   = document.getElementById('m-analyze-clip-first')?.checked;
   const clipDur     = parseFloat(document.getElementById('m-analyze-clip-dur')?.value)  || null;
   const interval    = parseFloat(document.getElementById('m-analyze-interval')?.value)  || null;
@@ -599,5 +621,29 @@ async function generateSettingsPrompts() {
   const neg = document.getElementById('m-settings-negative');
   if (pos && data.positive) pos.value = data.positive;
   if (neg && data.negative) neg.value = data.negative;
+}
+
+async function suggestClipParams() {
+  const btn = document.getElementById('m-analyze-auto-params');
+  if (!btn) return;
+  const dir = document.getElementById('m-analyze-dir')?.value.trim();
+  if (!dir) { alert('Select a project directory first.'); return; }
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const r = await fetch(`/api/suggest-clip-params?work_dir=${encodeURIComponent(dir)}`);
+    const data = r.ok ? await r.json() : null;
+    if (data?.clip_dur != null) {
+      document.getElementById('m-analyze-clip-dur').value = data.clip_dur;
+      document.getElementById('m-analyze-interval').value = data.interval;
+      document.getElementById('m-analyze-min-gap').value  = data.min_gap;
+    }
+  } catch (e) {
+    alert('Could not suggest params: ' + (e?.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 window.generateSettingsPrompts = generateSettingsPrompts;

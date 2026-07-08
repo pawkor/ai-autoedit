@@ -405,7 +405,7 @@ async def generate_yt_meta(job_id: str, data: dict):
     if not job:
         raise HTTPException(404)
     project_name = data.get("project_name", "").strip()
-    description  = job.params.get("description", "").strip() or ""
+    description  = (job.params.get("description") or "").strip()
     footer       = data.get("footer", "").strip()
     notes        = data.get("notes", "").strip()
 
