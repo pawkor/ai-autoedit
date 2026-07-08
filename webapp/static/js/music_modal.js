@@ -128,9 +128,11 @@ function filterMusicModal() {
   const q = (document.getElementById('m-music-filter')?.value || '').toLowerCase();
   const filtered = q
     ? _allTracks.filter(t => {
-        const text = ((t.title || '') + ' ' + (t.file || '').split('/').pop()).toLowerCase();
         const durStr = t.duration ? fmtSec(t.duration) : '';
-        return text.includes(q) || durStr.startsWith(q);
+        if (q.includes(':')) return durStr.startsWith(q);
+        const text = ((t.title || '') + ' ' + (t.artist || '') + ' ' + (t.file || '').split('/').pop()).toLowerCase();
+        const bpmStr = t.bpm ? String(Math.round(t.bpm)) : '';
+        return text.includes(q) || durStr.startsWith(q) || bpmStr.startsWith(q);
       })
     : _allTracks;
   renderMusicModalList(filtered);

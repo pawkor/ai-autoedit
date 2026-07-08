@@ -1473,22 +1473,34 @@ async def preview_stream(job_id: str):
     music_ss = float(sequence[0].get("music_start", 0.0))
     has_music = bool(music_path_str and Path(music_path_str).exists())
 
-    # Probe first valid clip for output dimensions after scale=1280:-2
+    # If any camera has 4:3→16:9 crop enabled, force 16:9 output with center crop.
+    # crop=iw:min(ih,iw*9/16) is a no-op for 16:9 sources and crops 4:3 to 16:9.
+    crop_map = job.params.get("cam_crop_16x9") or {}
+    need_crop = any(v for v in crop_map.values())
+
     W, H = 1280, 720
-    for slot in sequence:
-        cp = slot.get("clip_path", "")
-        if cp and Path(cp).exists():
-            _p = await asyncio.create_subprocess_exec(
-                ffprobe_bin, "-v", "quiet", "-select_streams", "v:0",
-                "-show_entries", "stream=width,height", "-of", "csv=p=0", cp,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            _out, _ = await _p.communicate()
-            _parts = _out.decode().strip().split(",")
-            if len(_parts) == 2:
-                sw, sh = int(_parts[0]), int(_parts[1])
-                H = (sh * W // sw) & ~1
-            break
+    if not need_crop:
+        # Probe first valid clip to preserve native aspect ratio
+        for slot in sequence:
+            cp = slot.get("clip_path", "")
+            if cp and Path(cp).exists():
+                _p = await asyncio.create_subprocess_exec(
+                    ffprobe_bin, "-v", "quiet", "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height", "-of", "csv=p=0", cp,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                )
+                _out, _ = await _p.communicate()
+                _parts = _out.decode().strip().split(",")
+                if len(_parts) == 2:
+                    sw, sh = int(_parts[0]), int(_parts[1])
+                    H = (sh * W // sw) & ~1
+                break
+
+    dec_vf = (
+        f"crop=iw:min(ih\\,iw*9/16),scale={W}:{H}:flags=fast_bilinear"
+        if need_crop else
+        f"scale={W}:{H}:flags=fast_bilinear"
+    )
 
     enc_cmd = [
         ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
@@ -1512,31 +1524,49 @@ async def preview_stream(job_id: str):
             stderr=asyncio.subprocess.DEVNULL,
         )
 
+        async def _start_dec(slot):
+            cp  = slot["clip_path"]
+            ss  = float(slot.get("clip_ss", 0))
+            dur = float(slot.get("duration", 0))
+            return await asyncio.create_subprocess_exec(
+                ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                "-hwaccel", "cuda",
+                "-ss", f"{ss:.4f}", "-i", cp, "-t", f"{dur:.4f}",
+                "-vf", dec_vf,
+                "-pix_fmt", "yuv420p", "-r", "30",
+                "-f", "rawvideo", "pipe:1",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+
         async def _feed():
+            slots = [s for s in sequence
+                     if s.get("clip_path") and Path(s["clip_path"]).exists()]
+            cur_dec = None
+            nxt_dec = None
             try:
-                for slot in sequence:
-                    cp = slot.get("clip_path", "")
-                    if not cp or not Path(cp).exists():
-                        continue
-                    ss  = float(slot.get("clip_ss", 0))
-                    dur = float(slot.get("duration", 0))
-                    dec = await asyncio.create_subprocess_exec(
-                        ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-                        "-ss", f"{ss:.4f}", "-i", cp, "-t", f"{dur:.4f}",
-                        "-vf", f"scale={W}:{H}:flags=fast_bilinear",
-                        "-pix_fmt", "yuv420p", "-r", "30",
-                        "-f", "rawvideo", "pipe:1",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
+                if not slots:
+                    return
+                cur_dec = await _start_dec(slots[0])
+                for i, slot in enumerate(slots):
+                    # start next decoder while piping current — overlaps startup latency
+                    if i + 1 < len(slots):
+                        nxt_dec = await _start_dec(slots[i + 1])
+                    else:
+                        nxt_dec = None
                     while True:
-                        chunk = await dec.stdout.read(131072)
+                        chunk = await cur_dec.stdout.read(131072)
                         if not chunk:
                             break
                         enc.stdin.write(chunk)
                         await enc.stdin.drain()
-                    await dec.wait()
+                    await cur_dec.wait()
+                    cur_dec = nxt_dec
+                    nxt_dec = None
             finally:
+                for p in (cur_dec, nxt_dec):
+                    if p is not None and p.returncode is None:
+                        p.kill()
                 enc.stdin.close()
 
         feed_task = asyncio.create_task(_feed())

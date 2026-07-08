@@ -971,7 +971,7 @@ async function previewTimeline() {
     } else {
       // Chrome / Firefox — full MP4 (no native HLS)
       video.src = `/api/jobs/${_jobId}/preview-stream`;
-      video.addEventListener('canplay', () => {
+      video.addEventListener('canplaythrough', () => {
         if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
         video.play().catch(() => {});
       }, {once: true});
