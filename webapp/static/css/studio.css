@@ -27,20 +27,22 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 #studio { display: flex; height: 100dvh; width: 100vw; }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────── */
-#m-sidebar { width: 220px; flex-shrink: 0; background: var(--bg1);
-             border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+#m-sidebar { min-width: 140px; max-width: 280px; width: max-content; flex-shrink: 0;
+             background: var(--bg1); border-right: 1px solid var(--border);
+             display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
 .m-sidebar-header { padding: 8px 10px 6px; font-size: 10px; font-weight: 600;
                     text-transform: uppercase; letter-spacing: .06em; color: var(--sub);
-                    display: flex; align-items: center; justify-content: space-between; }
+                    display: flex; align-items: center; justify-content: space-between;
+                    position: sticky; top: 0; z-index: 1; background: var(--bg1); }
 .m-proj-item { position: relative; }
 .m-proj-del { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
               display: none; background: none; border: none; color: var(--red);
               cursor: pointer; font-size: 12px; padding: 2px 5px; border-radius: 3px; line-height: 1; }
 .m-proj-item:hover .m-proj-del { display: block; }
-#m-project-list { flex: 1; overflow-y: auto; padding: 0 6px 8px; }
+#m-project-list { padding: 0 6px 8px; }
 .m-proj-item { padding: 7px 8px; border-radius: 5px; cursor: pointer;
                border-left: 2px solid transparent; margin-bottom: 2px;
-               word-break: break-all; line-height: 1.4; color: var(--sub); }
+               white-space: nowrap; color: var(--sub); }
 .m-proj-item:hover { background: var(--bg2); color: var(--text); }
 .m-proj-item.active { background: var(--bg2); border-left-color: var(--green-hi); color: var(--text); }
 
@@ -70,6 +72,21 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
   100% { transform: translateX(400%); }
 }
 #m-job-text { font-size: 10px; color: var(--muted); white-space: nowrap; min-width: 120px; text-align: right; }
+
+/* ── Worker bars (parallel NVENC slots) ──────────────────────────────── */
+#m-worker-bars { display: flex; flex-direction: column; gap: 2px;
+                 padding: 2px 14px 4px; background: var(--bg1);
+                 border-bottom: 1px solid var(--border); }
+.m-worker-row  { display: flex; align-items: center; gap: 6px; }
+.m-worker-label { font-size: 9px; color: var(--sub); white-space: nowrap;
+                  min-width: 44px; text-align: right; }
+.m-worker-track { flex: 1; height: 3px; background: var(--border);
+                  border-radius: 2px; overflow: hidden; }
+.m-worker-fill  { height: 3px; background: var(--blue); border-radius: 2px;
+                  width: 0%; transition: width .3s ease; }
+.m-worker-pct   { font-size: 9px; color: var(--muted); white-space: nowrap;
+                  min-width: 28px; text-align: right; }
+.m-worker-clip  { font-size: 9px; color: var(--sub); white-space: nowrap; }
 
 /* ── Pool ────────────────────────────────────────────────────────────── */
 #m-pool { flex: 1; min-height: 0; display: flex; flex-direction: column;
@@ -165,7 +182,7 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-analyze-modal-inner { max-width: 640px; width: 100%; }
 
 /* ── Right panel ─────────────────────────────────────────────────────── */
-#m-panel { width: 180px; flex-shrink: 0; background: var(--bg1);
+#m-panel { width: 234px; flex-shrink: 0; background: var(--bg1);
            border-left: 1px solid var(--border); display: flex; flex-direction: column; }
 .m-panel-section { padding: 10px; border-bottom: 1px solid var(--border); }
 .m-panel-bottom { margin-top: auto; border-bottom: none; border-top: 1px solid var(--border); }
@@ -217,6 +234,7 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
                border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .m-modal-filter { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
                   border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.m-modal-body { flex: 1; overflow-y: auto; min-height: 0; padding: 10px 14px 6px; }
 .m-modal-footer { display: flex; align-items: center; padding: 6px 12px;
                   border-top: 1px solid var(--border); flex-shrink: 0; }
 .m-music-yt-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
@@ -385,6 +403,12 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-rf-yt:disabled, .m-rf-ig:disabled { opacity: .4; cursor: not-allowed; }
 .m-rf-yt.linked { color: var(--green-hi); border-color: var(--green-hi); background: transparent; }
 .m-rf-ig.linked { color: var(--purple); border-color: var(--purple); background: transparent; }
+
+/* ── Field help (toggle full help) ──────────────────────────────────────────── */
+.m-field-help { display:none; font-size:11px; color:var(--muted); line-height:1.6; padding:2px 0 6px; }
+#m-project-modal.show-help .m-field-help { display:block; }
+#m-help-btn { opacity:.5; transition:opacity .15s; }
+#m-help-btn.active { opacity:1; color:var(--blue,#3b82f6); }
 
 /* ── Tooltips (data-tip) ───────────────────────────────────────────────────── */
 [data-tip] { position: relative; }

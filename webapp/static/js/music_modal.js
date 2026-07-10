@@ -162,10 +162,15 @@ function renderMusicModalList(tracks) {
     const near = targetSec > 0 && Math.abs(dur - targetSec) / targetSec < 0.15;
     const fname = t.file.split('/').pop();
     const usedEntries = _usedTracksIndex[fname] || _usedTracksIndex[t.file] || [];
+    const _curWork = (typeof _workDir !== 'undefined' && _workDir) ? _workDir : '';
+    // Match all days of the same trip (parent directory of work_dir)
+    const _tripDir  = _curWork ? _curWork.split('/').slice(0, -1).join('/') : '';
+    const usedHere      = _tripDir ? usedEntries.filter(e => e.project && e.project.startsWith(_tripDir + '/')) : usedEntries;
+    const usedElsewhere = usedEntries.length - usedHere.length;
 
     const row = document.createElement('div');
     row.className = `m-mtrack${isPinned ? ' pinned' : ''}`;
-    if (usedEntries.length) row.classList.add('used');
+    if (usedHere.length) row.classList.add('used');
     row.onclick = () => pinTrack(t.file);
 
     // Play button
@@ -219,10 +224,17 @@ function renderMusicModalList(tracks) {
     row.appendChild(nearEl);
     const usedBadge = document.createElement('div');
     usedBadge.className = 'm-mtrack-used';
-    if (usedEntries.length) {
-      usedBadge.textContent = '✓ used';
+    if (usedHere.length) {
+      const tripLabel = _tripDir.split('/').filter(Boolean).pop() || _curWork.split('/').filter(Boolean).pop();
+      usedBadge.textContent = `✓ ${tripLabel}`;
+      const lines = usedHere.map(e => `${e.render || ''}  ${e.date || ''}${e.yt_url ? '  YT: ' + e.yt_url : ''}`);
+      if (usedElsewhere > 0) lines.push(`+ ${usedElsewhere}× elsewhere`);
+      usedBadge.title = lines.join('\n');
+    } else if (usedElsewhere > 0) {
+      usedBadge.textContent = `○ ${usedElsewhere}×`;
+      usedBadge.style.color = 'var(--sub)';
       usedBadge.title = usedEntries.map(e =>
-        `${(e.project || '').split('/').pop()}  ${e.render || ''}  ${e.date || ''}${e.yt_url ? '  YT: ' + e.yt_url : ''}`
+        `${(e.project || '').split('/').filter(Boolean).slice(-2).join('/')}  ${e.render || ''}  ${e.date || ''}`
       ).join('\n');
     }
     row.appendChild(usedBadge);
@@ -420,9 +432,7 @@ async function loadMusicList(jobId) {
   if (_pinnedTrack) {
     const rebuild = document.getElementById('m-btn-rebuild');
     if (rebuild) rebuild.disabled = false;
-    // only auto-build if no saved timeline was restored
-    if (_timeline.length === 0) await rebuildTimeline();
-    else { drawTimeline(); renderPool(); enableActions(true); }
+    drawTimeline(); renderPool(); enableActions(true);
   }
 }
 window.loadMusicList = loadMusicList;

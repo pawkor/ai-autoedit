@@ -138,7 +138,11 @@ loader  = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
 frame_results: list[dict] = []
 frame_embs:    dict[str, np.ndarray] = {}
 
-for batch_imgs, batch_paths, batch_ok in tqdm(loader, total=len(loader)):
+_total_batches = len(loader)
+_report_every  = max(1, _total_batches // 20)
+for _bi, (batch_imgs, batch_paths, batch_ok) in enumerate(loader, 1):
+    if _bi == 1 or _bi % _report_every == 0 or _bi == _total_batches:
+        print(f"[{_bi}/{_total_batches}] CLIP scoring frames", flush=True)
     valid_mask = batch_ok.bool()
     if not valid_mask.any():
         continue

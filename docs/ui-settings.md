@@ -66,7 +66,19 @@ The **⚙ Advanced** button opens a modal with detection parameters.
 | Interval (s) | `3` | Sekundy między próbkowanymi klatkami |
 | Clip dur (s) | `8` | Długość wycinanego klipu |
 | Min gap (s) | `30` | Min. odstęp między klipami |
+| ↻ Auto | — | Oblicza Interval / Clip dur / Min gap na podstawie łącznej długości nagrań. Kliknij po wyborze katalogu lub użyj auto-wypełnienia przy nowym projekcie. |
 | Score all cameras | `on` (auto) | Scoruje klatki ze wszystkich kamer → `scene_scores_allcam.csv`. Wymagane dla music-driven multicam. Automatycznie włączane przy zaznaczeniu CLIP-first. |
+
+**Auto-wypełnienie przy nowym projekcie** — po wpisaniu katalogu parametry CLIP-first są automatycznie obliczane z łącznej długości nagrań. Dla 2 kamer domyślnie wpisywany jest wzorzec `abab`.
+
+**3-fazowy cache** — Re-analyze uruchamia tylko potrzebne etapy:
+
+| Zmiana | Co się dzieje |
+|--------|---------------|
+| `interval` | Pełny rescan (GPU, minuty) |
+| `min_gap` | Reselect — nowe piki z zapisanych raw scores |
+| `clip_dur` | Reextract — re-cut ffmpeg bez GPU (sekundy) |
+| brak zmian | Skip — natychmiastowe |
 
 **⚠ Re-analyze badge** — obok przycisku Analyze pojawia się ostrzeżenie gdy ustawienia wykrywania nie zgadzają się z istniejącymi scenami (np. CLIP-first zaznaczony ale sceny są `-scene-NNN`).
 

@@ -101,10 +101,12 @@ def extract_gps_track(mp4_path: Path, exiftool: str = "exiftool") -> list[dict]:
         print(f"  GPS: exiftool timeout on {mp4_path.name}", file=sys.stderr)
         return []
 
-    # Parse lines: build one sample per unique GPS Date/Time
-    # Each second is repeated N times (once per video frame) — keep last seen lat/lon
-    samples: dict[str, dict] = {}
-    cur_ts: str | None = None
+    # Collect GPS fields as parallel lists — handles both interleaved (Insta360)
+    # and grouped (Ace Pro 2: all timestamps first, then all lats, etc.) output.
+    ts_list:  list[str]   = []
+    lat_list: list[float] = []
+    lon_list: list[float] = []
+    alt_list: list[float] = []
 
     for line in r.stdout.splitlines():
         if ":" not in line:
@@ -114,24 +116,34 @@ def extract_gps_track(mp4_path: Path, exiftool: str = "exiftool") -> list[dict]:
         val = val.strip()
 
         if key == "GPS Date/Time":
-            cur_ts = val
-            if cur_ts not in samples:
-                samples[cur_ts] = {}
-        elif cur_ts is None:
-            continue
+            ts_list.append(val)
         elif key == "GPS Latitude":
             lat = _parse_dms(val)
             if not math.isnan(lat):
-                samples[cur_ts]["lat"] = lat
+                lat_list.append(lat)
         elif key == "GPS Longitude":
             lon = _parse_dms(val)
             if not math.isnan(lon):
-                samples[cur_ts]["lon"] = lon
+                lon_list.append(lon)
         elif key == "GPS Altitude":
             try:
-                samples[cur_ts]["alt"] = float(val.split()[0])
+                alt_list.append(float(val.split()[0]))
             except (ValueError, IndexError):
-                pass
+                alt_list.append(0.0)
+
+    # Zip by position (truncate to shortest list), deduplicate by second
+    n = min(len(ts_list), len(lat_list), len(lon_list))
+    if n == 0:
+        return []
+
+    samples: dict[str, dict] = {}
+    for i in range(n):
+        ts_str = ts_list[i]
+        samples[ts_str] = {
+            "lat": lat_list[i],
+            "lon": lon_list[i],
+            "alt": alt_list[i] if i < len(alt_list) else 0.0,
+        }
 
     # Build sorted list of valid points
     track: list[dict] = []

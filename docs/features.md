@@ -8,6 +8,8 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 |---|---|---|
 | PySceneDetect scene splitting | ✅ | configurable threshold + min_scene_len |
 | CLIP-first mode | ✅ | skips scenedetect; frame scanning + CLIP peak extraction; `-clip-NNN` clips |
+| CLIP-first 3-phase incremental cache | ✅ | interval→full rescan; min_gap→reselect peaks (GPU); clip_dur→reextract ffmpeg only (no GPU); no change→skip |
+| Auto-suggest clip params | ✅ | ffprobe total duration → formula for interval/clip_dur/min_gap; auto-fills on new project dir select; ↻ Auto button |
 | CLIP scoring (ViT-L-14, GPU) | ✅ | positive/negative prompts, neg_weight; multi-frame (_f0/_f1/_f2) |
 | Score all cameras (allcam CSV) | ✅ | `scene_scores_allcam.csv`; auto-enabled with CLIP-first |
 | LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |

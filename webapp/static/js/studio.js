@@ -112,9 +112,11 @@ async function refreshProjectList() {
   if (!list) return;
   list.innerHTML = sorted.map(j => {
     const name = trimPath(j.work_dir) || j.id;
+    const segs = name.split('/');
+    const label = segs.length > 2 ? segs.slice(-2).join('/') : name;
     return `<div class="m-proj-item${j.id === _jobId ? ' active' : ''}"
                  data-id="${j.id}" onclick="openProject('${j.id}')">
-              <span style="display:block;padding-right:20px;word-break:break-all;line-height:1.4">${name}</span>
+              <span style="display:block;padding-right:20px" title="${name}">${label}</span>
               <button class="m-proj-del" onclick="deleteProject('${j.id}',event)" title="Remove project">✕</button>
             </div>`;
   }).join('');
@@ -718,6 +720,9 @@ function _setupPoolDropTarget() {
 }
 
 // ── Job progress WebSocket ────────────────────────────────────────────────────
+function _phaseLabel(phase) {
+  return (typeof _tm === 'function' ? _tm('misc.phase.' + phase) : null) || phase;
+}
 let _jobWs = null;
 
 function _showStatus(phase, text, pct, state) {
@@ -740,6 +745,44 @@ function _showStatus(phase, text, pct, state) {
 function _hideStatus() {
   const bar = document.getElementById('m-job-status');
   if (bar) bar.style.display = 'none';
+  _clearWorkerBars();
+}
+
+const _workerBars = {};
+function _clearWorkerBars() {
+  const c = document.getElementById('m-worker-bars');
+  if (c) { c.innerHTML = ''; c.style.display = 'none'; }
+  for (const k in _workerBars) delete _workerBars[k];
+}
+function _updateWorkerBar(slot, pct, curr, total, done) {
+  const c = document.getElementById('m-worker-bars');
+  if (!c) return;
+  if (done) {
+    delete _workerBars[slot];
+    const row = document.getElementById(`m-wbar-${slot}`);
+    if (row) row.remove();
+    if (Object.keys(_workerBars).length === 0) c.style.display = 'none';
+    return;
+  }
+  c.style.display = '';
+  _workerBars[slot] = pct;
+  let row = document.getElementById(`m-wbar-${slot}`);
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'm-worker-row';
+    row.id = `m-wbar-${slot}`;
+    row.innerHTML = `<span class="m-worker-label">enc ${slot + 1}</span>` +
+      `<div class="m-worker-track"><div class="m-worker-fill" id="m-wfill-${slot}"></div></div>` +
+      `<span class="m-worker-pct" id="m-wpct-${slot}">0%</span>` +
+      `<span class="m-worker-clip" id="m-wclip-${slot}"></span>`;
+    c.appendChild(row);
+  }
+  const fill = document.getElementById(`m-wfill-${slot}`);
+  const pctEl = document.getElementById(`m-wpct-${slot}`);
+  const clipEl = document.getElementById(`m-wclip-${slot}`);
+  if (fill)  fill.style.width = pct + '%';
+  if (pctEl) pctEl.textContent = pct + '%';
+  if (clipEl && curr != null) clipEl.textContent = `${curr}/${total}`;
 }
 
 function _fmtEta(sec) {
@@ -767,7 +810,8 @@ function _connectJobProgress(jobId) {
       const st = msg.status;
       if (st === 'running') {
         currentPhase = msg.phase || 'rendering';
-        _showStatus(currentPhase, '', null, 'running');
+        _showStatus(_phaseLabel(currentPhase), '', null, 'running');
+        _clearWorkerBars();
         _setRenderBusy(true);
       } else if (st === 'done') {
         _showStatus('done', '✓ complete', 100, 'done');
@@ -778,24 +822,26 @@ function _connectJobProgress(jobId) {
         if (_jobId) loadPool(_jobId);
       } else if (st === 'failed' || st === 'killed') {
         _showStatus('failed', '✗ ' + (st === 'killed' ? 'cancelled' : 'error'), 100, 'error');
+        _clearWorkerBars();
         _setRenderBusy(false);
         ws.close();
       }
     } else if (msg.type === 'log') {
       _appendLog(msg.line);
-      const m = msg.line.match(/\[\s*(\d+)\s*\/\s*(\d+)\s*\]/);
+      const m = msg.line.match(/\[\s*(\d+)\s*\/\s*(\d+)\s*\](.*)/);
       if (m) {
         current = parseInt(m[1]);
         total   = parseInt(m[2]);
         if (!startTime) startTime = Date.now();
         const pct = total > 0 ? Math.round(current / total * 100) : null;
-        let label = `${current} / ${total}`;
+        const desc = m[3].trim().replace(/\.{2,}$/, '').trim();
+        let label = desc ? desc.substring(0, 55) : `${current} / ${total}`;
         if (current > 0 && total > current) {
           const elapsed = (Date.now() - startTime) / 1000;
           const eta = elapsed / current * (total - current);
           label += `  ETA ${_fmtEta(eta)}`;
         }
-        _showStatus(currentPhase, label, pct, 'running');
+        _showStatus(_phaseLabel(currentPhase), label, pct, 'running');
       }
     } else if (msg.type === 'shorts_status') {
       if (msg.running) {
@@ -814,6 +860,8 @@ function _connectJobProgress(jobId) {
       }
     } else if (msg.type === 'shorts_batch_progress') {
       _showStatus('shorts', `Short ${msg.done}/${msg.total}`, msg.pct, 'running');
+    } else if (msg.type === 'worker_progress') {
+      _updateWorkerBar(msg.slot, msg.pct ?? 0, msg.curr, msg.total, msg.state === 'done');
     }
   };
   ws.onclose = () => { if (_jobWs === ws) _jobWs = null; };

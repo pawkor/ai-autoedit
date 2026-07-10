@@ -8,6 +8,10 @@ let _analyzeSubdirs = [];
 async function openProjectModal() {
   const modal = document.getElementById('m-project-modal');
   if (!modal) return;
+  const _helpOn = localStorage.getItem('projectHelp') === '1';
+  modal.classList.toggle('show-help', _helpOn);
+  const _hb = document.getElementById('m-help-btn');
+  if (_hb) _hb.classList.toggle('active', _helpOn);
   document.getElementById('m-analyze-status').textContent = '';
   document.getElementById('m-analyze-btn').disabled = false;
   _analyzeSubdirs = [];
@@ -22,7 +26,9 @@ async function openProjectModal() {
       );
       if (cfg) {
         document.getElementById('m-analyze-clip-dur').value     = cfg.clip_scan_clip_dur ?? 6;
-        document.getElementById('m-analyze-clip-first').checked = cfg.clip_first !== false;
+        const _dm = (cfg.clip_first !== false) ? 'clip-first' : 'traditional';
+        const _dmEl = document.getElementById('m-analyze-detect-method');
+        if (_dmEl) { _dmEl.value = _dm; _applyDetectMethod(_dm); }
         document.getElementById('m-analyze-positive').value     = cfg.positive ?? '';
         document.getElementById('m-analyze-negative').value     = cfg.negative ?? '';
         document.getElementById('m-analyze-description').value  = job.params?.description ?? cfg.description ?? '';
@@ -62,9 +68,9 @@ async function openProjectModal() {
       set('m-settings-beats-slow',   cfg?.beats_slow  ?? '');
       set('m-settings-shorts-music', cfg?.shorts_music_dir ?? '');
       set('m-analyze-photos-dir',    cfg?.photos_dir || (wd + '/photos'));
-      set('m-settings-blur-speed',   cfg?.blur_speedometer_cams ?? '');
-      const _bpEl = document.getElementById('m-settings-blur-plates');
-      if (_bpEl) _bpEl.checked = cfg?.blur_plates === true || cfg?.blur_plates === 'true' || cfg?.blur_plates === '1';
+      const _tm = cfg?.ui_timeline_method ?? 'music-driven';
+      const _tmEl = document.getElementById('m-settings-timeline-method');
+      if (_tmEl) { _tmEl.value = _tm; _applyTimelineMethod(_tm); }
     }
   }
   modal.style.display = 'flex';
@@ -393,7 +399,7 @@ async function runAnalyze() {
     const crop = r.querySelector('.m-cam-crop')?.checked ?? false;
     if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; }
   });
-  const clipFirst  = document.getElementById('m-analyze-clip-first').checked;
+  const clipFirst  = document.getElementById('m-analyze-detect-method')?.value !== 'traditional';
   const clipDur    = parseFloat(document.getElementById('m-analyze-clip-dur').value)     || 6;
   const interval   = parseFloat(document.getElementById('m-analyze-interval')?.value)   || 3;
   const minGap     = parseFloat(document.getElementById('m-analyze-min-gap')?.value)    || 15;
@@ -464,7 +470,7 @@ async function saveAnalyzeSettings() {
   const positive    = document.getElementById('m-analyze-positive')?.value.trim()    || null;
   const negative    = document.getElementById('m-analyze-negative')?.value.trim()    || null;
   const description = document.getElementById('m-analyze-description')?.value.trim() || undefined;
-  const clipFirst   = document.getElementById('m-analyze-clip-first')?.checked;
+  const clipFirst   = document.getElementById('m-analyze-detect-method')?.value !== 'traditional';
   const clipDur     = parseFloat(document.getElementById('m-analyze-clip-dur')?.value)  || null;
   const interval    = parseFloat(document.getElementById('m-analyze-interval')?.value)  || null;
   const minGap      = parseFloat(document.getElementById('m-analyze-min-gap')?.value)   || null;
@@ -573,9 +579,8 @@ async function saveProjectModal() {
       title,
       shorts_music_dir:      document.getElementById('m-settings-shorts-music')?.value.trim() || null,
       photos_dir:            document.getElementById('m-analyze-photos-dir')?.value.trim()    || null,
-      blur_speedometer_cams: document.getElementById('m-settings-blur-speed')?.value.trim()   || null,
-      blur_plates:           document.getElementById('m-settings-blur-plates')?.checked ?? false,
       cam_pattern:           document.getElementById('m-settings-cam-pattern')?.value.trim()  || '',
+      ui_timeline_method:    document.getElementById('m-settings-timeline-method')?.value || 'music-driven',
       beats_auto:            document.getElementById('m-settings-beats-auto')?.checked ?? true,
       beats_fast:            parseInt(document.getElementById('m-settings-beats-fast')?.value)  || null,
       beats_mid:             parseInt(document.getElementById('m-settings-beats-mid')?.value)   || null,
@@ -622,6 +627,28 @@ async function generateSettingsPrompts() {
   if (pos && data.positive) pos.value = data.positive;
   if (neg && data.negative) neg.value = data.negative;
 }
+
+function toggleProjectHelp() {
+  const modal = document.getElementById('m-project-modal');
+  const btn   = document.getElementById('m-help-btn');
+  if (!modal) return;
+  const on = modal.classList.toggle('show-help');
+  localStorage.setItem('projectHelp', on ? '1' : '');
+  if (btn) btn.classList.toggle('active', on);
+}
+window.toggleProjectHelp = toggleProjectHelp;
+
+function _applyDetectMethod(method) {
+  const p = document.getElementById('m-detect-clip-params');
+  if (p) p.style.display = (method === 'traditional') ? 'none' : 'contents';
+}
+window._applyDetectMethod = _applyDetectMethod;
+
+function _applyTimelineMethod(method) {
+  const s = document.getElementById('m-music-driven-settings');
+  if (s) s.style.display = (method === 'traditional') ? 'none' : '';
+}
+window._applyTimelineMethod = _applyTimelineMethod;
 
 async function suggestClipParams() {
   const btn = document.getElementById('m-analyze-auto-params');

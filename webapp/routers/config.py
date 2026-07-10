@@ -101,6 +101,7 @@ async def get_settings():
         "sort_newest":          wcfg("sort_newest", ""),
         "orig_vol_pct":         orig_pct,
         "music_vol_pct":        music_pct,
+        "global_clip_context":  wcfg("global_clip_context", ""),
     }
 
 
@@ -114,7 +115,10 @@ async def put_settings(data: dict):
     save_wcfg(data)
     if "max_concurrent_jobs" in data:
         new_val = max(1, int(data["max_concurrent_jobs"]))
-        _st.job_semaphore = asyncio.Semaphore(new_val)
+        running = sum(1 for j in _st.jobs.values() if j.status == "running")
+        new_sem = asyncio.Semaphore(new_val)
+        new_sem._value = max(0, new_val - running)
+        _st.job_semaphore = new_sem
     return {"ok": True}
 
 
@@ -127,8 +131,12 @@ async def generate_about(data: dict):
     if work_dir and not Path(work_dir).is_dir():
         raise HTTPException(400, f"work_dir not found: {work_dir}")
 
+    global_context = wcfg("global_clip_context", "").strip()
+    cmd = [sys.executable, str(SCRIPT_DIR / "generate_config.py"), description]
+    if global_context:
+        cmd += ["--global-context", global_context]
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(SCRIPT_DIR / "generate_config.py"), description,
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=work_dir or str(SCRIPT_DIR),

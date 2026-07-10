@@ -32,13 +32,21 @@ async function openAppSettingsModal() {
 
   _initVolSlider('m-app-music-vol', 'm-app-music-vol-val', settings?.music_vol_pct ?? 100);
 
+  const clipCtxEl = document.getElementById('m-app-clip-context');
+  if (clipCtxEl && settings) {
+    clipCtxEl.value = settings.global_clip_context ||
+      'helmet-cam and handlebar/chest action cameras, KTM adventure motorcycle, road always visible in frame, both rider-POV and face-cam perspectives';
+  }
+
   await _appQueueRefresh();
   await _appYtCheckStatus();
   modal.style.display = 'flex';
+  _queueTimer = setInterval(_appQueueRefresh, 3000);
 }
 window.openAppSettingsModal = openAppSettingsModal;
 
 async function closeAppSettingsModal() {
+  if (_queueTimer) { clearInterval(_queueTimer); _queueTimer = null; }
   await saveAppSettings();
   const modal = document.getElementById('m-appsettings-modal');
   if (modal) modal.style.display = 'none';
@@ -68,10 +76,11 @@ async function saveAppSettings() {
   const dataRoot   = document.getElementById('m-app-data-root')?.value.trim() ?? '';
   const status     = document.getElementById('m-app-settings-status');
 
+  const clipCtx = document.getElementById('m-app-clip-context')?.value ?? '';
   const r = await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_concurrent_jobs: concurrent, music_vol_pct: musicVol }),
+    body: JSON.stringify({ max_concurrent_jobs: concurrent, music_vol_pct: musicVol, global_clip_context: clipCtx }),
   });
   if (!r.ok) { if (status) status.textContent = '✗ Save failed'; return; }
 
@@ -106,6 +115,11 @@ window._appPickDataRoot = _appPickDataRoot;
 window.saveAppSettings = saveAppSettings;
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
+function _queuePhaseLabel(phase) {
+  return (typeof _tm === 'function' ? _tm('misc.phase.' + phase) : null) || phase || '';
+}
+let _queueTimer = null;
+
 async function _appQueueRefresh() {
   const list = document.getElementById('m-app-queue-list');
   if (!list) return;
@@ -124,29 +138,70 @@ async function _appQueueRefresh() {
 
   list.innerHTML = '';
   for (const j of active) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--border)';
+
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)';
+    row.style.cssText = 'display:flex;align-items:center;gap:8px';
 
     const dot = document.createElement('span');
-    dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${j.status === 'running' ? 'var(--green-hi)' : 'var(--yellow)'}`;
+    dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${j.status === 'running' ? 'var(--green-hi)' : 'var(--sub)'}`;
 
     const name = document.createElement('span');
     name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px';
     const dir = j.work_dir || j.id;
-    name.textContent = dir.split('/').pop() + (j.status === 'queued' ? ' (queued)' : '');
+    const segs = dir.split('/');
+    name.textContent = segs.length >= 2 ? segs.slice(-2).join('/') : segs.pop();
     name.title = dir;
+
+    const phase = document.createElement('span');
+    const phaseText = j.status === 'queued'
+      ? _tm('misc.queued')
+      : _queuePhaseLabel(j.phase);
+    phase.style.cssText = 'font-size:10px;color:var(--sub);white-space:nowrap;flex-shrink:0';
+    phase.textContent = phaseText;
 
     const stopBtn = document.createElement('button');
     stopBtn.className = 'm-btn m-btn-ghost m-btn-sm';
-    stopBtn.textContent = '✕ Stop';
+    stopBtn.textContent = '✕';
+    stopBtn.title = 'Stop';
     stopBtn.onclick = async () => {
       stopBtn.disabled = true;
       await fetch(`/api/jobs/${j.id}`, { method: 'DELETE' }).catch(() => {});
       await _appQueueRefresh();
     };
 
-    row.append(dot, name, stopBtn);
-    list.appendChild(row);
+    row.append(dot, name, phase, stopBtn);
+    wrap.appendChild(row);
+
+    // Progress bar + ETA (only when running and progress known)
+    const pct = j.progress ?? 0;
+    if (j.status === 'running' && pct > 0) {
+      const pbRow = document.createElement('div');
+      pbRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:3px;padding-left:16px';
+
+      const track = document.createElement('div');
+      track.style.cssText = 'flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden';
+      const fill = document.createElement('div');
+      fill.style.cssText = `height:3px;background:var(--blue);border-radius:2px;width:${pct}%;transition:width .4s`;
+      track.appendChild(fill);
+
+      const info = document.createElement('span');
+      info.style.cssText = 'font-size:9px;color:var(--muted);white-space:nowrap';
+      let infoText = pct + '%';
+      if (j.progress_label) infoText += '  ' + j.progress_label.substring(0, 40);
+      if (j.started_at && pct > 2) {
+        const elapsed = Date.now() / 1000 - j.started_at;
+        const eta = elapsed * (100 - pct) / pct;
+        infoText += '  ETA ' + (eta < 60 ? `~${Math.round(eta)}s` : `~${Math.floor(eta/60)}m`);
+      }
+      info.textContent = infoText;
+
+      pbRow.append(track, info);
+      wrap.appendChild(pbRow);
+    }
+
+    list.appendChild(wrap);
   }
 }
 window._appQueueRefresh = _appQueueRefresh;

@@ -92,9 +92,6 @@ _JOB_CONFIG_MAP = {
     "beats_slow":          ("music_driven", "beats_slow"),
     "cam_pattern":         ("music_driven", "cam_pattern"),
     "gps_weight":          ("scene_selection", "gps_weight"),
-    "blur_speedometer_cams": ("privacy", "blur_speedometer_cams"),
-    "blur_plates":           ("privacy", "blur_plates"),
-    "consensus_min":         ("privacy", "consensus_min"),
     "photos_dir":            ("photos", "dir"),
     "cc_brightness":         ("color_correct", "brightness"),
     "cc_gamma":              ("color_correct", "gamma"),
@@ -149,6 +146,17 @@ def _expand_data_dir(result: dict) -> dict:
     return result
 
 
+def _sanitize_ini(text: str) -> str:
+    """Indent continuation lines so configparser doesn't choke on multiline values."""
+    out = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("[") and not stripped.startswith(";") and "=" not in stripped:
+            line = "    " + stripped
+        out.append(line)
+    return "\n".join(out)
+
+
 def read_job_config(work_dir: Path) -> dict:
     global_cp = configparser.ConfigParser()
     global_cp.read([str(APP_DIR / "config.ini"), str(USER_DATA_DIR / "global_config.ini")])
@@ -156,7 +164,10 @@ def read_job_config(work_dir: Path) -> dict:
     local_cp = configparser.ConfigParser()
     cfg_path = work_dir / "config.ini"
     if cfg_path.exists():
-        local_cp.read(str(cfg_path))
+        try:
+            local_cp.read(str(cfg_path))
+        except configparser.Error:
+            local_cp.read_string(_sanitize_ini(cfg_path.read_text(encoding="utf-8", errors="replace")))
 
     result = {}
     for field, (section, key) in _JOB_CONFIG_MAP.items():
@@ -377,8 +388,6 @@ class JobParams(BaseModel):
     clip_scan_clip_dur: Optional[float] = None
     clip_scan_min_gap:  Optional[float] = None
     score_all_cams:    bool             = True
-    blur_plates:        bool = False
-    blur_speedometer_cams: Optional[str] = None
     consensus_min:      Optional[int] = None
 
 
@@ -785,6 +794,14 @@ async def rerun_job(job_id: str, params: JobParams):
     if params.positive or params.negative:
         save_prompts_to_config(work_dir / "config.ini", params.positive or "", params.negative or "")
 
+    _preserve_rerun = (
+        "music_dir", "selected_track", "music_file", "music_files",
+        "shorts_music_dir", "shorts_music_dirs",
+        "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature",
+    )
+    for _k in _preserve_rerun:
+        if not d.get(_k) and job.params.get(_k):
+            d[_k] = job.params[_k]
     job.params         = d
     job.log            = _LogList(JOBS_DIR / f"{job.id}.log")
     job.status         = "queued"
@@ -1140,13 +1157,15 @@ async def _preview_sequence_inner(job_id: str):
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(SCRIPT_DIR),
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
         if proc.returncode != 0:
             err = stdout.decode(errors='replace')[-2000:]
             print(f"[preview-sequence] dry-run failed (rc={proc.returncode}):\n{err}", flush=True)
             raise HTTPException(500, f"Dry-run failed:\n{err}")
     except asyncio.TimeoutError:
-        raise HTTPException(504, "Dry-run timed out (>60s)")
+        try: proc.kill()
+        except Exception: pass
+        raise HTTPException(504, "Dry-run timed out (>180s)")
 
     if not seq_path.exists():
         raise HTTPException(500, "preview_sequence.json not written")
@@ -1501,6 +1520,10 @@ async def preview_stream(job_id: str):
         if need_crop else
         f"scale={W}:{H}:flags=fast_bilinear"
     )
+    photo_vf = (
+        f"scale={W}:{H}:flags=fast_bilinear:force_original_aspect_ratio=decrease,"
+        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black"
+    )
 
     enc_cmd = [
         ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
@@ -1525,9 +1548,20 @@ async def preview_stream(job_id: str):
         )
 
         async def _start_dec(slot):
+            dur = float(slot.get("duration", 3.0))
+            if slot.get("type") == "photo":
+                photo_path = slot.get("frame_url", "")
+                return await asyncio.create_subprocess_exec(
+                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                    "-loop", "1", "-i", photo_path, "-t", f"{dur:.4f}",
+                    "-vf", photo_vf,
+                    "-pix_fmt", "yuv420p", "-r", "30",
+                    "-f", "rawvideo", "pipe:1",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
             cp  = slot["clip_path"]
             ss  = float(slot.get("clip_ss", 0))
-            dur = float(slot.get("duration", 0))
             return await asyncio.create_subprocess_exec(
                 ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
                 "-hwaccel", "cuda",
@@ -1541,7 +1575,8 @@ async def preview_stream(job_id: str):
 
         async def _feed():
             slots = [s for s in sequence
-                     if s.get("clip_path") and Path(s["clip_path"]).exists()]
+                     if (s.get("type") == "photo" and s.get("frame_url") and Path(s["frame_url"]).exists())
+                     or (s.get("clip_path") and Path(s["clip_path"]).exists())]
             cur_dec = None
             nxt_dec = None
             try:
@@ -1639,6 +1674,8 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
         async with job_semaphore:
             job.status     = "running"
             job.started_at = time.time()
+            job.progress = 0
+            job.progress_label = ''
             job.save()
             await job.broadcast({"type": "status", "status": "running", "phase": "music-driven"})
             try:
@@ -1692,9 +1729,37 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                 job.process = proc
                 async for raw in proc.stdout:
                     line = raw.decode("utf-8", errors="replace").rstrip()
-                    if line:
-                        job.log.append(line)
-                        await job.broadcast({"type": "log", "line": line})
+                    if not line:
+                        continue
+                    # WORKER_* structured progress from music_driven.py parallel encoding
+                    _wm = re.match(r'^WORKER_(START|PROGRESS|DONE)\s+(\d+)(.*)', line)
+                    if _wm:
+                        wstate, slot = _wm.group(1), int(_wm.group(2))
+                        rest = _wm.group(3).strip().split()
+                        if wstate == 'START' and rest:
+                            try:
+                                curr, total = map(int, rest[0].split('/'))
+                                await job.broadcast({"type": "worker_progress", "slot": slot, "state": "start", "curr": curr, "total": total})
+                            except (ValueError, IndexError):
+                                pass
+                        elif wstate == 'PROGRESS' and len(rest) >= 2:
+                            try:
+                                pct = int(rest[0])
+                                curr, total = map(int, rest[1].split('/'))
+                                job.progress = round(curr / total * 100) if total else 0
+                                await job.broadcast({"type": "worker_progress", "slot": slot, "state": "running", "pct": pct, "curr": curr, "total": total})
+                            except (ValueError, IndexError):
+                                pass
+                        elif wstate == 'DONE':
+                            await job.broadcast({"type": "worker_progress", "slot": slot, "state": "done"})
+                        continue
+                    # Track [N/M] overall progress
+                    _pm = re.search(r'\[\s*(\d+)\s*/\s*(\d+)\s*\](.*)', line)
+                    if _pm and int(_pm.group(2)) > 0:
+                        job.progress = round(int(_pm.group(1)) / int(_pm.group(2)) * 100)
+                        job.progress_label = _pm.group(3).strip()[:50]
+                    job.log.append(line)
+                    await job.broadcast({"type": "log", "line": line})
                 await proc.wait()
                 ok = proc.returncode == 0
 
@@ -2253,7 +2318,8 @@ async def job_frames(job_id: str):
     df = pd.read_csv(scores_csv).sort_values("scene")
     df = df.dropna(subset=["score"])
     if "avg_brightness" in df.columns:
-        df = df[pd.to_numeric(df["avg_brightness"], errors="coerce").fillna(0) >= 50.0]
+        _br = pd.to_numeric(df["avg_brightness"], errors="coerce")
+        df = df[_br.isna() | (_br >= 50.0)]
 
     cam_sources_csv = job.auto_dir() / "camera_sources.csv"
     avg_back_cam_take_sec = None

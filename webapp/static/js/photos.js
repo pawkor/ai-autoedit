@@ -2,6 +2,50 @@
 
 let _photoSelection = new Set();
 let _photoList = [];
+let _photoHoverTimer = null;
+let _photoHoverEl = null;
+
+function _showPhotoHover(photo, e) {
+  clearTimeout(_photoHoverTimer);
+  _photoHoverTimer = setTimeout(() => {
+    if (!_photoHoverEl) {
+      _photoHoverEl = document.createElement('div');
+      _photoHoverEl.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;display:none;' +
+        'background:#000;border:1px solid var(--border);border-radius:4px;overflow:hidden;' +
+        'box-shadow:0 4px 24px rgba(0,0,0,.85);';
+      const hi = document.createElement('img');
+      hi.style.cssText = 'display:block;max-width:600px;max-height:400px;object-fit:contain;';
+      _photoHoverEl.appendChild(hi);
+      document.body.appendChild(_photoHoverEl);
+    }
+    const hi = _photoHoverEl.querySelector('img');
+    const src = `/api/file?path=${encodeURIComponent(photo.path)}`;
+    if (hi && hi.dataset.src !== src) { hi.src = src; hi.dataset.src = src; }
+    _positionPhotoHover(e);
+    _photoHoverEl.style.display = '';
+  }, 400);
+}
+
+function _hidePhotoHover() {
+  clearTimeout(_photoHoverTimer);
+  if (_photoHoverEl) _photoHoverEl.style.display = 'none';
+}
+
+function _movePhotoHover(e) {
+  if (_photoHoverEl && _photoHoverEl.style.display !== 'none') _positionPhotoHover(e);
+}
+
+function _positionPhotoHover(e) {
+  if (!_photoHoverEl) return;
+  const W = 616, H = 416;
+  let x = e.clientX + 18;
+  let y = e.clientY - Math.round(H / 2);
+  if (x + W > window.innerWidth)  x = e.clientX - W - 18;
+  if (y < 6) y = 6;
+  if (y + H > window.innerHeight) y = window.innerHeight - H - 6;
+  _photoHoverEl.style.left = x + 'px';
+  _photoHoverEl.style.top  = y + 'px';
+}
 let _previewIdx = -1;
 
 async function openPhotoBrowser() {
@@ -53,14 +97,18 @@ function _renderPhotoGrid() {
     cell.dataset.path = photo.path;
 
     const imgWrap = document.createElement('div');
-    imgWrap.style.cssText = 'position:relative;aspect-ratio:1/1;overflow:hidden;flex-shrink:0;';
+    imgWrap.style.cssText = 'position:relative;overflow:hidden;background:#000;aspect-ratio:4/3;';
 
     const img = document.createElement('img');
     img.src = photo.thumb_url;
-    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+    img.style.cssText = 'width:100%;height:100%;display:block;object-fit:contain;';
     img.loading = 'lazy';
     img.title = photo.filename;
     img.addEventListener('click', (e) => { e.stopPropagation(); openPhotoPreview(photo.path); });
+
+    cell.addEventListener('mouseenter', (e) => _showPhotoHover(photo, e));
+    cell.addEventListener('mouseleave', _hidePhotoHover);
+    cell.addEventListener('mousemove', _movePhotoHover);
 
     const cb = document.createElement('div');
     cb.style.cssText = `position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:3px;

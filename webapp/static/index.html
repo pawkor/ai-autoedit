@@ -38,6 +38,7 @@
                 id="m-btn-cancel" style="display:none"
                 data-i18n-title="m.title_cancel" title="Cancel render">✕</button>
       </div>
+      <div id="m-worker-bars" style="display:none"></div>
 
       <header id="m-topbar">
         <span id="m-project-name" class="m-project-name"
@@ -268,10 +269,13 @@
     <div class="m-modal" style="max-width:860px;width:100%">
       <div class="m-modal-hd">
         <span class="m-modal-title" data-i18n="m.project_title">⚙ Project</span>
+        <button class="m-btn m-btn-ghost m-btn-sm" id="m-help-btn"
+                onclick="toggleProjectHelp()"
+                data-i18n-title="m.title_help" title="Toggle field descriptions">? Help</button>
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeProjectModal()"
                 data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-      <div style="padding:12px 12px 4px;flex:1;overflow-y:auto;min-height:0">
+      <div class="m-modal-body">
 
         <!-- Source -->
         <div class="m-modal-section-hd" data-i18n="m.sec_source">Source</div>
@@ -314,11 +318,14 @@
              data-i18n="m.sec_analyze">Analyze</div>
         <div class="m-analyze-opts" style="margin-top:4px">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <label class="m-analyze-check"
-                   data-i18n-tip="m.tip_clip_first" data-tip="Skip scene detection. Sample frames every N seconds, extract clips around CLIP score peaks. Faster for long recordings.">
-              <input type="checkbox" id="m-analyze-clip-first" checked>
-              <span data-i18n="m.lbl_clip_first">CLIP-first</span>
-            </label>
+            <select id="m-analyze-detect-method" class="m-input"
+                    style="width:auto;height:26px;font-size:11px"
+                    onchange="_applyDetectMethod(this.value)"
+                    data-tip="CLIP-first: sample frames every N sec, find score peaks, extract clips. Traditional: scene change detection.">
+              <option value="clip-first">CLIP-first</option>
+              <option value="traditional">Traditional</option>
+            </select>
+            <span id="m-detect-clip-params" style="display:contents">
             <label class="m-analyze-check"
                    data-i18n-tip="m.tip_clip_dur" data-tip="Duration of each extracted clip (seconds). Shorter = more precise cuts, longer = more context per clip.">
               <span data-i18n="m.lbl_clip_dur">Clip dur</span>
@@ -346,7 +353,10 @@
             <button class="m-btn m-btn-ghost m-btn-sm" id="m-analyze-auto-params"
                     onclick="suggestClipParams()"
                     title="Suggest params based on total source duration">↻ Auto</button>
+            </span>
           </div>
+          <div class="m-field-help" data-i18n-help="m.help.detect_method"></div>
+          <div class="m-field-help" data-i18n-help="m.help.clip_params" style="margin-top:-2px"></div>
           <div style="margin-top:4px">
             <label class="m-analyze-check"
                    data-i18n-tip="m.tip_score_all" data-tip="Run CLIP scoring on all cameras. Required for music-driven multicam. Auto-enabled with CLIP-first.">
@@ -354,9 +364,11 @@
               <span data-i18n="m.lbl_score_all">Score all cams</span>
             </label>
           </div>
+          <div class="m-field-help" data-i18n-help="m.help.score_all"></div>
         </div>
         <div style="margin-top:8px">
           <label class="m-label" data-i18n="m.lbl_description">Description</label>
+          <div class="m-field-help" data-i18n-help="m.help.description"></div>
           <textarea id="m-analyze-description" class="m-input" rows="5"
                     data-i18n-ph="m.ph_description"
                     placeholder="Describe the footage (location, activity, mood)…"
@@ -368,6 +380,7 @@
             <span id="m-analyze-gen-status" class="m-section-meta"></span>
           </div>
         </div>
+        <div class="m-field-help" data-i18n-help="m.help.prompts" style="margin-top:4px"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <div style="flex:1;min-width:0">
             <label class="m-label" data-i18n="m.lbl_positive">Positive prompts</label>
@@ -409,13 +422,26 @@
              data-i18n="m.sec_render">Render</div>
         <div class="m-settings-row">
           <span class="m-settings-label"
+                data-tip="How to build the video timeline from scored clips.">Timeline</span>
+          <select id="m-settings-timeline-method" class="m-input"
+                  style="width:auto;height:26px;font-size:11px"
+                  onchange="_applyTimelineMethod(this.value)">
+            <option value="music-driven">Music-driven</option>
+            <option value="traditional">Traditional</option>
+          </select>
+        </div>
+        <div class="m-field-help" data-i18n-help="m.help.timeline_method"></div>
+        <div class="m-settings-row" style="margin-top:4px">
+          <span class="m-settings-label"
                 data-i18n="m.lbl_cam_pattern"
                 data-i18n-tip="m.tip_cam_pattern"
-                data-tip="Camera cut pattern. ab = alternation, aabaab = 2:1 rhythm, aabb = pairs. Empty = auto.">Cam pattern</span>
+                data-tip="Camera cut pattern. ab = alternation, aabaab = 2:1 rhythm, aabb = pairs. Empty = auto (diversity-cap for music-driven).">Cam pattern</span>
           <input id="m-settings-cam-pattern" class="m-input"
                  type="text" placeholder="ab, aabaab, aabb… (empty = auto)"
                  style="width:180px;font-family:monospace">
         </div>
+        <div class="m-field-help" data-i18n-help="m.help.cam_pattern"></div>
+        <div id="m-music-driven-settings">
         <div class="m-settings-row" style="margin-top:4px">
           <span class="m-settings-label"
                 data-i18n="m.lbl_beats_shot"
@@ -443,6 +469,8 @@
                    min="1" max="16" step="1" style="width:46px" placeholder="6">
           </span>
         </div>
+        <div class="m-field-help" data-i18n-help="m.help.beats_shot"></div>
+        </div>
 
         <!-- Shorts -->
         <div class="m-modal-section-hd" style="margin-top:14px"
@@ -454,22 +482,6 @@
                  data-i18n-ph="m.ph_shorts_music" placeholder="/data/music/shorts…">
         </div>
 
-        <!-- Privacy -->
-        <div class="m-modal-section-hd" style="margin-top:14px"
-             data-i18n="m.sec_privacy">Privacy Blur</div>
-        <div class="m-settings-row">
-          <span class="m-settings-label" data-i18n="m.lbl_speedo">Speedo cams</span>
-          <input id="m-settings-blur-speed" class="m-input m-settings-input"
-                 type="text"
-                 data-i18n-ph="m.ph_speedo" placeholder="helmet, front…">
-        </div>
-        <div class="m-settings-row" style="margin-top:4px">
-          <span class="m-settings-label" data-i18n="m.lbl_blur_plates">Blur plates</span>
-          <label class="m-analyze-check" style="margin:0">
-            <input type="checkbox" id="m-settings-blur-plates">
-            <span data-i18n="m.lbl_license_plates">License plates</span>
-          </label>
-        </div>
 
       </div>
       <div class="m-modal-footer">
@@ -493,7 +505,7 @@
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeShortsModal()"
                 data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-      <div style="padding:10px 0 4px">
+      <div class="m-modal-body">
         <div class="m-shorts-count-row">
           <span class="m-settings-label" data-i18n="m.lbl_count">Count</span>
           <input id="m-shorts-count" class="m-input" type="number"
@@ -574,7 +586,7 @@
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="mYtClose()"
                 data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-      <div style="padding:12px 0 4px;overflow-y:auto;max-height:80vh">
+      <div class="m-modal-body" style="max-height:80vh">
         <div class="m-upload-row">
           <span class="m-upload-label" data-i18n="m.lbl_file">File</span>
           <span id="m-yt-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
@@ -656,7 +668,7 @@
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="mYtsClose()"
                 data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-      <div style="padding:12px 0 4px;overflow-y:auto;max-height:80vh">
+      <div class="m-modal-body" style="max-height:80vh">
         <div class="m-upload-row">
           <span class="m-upload-label" data-i18n="m.lbl_file">File</span>
           <span id="m-yts-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
@@ -721,7 +733,7 @@
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="mIgClose()"
                 data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-      <div style="padding:12px 0 4px">
+      <div class="m-modal-body">
         <div class="m-upload-row">
           <span class="m-upload-label" data-i18n="m.lbl_file">File</span>
           <span id="m-ig-filename" style="color:var(--sub);padding-top:5px;word-break:break-all"></span>
@@ -760,13 +772,13 @@
   <!-- App Settings modal -->
   <div id="m-appsettings-modal" class="m-modal-overlay" style="display:none"
        onclick="if(event.target===this)closeAppSettingsModal()">
-    <div class="m-modal" style="max-width:520px;width:100%">
+    <div class="m-modal" style="max-width:1040px;width:100%;min-height:60vh">
       <div class="m-modal-hd">
         <span class="m-modal-title" data-i18n="m.appsettings_title">⚙ Global Settings</span>
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeAppSettingsModal()"
                 data-i18n-title="m.title_close" title="Close">×</button>
       </div>
-      <div style="padding:10px 0 4px">
+      <div class="m-modal-body">
 
         <!-- HW info -->
         <div id="m-app-hw-info" class="m-section-meta"
@@ -825,6 +837,16 @@
           <div id="m-app-yt-secrets-hint" class="m-section-meta"
                style="display:none;color:var(--red);margin-top:2px"
                data-i18n="m.yt_missing">youtube_client_secrets.json missing</div>
+        </div>
+
+        <!-- Global CLIP context -->
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+          <div class="m-modal-section-hd" style="margin-bottom:4px"
+               data-i18n="m.lbl_global_clip_ctx">Global CLIP Context</div>
+          <div class="m-section-meta" style="margin-bottom:6px"
+               data-i18n="m.hint_global_clip_ctx">Sent to Claude when generating prompts. Describe your filming setup — camera type, bike, typical perspective. Set once, applies to all projects.</div>
+          <textarea id="m-app-clip-context" class="m-input" rows="3"
+                    style="width:100%;box-sizing:border-box;resize:vertical;font-size:12px"></textarea>
         </div>
 
         <!-- Queue -->

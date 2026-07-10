@@ -751,7 +751,9 @@ async def run(params: dict, work_dir: Path,
     # ── [1/6] Find source files ───────────────────────────────────────────────
     def _is_source(f: Path) -> bool:
         n = f.name.lower()
-        return n.endswith(".mp4") and not n.startswith("highlight") and not n.endswith(".lrv")
+        if not any(n.endswith(e) for e in (".mp4", ".mov", ".mts", ".m2ts", ".mkv", ".avi")):
+            return False
+        return not n.startswith("highlight") and not n.endswith(".lrv")
 
     if cameras:
         source_files = sorted(
@@ -822,7 +824,8 @@ async def run(params: dict, work_dir: Path,
 
         yield ""
         if _scan_phase is None:
-            _clip_count = len(list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+            scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
+            _clip_count = len(scene_files)
             yield (f"[2/6] CLIP-first: params unchanged — "
                    f"{_clip_count} clips cached, skipping rescan")
         else:
@@ -1429,7 +1432,12 @@ async def run(params: dict, work_dir: Path,
     try:
         from gps_index import build_gps_index, annotate_scores_csv as _gps_annotate
         _gps_exiftool = cp.get("paths", "exiftool", fallback="exiftool")
-        _gps_index = build_gps_index(work_dir, exiftool=_gps_exiftool)
+        yield "  GPS: scanning source files…"
+        _gps_index = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: build_gps_index(work_dir, exiftool=_gps_exiftool)
+        )
+        if not _gps_index:
+            yield "  GPS: no GPS data found"
         if _gps_index:
             _allcam = auto_dir / "scene_scores_allcam.csv"
             _gps_csv = _allcam if _allcam.exists() else scores_csv
@@ -1438,9 +1446,11 @@ async def run(params: dict, work_dir: Path,
                 for _k, _v in cp.items("cam_offsets"):
                     try: _cam_offsets[_k] = float(_v)
                     except ValueError: pass
-            _gps_ok = _gps_annotate(
-                _gps_csv, auto_dir / "autocut", _gps_index,
-                ffprobe=ffprobe, cam_offsets=_cam_offsets,
+            _gps_ok = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _gps_annotate(
+                    _gps_csv, auto_dir / "autocut", _gps_index,
+                    ffprobe=ffprobe, cam_offsets=_cam_offsets,
+                )
             )
             if _gps_ok:
                 try:

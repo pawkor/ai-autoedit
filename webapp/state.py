@@ -215,6 +215,8 @@ class Job:
         self.subscribers: set[WebSocket] = set()
         self.analyze_result: Optional[dict] = None
         self.selected_track: Optional[str] = None
+        self.progress: int = 0
+        self.progress_label: str = ''
 
     def to_dict(self) -> dict:
         return {
@@ -228,6 +230,8 @@ class Job:
             "analyze_result": self.analyze_result,
             "selected_track": self.selected_track,
             "shorts_running": self.shorts_running,
+            "progress":       self.progress,
+            "progress_label": self.progress_label,
         }
 
     def save(self):
@@ -447,6 +451,8 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
     async with job_semaphore:
         job.status = "running"
         job.phase  = "analyzing" if analyze_only else "rendering"
+        job.progress = 0
+        job.progress_label = ''
         job.started_at = time.time()
         await job.broadcast({"type": "status", "status": "running", "phase": job.phase})
         job.save()
@@ -462,6 +468,10 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
                 for part in raw_line.split('\r'):
                     line = part.rstrip('\n').rstrip()
                     if line:
+                        _pm = re.search(r'\[\s*(\d+)\s*/\s*(\d+)\s*\](.*)', line)
+                        if _pm and int(_pm.group(2)) > 0:
+                            job.progress = round(int(_pm.group(1)) / int(_pm.group(2)) * 100)
+                            job.progress_label = _pm.group(3).strip()[:50]
                         is_progress = bool(re.search(r'^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|', line))
                         if not is_progress:
                             job.log.append(line)

@@ -43,6 +43,17 @@ Domyślna metoda. Nie szuka cięć montażowych — szuka dobrego materiału. Sk
 
 Wyniki: pliki `-clip-NNN` w `autocut/`. Wymagane dla music-driven multicam — `score_all_cams` scoruje wszystkie kamery → `scene_scores_allcam.csv`.
 
+**3-fazowy cache** — Re-analyze sprawdza co się zmieniło i uruchamia tylko potrzebne etapy:
+
+| Zmiana | Faza | Koszt |
+|--------|------|-------|
+| `interval` | `all` — pełny rescan | minuty (GPU) |
+| `min_gap` | `reselect` — nowy wybór peaków z zapisanych raw scores | minuty (GPU re-score) |
+| `clip_dur` | `reextract` — tylko re-cut clipów | sekundy (ffmpeg, bez GPU) |
+| brak zmian | skip | natychmiastowe |
+
+Pliki pośrednie w `_autoframe/`: `frame_raw_scores/{stem}.json`, `selected_peaks/{stem}.json`.
+
 ### Detekcja scen — PySceneDetect (opcjonalna)
 
 Dostępna gdy CLIP-first jest wyłączony w Advanced modal. Wykrywa cięcia przez różnice histogramów kolorów (`detect-content`). ffprobe wykrywa rzeczywisty fps i przekazuje przez `--frame-rate` — naprawia błędne timecody w plikach VFR (np. kamery tylne z niestandardowym `time_base`).

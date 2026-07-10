@@ -444,7 +444,9 @@ def _parse_cam_pattern(pattern: str, cameras: list[str]) -> list[str] | None:
 def match_clips(schedule: list[dict], clips: list[dict],
                 chron_weight: float = 0.0,
                 cam_pattern: str = "",
-                cam_order: list[str] | None = None) -> list[dict]:
+                cam_order: list[str] | None = None,
+                max_consecutive_cam: int = 3,
+                gps_weight: float = 0.0) -> list[dict]:
     """
     Assign best clip to each slot.
     Scoring per candidate (when chron_weight=0):
@@ -483,18 +485,23 @@ def match_clips(schedule: list[dict], clips: list[dict],
     _src_window = max(4, num_sources * 2)
     recent_sources: collections.deque = collections.deque(maxlen=_src_window)
 
-    # Camera pattern (cyclic). Empty = default group-based interleaving when multicam.
+    # Camera selection: explicit pattern (user override) or diversity-cap (default).
     _resolved_pattern = _parse_cam_pattern(cam_pattern, cameras)
+    _use_diversity_cap = False
     if _resolved_pattern:
         print(f"  Camera pattern: '{cam_pattern}' → {_resolved_pattern[:8]}… "
               f"(repeating every {len(_resolved_pattern)} slots)")
     elif num_cameras >= 2:
-        # Default: 2 slots per camera then switch (e.g. [A,A,B,B] repeating)
-        _resolved_pattern = [cam for cam in cameras for _ in range(2)]
-        print(f"  Camera pattern: default group-2 → {_resolved_pattern} (repeating)")
+        # Diversity-cap: score-driven selection, block same camera after max_consecutive_cam hits.
+        # Proportions emerge naturally from clip counts — no hard alternation.
+        _use_diversity_cap = True
+        print(f"  Camera mode: diversity-cap (max {max_consecutive_cam} consecutive, "
+              f"cameras: {cameras})")
     else:
         print(f"  Camera pattern: none (score-driven, {num_cameras} camera(s))")
     _slot_idx = 0   # counts placed slots (for pattern indexing)
+    _last_cam: str | None = None
+    _consecutive_cam: int = 0
 
     for slot in schedule:
         dur    = slot["duration"]
@@ -502,6 +509,10 @@ def match_clips(schedule: list[dict], clips: list[dict],
 
         _desired_cam = (_resolved_pattern[_slot_idx % len(_resolved_pattern)]
                         if _resolved_pattern else None)
+        # Diversity-cap: when consecutive limit hit, exclude that camera until a switch occurs.
+        _cap_cam = (_last_cam
+                    if _use_diversity_cap and _consecutive_cam >= max_consecutive_cam
+                    else None)
 
         def _pool(relax_dur: bool = False,
                   camera_filter: bool = True,
@@ -514,6 +525,8 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 and (not source_filter or _clip_source(c["scene"]) not in recent_sources)
                 and (not camera_filter or _desired_cam is None
                      or c.get("camera", "unknown") == _desired_cam)
+                and (not camera_filter or _cap_cam is None
+                     or c.get("camera", "unknown") != _cap_cam)
             ]
 
         pool = _pool()
@@ -556,16 +569,19 @@ def match_clips(schedule: list[dict], clips: list[dict],
 
         def rank(c: dict) -> float:
             motion_match = 1.0 - abs(energy - c.get("motion_norm", 0.5))
+            # GPS bonus: high speed/turn clips score higher; max contribution = gps_weight * 0.3
+            _gps = c.get("gps_norm", 0.0) * gps_weight * 0.3
             if _chron_w > 0 and c.get("clip_time_norm") is not None:
                 music_pos   = slot["start"] / total_music_dur
                 chron_match = 1.0 - abs(music_pos - c["clip_time_norm"])
                 return (c["score"] * 0.50
                         + motion_match  * 0.30
-                        + chron_match   * _chron_w)
+                        + chron_match   * _chron_w
+                        + _gps)
             # High-energy slots: favor motion over CLIP score for more dynamic feel
             if energy > 0.65:
-                return c["score"] * 0.45 + motion_match * 0.55
-            return c["score"] * 0.60 + motion_match * 0.40
+                return c["score"] * 0.45 + motion_match * 0.55 + _gps
+            return c["score"] * 0.60 + motion_match * 0.40 + _gps
 
         best = max(pool, key=rank)
         if not _reusing:
@@ -573,6 +589,12 @@ def match_clips(schedule: list[dict], clips: list[dict],
         else:
             reuse_used.add(best["scene"])
         recent_sources.append(_clip_source(best["scene"]))
+        _best_cam = best.get("camera", "unknown")
+        if _best_cam == _last_cam:
+            _consecutive_cam += 1
+        else:
+            _last_cam  = _best_cam
+            _consecutive_cam = 1
         _slot_idx += 1
 
         # Motion anchor: place peak_motion at ~30% into the slot so the
@@ -616,8 +638,6 @@ def match_clips(schedule: list[dict], clips: list[dict],
 def render(edit: list[dict], music_path: Path, music_ss: float,
            output: Path, ffmpeg: str, nvenc: bool = True,
            resolution: str = "", framerate: str = "60",
-           blur_speed_cams: list[str] | None = None,
-           blur_plates: bool = False,
            color_correct: str = "",
            cam_crop: dict | None = None) -> None:
     """
@@ -679,61 +699,15 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
             _e["_snapped_dur"] = _this_frames / _fps_int
             _accum_frames = _ideal_total
 
-        # ── Privacy pre-pass (single-threaded, GPU detection) ────────────────
-        # Detect speedometer + license plate regions before parallel encoding
-        # so GPU is not contended between detection inference and NVENC.
-        _privacy_regions: dict[int, list[dict]] = {}
-        _need_privacy = (blur_speed_cams or blur_plates)
-        if _need_privacy:
-            try:
-                # blur_speed_cams might be a string "helmet,rear" or already a list/None
-                _speed_cam_set = set()
-                if isinstance(blur_speed_cams, str):
-                    _speed_cam_set = {c.strip() for c in blur_speed_cams.split(",") if c.strip()}
-                elif blur_speed_cams:
-                    _speed_cam_set = set(blur_speed_cams)
-
-                from privacy import detect_clip_regions, blur_vf as _blur_vf_fn
-                print(f"{_ts()}  Privacy: detecting regions ({len(edit)} clips)…", flush=True)
-                for _pi, _entry in enumerate(edit):
-                    if _entry.get("type") == "photo":
-                        continue
-                    _cam = _entry.get("camera", "")
-                    _do_speed  = _cam in _speed_cam_set
-                    _do_plates = blur_plates
-                    if not _do_speed and not _do_plates:
-                        continue
-                    _regs = detect_clip_regions(
-                        Path(_entry["clip_path"]), _entry["clip_ss"], _entry["duration"],
-                        ffmpeg=ffmpeg, detect_speed=_do_speed, detect_plates=_do_plates,
-                        dense=_do_plates,
-                    )
-                    # Fallback: scan full clip when rendered window missed plates
-                    if _do_plates and not any(r["type"] == "plate" for r in _regs):
-                        _total = _entry.get("clip_total_dur", 0)
-                        if _total > _entry["duration"] + 0.5:
-                            _full = detect_clip_regions(
-                                Path(_entry["clip_path"]), 0.0, _total,
-                                ffmpeg=ffmpeg, detect_speed=False, detect_plates=True,
-                            )
-                            _prs = [r for r in _full if r["type"] == "plate"]
-                            if _prs:
-                                # Best cluster → static blur box (plate not in render window)
-                                _best_pr = max(_prs, key=lambda r: len(r["detections"]))
-                                _dets = sorted(_best_pr["detections"].items())
-                                _mid = _dets[len(_dets) // 2]
-                                _regs = list(_regs) + [{
-                                    "type": "plate",
-                                    "detections": {0.0: _mid[1]},
-                                    "frame_w": _best_pr["frame_w"],
-                                    "frame_h": _best_pr["frame_h"],
-                                }]
-                    if _regs:
-                        _privacy_regions[_pi] = _regs
-                n_with = sum(1 for r in _privacy_regions.values() if r)
-                print(f"{_ts()}  Privacy: {n_with}/{len(edit)} clips have regions to blur", flush=True)
-            except Exception as _pe:
-                print(f"  Privacy detection error (skipping): {_pe}", flush=True)
+        # Parallel encode slots — NVENC has a session cap (typically 3-5)
+        trim_workers = 3 if nvenc else _WORKERS
+        total_clips = len(edit)
+        import queue as _trim_q, threading as _thr
+        _slot_pool = _trim_q.Queue()
+        for _s in range(trim_workers):
+            _slot_pool.put(_s)
+        _done_lock = _thr.Lock()
+        _done_count = [0]
 
         def _trim_one(args):
             i, entry = args
@@ -773,31 +747,8 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                     return (i, None, 0.0)
                 return (i, out, dur)
 
-            # Build filter: privacy blur FIRST (in original coords), then scale/fps
-            # IMPORTANT: detection coords are in original-resolution space, so blur
-            # must be applied before any scale filter that changes frame dimensions.
-            _prv_regs = _privacy_regions.get(i, [])
-            _fc_script_path = None
             _entry_vf, _entry_vf_args = _build_vf(entry.get("camera", ""))
-            if _prv_regs:
-                import tempfile
-                from privacy import blur_vf as _blur_vf_fn
-                _prv_filter = _blur_vf_fn(_prv_regs, dur)  # [0:v] → [privacy_out]
-                if resolution:
-                    _fc = _prv_filter + f";[privacy_out]{_entry_vf}[out]"
-                    _fc_map = "[out]"
-                else:
-                    _fc = _prv_filter
-                    _fc_map = "[privacy_out]"
-                # Write filtergraph to temp file — large LK-tracked filtergraphs can
-                # exceed OS execve arg limit if passed inline as -filter_complex.
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.fc',
-                                                delete=False, dir='/tmp') as _tf:
-                    _tf.write(_fc)
-                    _fc_script_path = _tf.name
-                vf_final = ["-filter_complex_script", _fc_script_path, "-map", _fc_map]
-            else:
-                vf_final = _entry_vf_args
+            vf_final = _entry_vf_args
 
             cmd = [
                 ffmpeg, "-y",
@@ -810,28 +761,50 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                 "-map_metadata", "-1",
                 str(out)
             ]
+            slot = _slot_pool.get()
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True)
+                print(f"WORKER_START {slot} {i + 1}/{total_clips}", flush=True)
+                total_frames = max(1, round(dur * float(framerate)))
+                cmd_p = cmd[:-1] + ["-progress", "pipe:1", "-loglevel", "error", cmd[-1]]
+                proc = subprocess.Popen(cmd_p, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, text=True)
+                last_pct = -1
+                _stderr = ""
+                try:
+                    for _pl in proc.stdout:
+                        _pl = _pl.strip()
+                        if _pl.startswith("frame="):
+                            try:
+                                frame = int(_pl.split("=")[1].strip())
+                                pct = min(99, round(frame / total_frames * 100))
+                                if pct != last_pct:
+                                    last_pct = pct
+                                    print(f"WORKER_PROGRESS {slot} {pct} {i + 1}/{total_clips}",
+                                          flush=True)
+                            except ValueError:
+                                pass
+                    proc.wait()
+                    _stderr = proc.stderr.read()
+                finally:
+                    pass
+                print(f"WORKER_DONE {slot}", flush=True)
+                if proc.returncode != 0 or not out.exists():
+                    print(f"  WARN: trim failed for {entry['scene']}\n{_stderr}", flush=True)
+                    return (i, None, 0.0)
+                with _done_lock:
+                    _done_count[0] += 1
+                    _dc = _done_count[0]
+                # Use _snapped_dur (= n_frames/fps) as duration — NOT probed format=duration
+                # which includes container overhead > last PTS → freeze frame in concat.
+                print(f"  [{_dc}/{total_clips}] Clip encoding", flush=True)
+                return (i, out, dur)
             finally:
-                if _fc_script_path:
-                    Path(_fc_script_path).unlink(missing_ok=True)
-            if r.returncode != 0 or not out.exists():
-                print(f"  WARN: trim failed for {entry['scene']}\n{r.stderr}", flush=True)
-                return (i, None, 0.0)
-            # Use _snapped_dur (= n_frames/fps) as duration — NOT probed format=duration
-            # which includes container overhead > last PTS → freeze frame in concat.
-            return (i, out, dur)
+                _slot_pool.put(slot)
 
-        # Limit NVENC parallel encodes — GPU encoder has a session cap (typically 3-5)
-        trim_workers = 3 if nvenc else _WORKERS
         results = {}
-        total_clips = len(edit)
-        done_count = 0
         with ThreadPoolExecutor(max_workers=trim_workers) as pool:
             for i, out, actual_dur in pool.map(_trim_one, list(enumerate(edit))):
                 results[i] = (out, actual_dur)
-                done_count += 1
-                print(f"  [{done_count}/{total_clips}] clip (md)", flush=True)
 
         trimmed: list[tuple[Path, float]] = []
         for i in range(len(edit)):
@@ -954,10 +927,8 @@ def assemble(
             except Exception:
                 pass
     _framerate   = _cp.get("video",        "framerate",   fallback="60")
-    _cam_pattern = _cp.get("music_driven", "cam_pattern", fallback="")
-    # Privacy: blur speedometer + license plates
-    _blur_speed_cams = [c.strip() for c in _cp.get("privacy", "blur_speedometer_cams", fallback="").split(",") if c.strip()]
-    _blur_plates     = _cp.getboolean("privacy", "blur_plates", fallback=False)
+    _cam_pattern        = _cp.get("music_driven", "cam_pattern",         fallback="")
+    _max_consecutive_cam = int(_cp.get("music_driven", "max_consecutive_cam", fallback="3"))
     # Per-camera 4:3→16:9 center-crop map.
     _cam_crop_16x9: dict = {}
     if _cp.has_section("cam_crop_16x9"):
@@ -1041,7 +1012,6 @@ def assemble(
             output = auto_dir / "highlight_music_driven.mp4"
         render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
                resolution=_resolution, framerate=_framerate,
-               blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates,
                color_correct=_color_correct, cam_crop=_cam_crop_16x9)
         _music_vol = _cp.getfloat("music", "music_volume", fallback=0.7)
         (auto_dir / "music_info.json").write_text(
@@ -1154,6 +1124,7 @@ def assemble(
 
     # Load CLIP scores; hard-exclude banned scenes and negative-dominant scenes
     _all_scores: dict[str, float] = {}
+    _gps_raw:    dict[str, tuple[float, float]] = {}
     _neg_excluded = 0
     _BRIGHTNESS_BAN = float(_cp.get("music_driven", "brightness_ban", fallback="50.0") or "50.0")
     _dark_excluded = 0
@@ -1175,6 +1146,13 @@ def assemble(
                     _neg_excluded += 1
                     continue
                 _all_scores[scene] = final
+                try:
+                    _gps_raw[scene] = (
+                        float(row.get("gps_speed_max") or 0),
+                        float(row.get("gps_turn_max")  or 0),
+                    )
+                except (ValueError, TypeError):
+                    pass
             except (KeyError, ValueError):
                 pass
     if _dark_excluded:
@@ -1530,10 +1508,26 @@ def assemble(
         print(f"  ⚠ Only {len(clips)} unique clips for {len(schedule)} slots — schedule trimmed (no reuse)")
         schedule = schedule[:len(clips)]
 
+    # GPS bonus: normalize speed/turn across pool, attach gps_norm to each clip
+    _gps_weight = float(_cp.get("scene_selection", "gps_weight", fallback="0.0"))
+    if _gps_weight > 0 and _gps_raw:
+        _spd_vals = [s for s, _ in _gps_raw.values()]
+        _trn_vals = [t for _, t in _gps_raw.values()]
+        _spd_max  = max(_spd_vals) or 1.0
+        _trn_max  = max(_trn_vals) or 1.0
+        _gps_annotated = sum(1 for s, _ in _gps_raw.values() if s > 0)
+        for c in clips:
+            spd, trn = _gps_raw.get(c["scene"], (0.0, 0.0))
+            c["gps_norm"] = (spd / _spd_max) * 0.7 + (trn / _trn_max) * 0.3
+        print(f"  GPS blend (music-driven): weight={_gps_weight}  "
+              f"annotated={_gps_annotated}/{len(_all_scores)} scenes")
+
     # 4. Match clips to schedule
     _chron_weight = 0.20 if stem_to_time else 0.0
     edit = match_clips(schedule, clips, chron_weight=_chron_weight,
-                       cam_pattern=_cam_pattern, cam_order=_cam_order)
+                       cam_pattern=_cam_pattern, cam_order=_cam_order,
+                       max_consecutive_cam=_max_consecutive_cam,
+                       gps_weight=_gps_weight)
     if not edit:
         raise RuntimeError("Clip matching produced no edit")
 
@@ -1591,7 +1585,6 @@ def assemble(
 
     render(edit, music_path, music_ss, output, ffmpeg=ffmpeg, nvenc=nvenc,
            resolution=_resolution, framerate=_framerate,
-           blur_speed_cams=_blur_speed_cams, blur_plates=_blur_plates,
            color_correct=_color_correct, cam_crop=_cam_crop_16x9)
 
     # Write music info so apply_postprocess() can mix music over the final video

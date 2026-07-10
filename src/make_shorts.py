@@ -577,6 +577,23 @@ def main():
     if not raw:
         sys.exit("ERROR: scene_scores.csv is empty")
 
+    # Supplement scene_offsets from selected_peaks/*.json (CLIP-first mode).
+    # Each peak has clip_name → ts (start timestamp in source file).
+    if not scene_offsets:
+        _peaks_dir = auto_dir / "selected_peaks"
+        if _peaks_dir.is_dir():
+            import json as _json
+            for _pf in _peaks_dir.glob("*.json"):
+                try:
+                    for pk in _json.loads(_pf.read_text()).get("peaks", []):
+                        _cn = pk.get("clip_name")
+                        _ts = pk.get("ts")
+                        if _cn and _ts is not None:
+                            scene_offsets[_cn] = float(_ts)
+                except Exception:
+                    pass
+
+
     # Per-camera score normalisation (mirrors server.py job_frames logic).
     # Without this, one camera may dominate top-N if its raw scores are higher.
     cam_csv = auto_dir / "camera_sources.csv"

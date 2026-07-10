@@ -107,6 +107,15 @@ const TRANS = {
       'misc.no_gpu':         'GPU not detected',
       'misc.running':        'Running',
       'misc.queued':         'Queued',
+      'misc.phase.new':          'Initializing…',
+      'misc.phase.analyzing':    'Analyzing…',
+      'misc.phase.analyzed':     'Analyzed',
+      'misc.phase.rendering':    'Rendering…',
+      'misc.phase.music-driven': 'Music-driven…',
+      'misc.phase.postprocess':  'Post-processing…',
+      'misc.phase.shorts':       'Shorts…',
+      'misc.phase.done':         'Done',
+      'misc.phase.failed':       'Failed',
       'misc.settings_title': 'SETTINGS',
       'misc.settings_note':  'Changes to max concurrent jobs require server restart.',
       'misc.new_job':        'NEW JOB',
@@ -207,13 +216,34 @@ const TRANS = {
       'm.sec_shorts_cfg':'Shorts',
       'm.lbl_shorts_music':'Music dir',
       'm.ph_shorts_music':'/data/music/shorts…',
-      'm.sec_privacy':'Privacy Blur',
-      'm.lbl_speedo':'Speedo cams',
-      'm.ph_speedo':'helmet, front…',
-      'm.lbl_blur_plates':'Blur plates',
-      'm.lbl_license_plates':'License plates',
       'm.btn_save_project':'Save',
       'm.btn_analyze':'⚡ Analyze',
+      'm.title_help':'Toggle field descriptions',
+      'm.btn_help':'? Help',
+      // field help texts (shown when Help is toggled on)
+      'm.help.detect_method':
+        'CLIP-first — AI samples frames every N sec, scores them with a vision model, and extracts short clips around the best moments. Best for long continuous recordings (dashcam-style) where good shots are scattered.\n' +
+        'Traditional — detects hard cuts and scene changes in the footage. Best when clips are already well-separated in-camera.',
+      'm.help.clip_params':
+        'Clip dur: length of each extracted clip (shorter = tighter cuts, longer = more context). ' +
+        'Interval: how often to sample a frame (lower = more detail, slower scan). ' +
+        'Min gap: minimum distance between clips — prevents two clips from the same moment.',
+      'm.help.score_all':
+        'Scores clips from every camera with the AI model, not just the main one. Required for multicam music-driven renders — allows selecting the best angle for each beat.',
+      'm.help.timeline_method':
+        'Music-driven — assembles clips so cuts land on the beat of the selected music track. Clip duration adapts to music energy (loud chorus → fast cuts). Select a track in the Music panel first.\n' +
+        'Traditional — picks the highest-scored scenes and concatenates them in chronological order.',
+      'm.help.cam_pattern':
+        'Controls how cameras alternate in the output. Leave empty for automatic mode (diversity-cap: max 3 consecutive shots from one camera, then switches). ' +
+        'Examples: ab = strict A/B alternation, aabaab = camera A twice as often, aabb = pairs.',
+      'm.help.beats_shot':
+        'How many music beats each shot lasts. Auto mode adapts dynamically — quiet intro gets long shots, loud chorus gets fast cuts. ' +
+        'Manual: set a fixed number of beats per shot for each energy level (fast/mid/slow).',
+      'm.help.description':
+        'Describe the footage — location, route, road conditions, mood. Used by Claude AI to generate CLIP prompts automatically when you click ✦ Generate prompts.',
+      'm.help.prompts':
+        'CLIP prompts guide the AI scoring of frames. Positive: what should appear in a good shot (e.g. "mountain road, clear sky, sharp image"). ' +
+        'Negative: what to penalise (e.g. "blurry, windshield glare, helmet visor, tunnel").',
       // shorts modal
       'm.shorts_title':'▶ Shorts',
       'm.lbl_count':'Count',
@@ -262,6 +292,9 @@ const TRANS = {
       'm.btn_yt_connect':'Connect',
       'm.btn_yt_disconnect':'Disconnect',
       'm.yt_missing':'youtube_client_secrets.json missing',
+      'm.lbl_global_clip_ctx':'Global CLIP Context',
+      'm.hint_global_clip_ctx':'Sent to Claude when generating prompts. Describe your filming setup — camera type, bike, typical perspective. Set once, applies to all projects.',
+      'm.ph_global_clip_ctx':'helmet-cam and handlebar/chest action cameras, KTM adventure motorcycle, road always visible in frame, both rider-POV and face-cam perspectives…',
       'm.lbl_queue':'Queue',
       'm.btn_save_settings':'Save',
       // photo browser modal
@@ -373,6 +406,15 @@ const TRANS = {
       'misc.no_gpu':         'Brak GPU',
       'misc.running':        'W trakcie',
       'misc.queued':         'W kolejce',
+      'misc.phase.new':          'Inicjalizacja…',
+      'misc.phase.analyzing':    'Analiza…',
+      'misc.phase.analyzed':     'Przeanalizowano',
+      'misc.phase.rendering':    'Renderowanie…',
+      'misc.phase.music-driven': 'Music-driven…',
+      'misc.phase.postprocess':  'Post-processing…',
+      'misc.phase.shorts':       'Shorty…',
+      'misc.phase.done':         'Gotowe',
+      'misc.phase.failed':       'Błąd',
       'misc.settings_title': 'USTAWIENIA',
       'misc.settings_note':  'Zmiana maks. zadań wymaga restartu serwera.',
       'misc.new_job':        'NOWE ZADANIE',
@@ -478,13 +520,34 @@ const TRANS = {
       'm.sec_shorts_cfg':'Shorty',
       'm.lbl_shorts_music':'Folder muzyki',
       'm.ph_shorts_music':'/data/music/shorts…',
-      'm.sec_privacy':'Rozmycie prywatności',
-      'm.lbl_speedo':'Kamery prędkościomierza',
-      'm.ph_speedo':'kask, przód…',
-      'm.lbl_blur_plates':'Rozmyj tablice',
-      'm.lbl_license_plates':'Tablice rejestracyjne',
       'm.btn_save_project':'Zapisz',
       'm.btn_analyze':'⚡ Analizuj',
+      'm.title_help':'Pokaż/ukryj opisy pól',
+      'm.btn_help':'? Pomoc',
+      // field help texts
+      'm.help.detect_method':
+        'CLIP-first — AI próbkuje klatki co N sek, ocenia je modelem wizji i wycina klipy wokół najlepszych momentów. Najlepszy do długich ciągłych nagrań (dashcam), gdzie dobre ujęcia są rozsiane.\n' +
+        'Traditional — wykrywa twarde cięcia i zmiany scen w materiale. Najlepszy gdy klipy są już naturalnie rozdzielone z kamery.',
+      'm.help.clip_params':
+        'Czas klipu: długość wycinanego klipu (krótszy = dokładniejsze cięcia, dłuższy = więcej kontekstu). ' +
+        'Interwał: co ile sekund próbkować klatkę (niższy = więcej detali, wolniejszy skan). ' +
+        'Min odstęp: minimalna odległość między klipami — zapobiega duplikatom z tego samego momentu.',
+      'm.help.score_all':
+        'Ocenia klipy z każdej kamery modelem AI, nie tylko głównej. Wymagane dla multicam music-driven — pozwala wybrać najlepszy kąt dla każdego beatu.',
+      'm.help.timeline_method':
+        'Music-driven — składa klipy tak, żeby cięcia trafiały w beat wybranego utworu. Czas ujęcia dopasowuje się do energii muzyki (głośny refren → szybkie cięcia). Wybierz utwór w panelu Muzyka.\n' +
+        'Traditional — wybiera najlepiej ocenione sceny i łączy je w kolejności chronologicznej.',
+      'm.help.cam_pattern':
+        'Kontroluje kolejność kamer w wynikowym filmie. Zostaw puste dla trybu automatycznego (diversity-cap: max 3 ujęcia z rzędu z jednej kamery, potem zmiana). ' +
+        'Przykłady: ab = ścisłe przeplatanie A/B, aabaab = kamera A dwa razy częściej, aabb = pary.',
+      'm.help.beats_shot':
+        'Ile beatów muzycznych trwa jedno ujęcie. Tryb auto dostosowuje dynamicznie — ciche intro = długie ujęcia, głośny refren = szybkie cięcia. ' +
+        'Ręcznie: ustaw stałą liczbę beatów na ujęcie dla każdego poziomu energii (fast/mid/slow).',
+      'm.help.description':
+        'Opisz materiał — lokalizację, trasę, warunki, nastrój. Używane przez Claude AI do automatycznego generowania promptów CLIP po kliknięciu ✦ Generuj prompty.',
+      'm.help.prompts':
+        'Prompty CLIP kierują oceną AI klatek. Pozytywne: co powinno być w dobrym ujęciu (np. "górska droga, czyste niebo, ostry obraz"). ' +
+        'Negatywne: co odrzucać (np. "rozmazane, odbicie słońca od szyby, wizjer kasku, tunel").',
       // shorts modal
       'm.shorts_title':'▶ Shorty',
       'm.lbl_count':'Liczba',
@@ -533,6 +596,9 @@ const TRANS = {
       'm.btn_yt_connect':'Połącz',
       'm.btn_yt_disconnect':'Rozłącz',
       'm.yt_missing':'Brak pliku youtube_client_secrets.json',
+      'm.lbl_global_clip_ctx':'Globalny kontekst CLIP',
+      'm.hint_global_clip_ctx':'Wysyłany do Claude przy generowaniu promptów. Opisz setup nagrań — typ kamery, motocykl, typowa perspektywa. Ustaw raz, działa dla wszystkich projektów.',
+      'm.ph_global_clip_ctx':'kamera kaskowa i kamera na kierownicy/klatce, motocykl KTM adventure, droga zawsze widoczna w kadrze, perspektywa POV oraz kamera na twarz…',
       'm.lbl_queue':'Kolejka',
       'm.btn_save_settings':'Zapisz',
       // photo browser modal
@@ -569,6 +635,10 @@ function applyI18nModern() {
   document.querySelectorAll('[data-i18n-tip]').forEach(el => {
     const v = _tm(el.dataset.i18nTip);
     if (v !== el.dataset.i18nTip) el.dataset.tip = v;
+  });
+  document.querySelectorAll('[data-i18n-help]').forEach(el => {
+    const v = _tm(el.dataset.i18nHelp);
+    if (v !== el.dataset.i18nHelp) el.textContent = v;
   });
   const lb = document.getElementById('m-lang-btn');
   if (lb) lb.textContent = currentLang === 'en' ? 'PL' : 'EN';

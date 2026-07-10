@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.12 python3.12-dev python3-pip \
         wget gnupg ca-certificates \
-        bash libsndfile1 libgomp1 \
+        bash libsndfile1 libgomp1 libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 
 # jellyfin-ffmpeg7 — shared build known to work with NVIDIA driver 550+

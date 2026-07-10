@@ -455,7 +455,7 @@ async def save_yt_meta(job_id: str, data: dict):
     if desc:
         updates.setdefault("youtube", {})["description"] = desc.replace("\n", "\\n")
     if notes is not None:
-        updates.setdefault("youtube", {})["notes"] = notes
+        updates.setdefault("youtube", {})["notes"] = notes.replace("\n", "\\n")
     if updates:
         update_config_ini(work_dir / "config.ini", updates)
     return {"ok": True}
