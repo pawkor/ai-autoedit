@@ -804,8 +804,21 @@ async def run(params: dict, work_dir: Path,
         _h_gap_prev      = _f_gap.read_text().strip()      if _f_gap.exists()      else ""
         _h_params_prev   = _f_params.read_text().strip()   if _f_params.exists()   else ""
 
-        _clips_exist      = bool(list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+        _clip_files       = list((auto_dir / "autocut").glob("*-clip-*.mp4"))
+        _clips_exist      = bool(_clip_files)
         _frames_exist     = bool(list((auto_dir / "frames").glob("*.jpg")))
+        # Detect incomplete extraction: if scores CSV exists but clip count is far below CSV rows
+        if _clips_exist:
+            _scores_csv_path = auto_dir / "scene_scores.csv"
+            if _scores_csv_path.exists():
+                try:
+                    with open(_scores_csv_path) as _sf:
+                        _csv_rows = sum(1 for _ in _sf) - 1
+                    if len(_clip_files) < _csv_rows * 0.5:
+                        _clips_exist = False
+                        yield f"  Warning: {len(_clip_files)} clips vs {_csv_rows} in CSV — forcing full rescan"
+                except Exception:
+                    pass
         _raw_scores_exist = bool(list((auto_dir / "frame_raw_scores").glob("*.json"))) \
                             if (auto_dir / "frame_raw_scores").exists() else False
         _peaks_exist      = bool(list((auto_dir / "selected_peaks").glob("*.json"))) \

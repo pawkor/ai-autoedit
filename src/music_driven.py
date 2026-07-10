@@ -1399,12 +1399,10 @@ def assemble(
                 pass
         clips = []
         for _scene, _score in sorted(scene_scores.items(), key=lambda x: x[1], reverse=True):
-            _clip_path = autocut_dir / f"{_scene}.mp4"
-            if not _clip_path.exists():
-                continue
             _dur = _dur_cache.get(_scene, 0.0)
             if _dur < 0.5:
                 continue
+            _clip_path = autocut_dir / f"{_scene}.mp4"
             _src = _clip_source(_scene)
             clips.append({
                 "scene":          _scene,
