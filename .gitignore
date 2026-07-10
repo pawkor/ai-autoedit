@@ -21,10 +21,11 @@ ai-autoedit-env/
 webapp/jobs/
 **/manual_overrides.json
 
-# YouTube OAuth — never commit
+# OAuth tokens — never commit
 webapp/youtube_client_secrets.json
 webapp/youtube_token.json
 webapp/youtube_flow.json
+webapp/ig_token.json
 webapp/config.ini
 
 # OS
