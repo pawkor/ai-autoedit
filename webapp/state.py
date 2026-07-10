@@ -474,7 +474,7 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
                             job.progress_label = _pm.group(3).strip()[:50]
                         is_progress = bool(re.search(r'^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|', line))
                         if not is_progress:
-                            job.log.append(line)
+                            job.log.append(f"[{time.strftime('%H:%M:%S')}] {line}")
                         await job.broadcast({"type": "log", "line": line})
             if analyze_only:
                 job.status = "done"

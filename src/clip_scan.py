@@ -365,6 +365,28 @@ if CLIP_SCAN_PHASE == "all":
     for sf_idx, sf in enumerate(source_files, 1):
         cam = next((c for c in CAMERAS if f"/{c}/" in str(sf)), CAMERAS[0] if CAMERAS else "")
         is_main = (cam == AUDIO_CAM or not CAMERAS)
+
+        # Resume support: skip files fully processed in a prior interrupted run
+        _cached_peaks_path = _peaks_dir / f"{sf.stem}.json"
+        if _cached_peaks_path.exists():
+            try:
+                _cp = _json.loads(_cached_peaks_path.read_text())
+                if _cp.get("min_gap") == MIN_GAP_SEC and _cp.get("clip_dur") == CLIP_DUR_SEC:
+                    _pk = _cp.get("peaks", [])
+                    print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: cached ({len(_pk)} peaks), skipping")
+                    for _p in _pk:
+                        all_clips.append({
+                            "scene":      _p["clip_name"],
+                            "score":      _p["score"],
+                            "pos_score":  0.0,
+                            "neg_score":  0.0,
+                            "is_main":    is_main,
+                            "offset_sec": max(0.0, _p["ts"] - CLIP_DUR_SEC / 2),
+                        })
+                    continue
+            except Exception:
+                pass
+
         dur = _probe_duration(sf)
         if dur < INTERVAL_SEC:
             print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: too short ({dur:.1f}s), skipped")

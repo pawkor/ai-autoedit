@@ -115,10 +115,15 @@ async def put_settings(data: dict):
     save_wcfg(data)
     if "max_concurrent_jobs" in data:
         new_val = max(1, int(data["max_concurrent_jobs"]))
+        sem = _st.job_semaphore
         running = sum(1 for j in _st.jobs.values() if j.status == "running")
-        new_sem = asyncio.Semaphore(new_val)
-        new_sem._value = max(0, new_val - running)
-        _st.job_semaphore = new_sem
+        current_max = sem._value + running
+        diff = new_val - current_max
+        if diff > 0:
+            for _ in range(diff):
+                sem.release()   # wakes tasks already waiting in sem._waiters
+        elif diff < 0:
+            sem._value = max(0, sem._value + diff)
     return {"ok": True}
 
 

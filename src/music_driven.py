@@ -283,40 +283,43 @@ def build_schedule(
 
 # ── Motion analysis ───────────────────────────────────────────────────────────
 
-def motion_profile(clip_path: Path, n_samples: int = 24) -> tuple[float, float]:
+def motion_profile(clip_path: Path, duration: float, ffmpeg_bin: str = "ffmpeg",
+                   n_samples: int = 24) -> tuple[float, float]:
     """
-    (motion_peak_time, mean_motion_level) for a clip.
-    motion_peak_time  — seconds where inter-frame diff is highest
-    mean_motion_level — average diff magnitude (unnormalised)
+    (motion_peak_time, mean_motion_level) for a clip via ffmpeg frame diff.
+    No cv2 / libGL dependency.
     """
-    import cv2
-
-    cap = cv2.VideoCapture(str(clip_path))
-    fps   = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if total < 2:
-        cap.release()
+    if duration < 0.5:
         return 0.0, 0.0
+    W, H = 160, 90
+    target_fps = n_samples / duration
+    try:
+        r = subprocess.run(
+            [ffmpeg_bin, "-hide_banner", "-loglevel", "error",
+             "-i", str(clip_path),
+             "-vf", f"fps={target_fps:.6f},scale={W}:{H},format=gray",
+             "-f", "rawvideo", "pipe:1"],
+            capture_output=True, timeout=30,
+        )
+    except Exception:
+        return duration * 0.3, 0.0
 
-    indices = np.linspace(0, total - 1, min(n_samples, total), dtype=int)
-    frames: list[tuple[float, np.ndarray]] = []
-    for idx in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-        ok, frame = cap.read()
-        if ok:
-            small = cv2.resize(frame, (160, 90))
-            gray  = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
-            frames.append((int(idx) / fps, gray))
-    cap.release()
+    raw = r.stdout
+    frame_size = W * H
+    n_frames = len(raw) // frame_size
+    if n_frames < 2:
+        return duration * 0.3, 0.0
 
-    if len(frames) < 2:
-        return 0.0, 0.0
-
-    diffs = [(frames[i][0], float(np.mean(np.abs(frames[i][1] - frames[i-1][1]))))
-             for i in range(1, len(frames))]
-
+    frames = [
+        np.frombuffer(raw[i * frame_size:(i + 1) * frame_size], dtype=np.uint8).astype(np.float32)
+        for i in range(n_frames)
+    ]
+    diffs = [
+        ((i / n_frames) * duration, float(np.mean(np.abs(frames[i] - frames[i - 1]))))
+        for i in range(1, n_frames)
+    ]
     diff_vals = [d for _, d in diffs]
-    peak_t    = diffs[int(np.argmax(diff_vals))][0]
+    peak_t = diffs[int(np.argmax(diff_vals))][0]
     return peak_t, float(np.mean(diff_vals))
 
 
@@ -370,7 +373,8 @@ def analyse_clips(autocut_dir: Path, scene_scores: dict,
             clip_dur = 0.0
         if clip_dur < 0.5:
             return None
-        peak_t, motion_lvl = motion_profile(clip_path)
+        ffmpeg_bin = str(Path(ffprobe).parent / "ffmpeg")
+        peak_t, motion_lvl = motion_profile(clip_path, duration=clip_dur, ffmpeg_bin=ffmpeg_bin)
         src = _clip_source(scene)
         return {
             "scene":          scene,
