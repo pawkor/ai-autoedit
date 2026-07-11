@@ -146,6 +146,8 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
                  text-align: right; padding-top: 4px; }
 .m-track-clips { display: flex; gap: 0; align-items: stretch; min-height: 44px; flex: 1; overflow: hidden; }
 .m-thumb.removed .m-thumb-img { border: 2px dashed var(--red); }
+.m-thumb.in-timeline .m-thumb-img { opacity: .55; }
+.m-thumb.in-timeline::after { content: '▶'; position: absolute; top: 3px; right: 5px; font-size: 9px; color: #60a5fa; pointer-events: none; }
 .m-clip { flex-shrink: 0; background: var(--bg2); border: 1px solid var(--border);
           border-radius: 4px; cursor: grab; position: relative; display: flex;
           align-items: center; justify-content: center; min-width: 24px;

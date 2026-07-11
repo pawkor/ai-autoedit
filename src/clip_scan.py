@@ -86,6 +86,11 @@ SCORE_FLOOR   = float(_e("CLIP_SCAN_THRESHOLD", "0.0"))
 NEG_WEIGHT    = _cfg.getfloat("clip_scoring", "neg_weight", fallback=0.5)
 CLIP_SCAN_PHASE = _e("CLIP_SCAN_PHASE", "all")   # all | reselect | reextract
 
+# Model: configurable via [clip_scan] model/pretrained in config.ini
+# Use hf-hub: prefix in pretrained for models not in open_clip registry
+_SCAN_MODEL      = _cfg.get("clip_scan", "model",      fallback="ViT-SO400M-16-SigLIP2-384")
+_SCAN_PRETRAINED = _cfg.get("clip_scan", "pretrained", fallback="webli")
+
 # Intermediate cache dirs
 _raw_scores_dir = AUTO_DIR / "frame_raw_scores"   # per-source raw CLIP scores
 _peaks_dir      = AUTO_DIR / "selected_peaks"     # per-source peak timestamps
@@ -119,9 +124,22 @@ def _ensure_model():
     global _model, _preprocess, _tokenizer, _pos_feat, _neg_feat
     if _model is not None:
         return
-    print("Loading CLIP model...")
-    _model, _, _preprocess = open_clip.create_model_and_transforms('ViT-L-14', pretrained='openai')
-    _tokenizer = open_clip.get_tokenizer('ViT-L-14')
+    _model_name = _SCAN_MODEL
+    _model_pt   = _SCAN_PRETRAINED
+    print(f"Loading CLIP model ({_model_name} / {_model_pt})...")
+    try:
+        if _model_pt.startswith("hf-hub:"):
+            _model, _preprocess = open_clip.create_model_from_pretrained(_model_pt)
+            _tokenizer = open_clip.get_tokenizer(_model_pt)
+        else:
+            _model, _, _preprocess = open_clip.create_model_and_transforms(_model_name, pretrained=_model_pt)
+            _tokenizer = open_clip.get_tokenizer(_model_name)
+    except Exception as _e:
+        _fallback_name, _fallback_pt = "ViT-H-14", "dfn5b"
+        print(f"  WARNING: failed to load {_model_name}/{_model_pt} ({_e})")
+        print(f"  Falling back to {_fallback_name}/{_fallback_pt}")
+        _model, _, _preprocess = open_clip.create_model_and_transforms(_fallback_name, pretrained=_fallback_pt)
+        _tokenizer = open_clip.get_tokenizer(_fallback_name)
     _model = _model.to(DEVICE).eval()
     with torch.no_grad():
         pos_tok = _tokenizer(POSITIVE_PROMPTS).to(DEVICE)
@@ -203,11 +221,30 @@ def _probe_duration(path: Path) -> float:
     except: return 0.0
 
 
+_codec_cache: dict[Path, str] = {}
+
+def _video_codec(src: Path) -> str:
+    """Return video codec name ('hevc', 'h264', …), cached per path."""
+    if src not in _codec_cache:
+        r = subprocess.run(
+            [FFPROBE, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(src)],
+            capture_output=True, text=True,
+        )
+        _codec_cache[src] = r.stdout.strip().lower()
+    return _codec_cache[src]
+
+
+def _hw(src: Path) -> list[str]:
+    """Return -hwaccel cuda args only when NVDEC actually helps (HEVC sources)."""
+    return ["-hwaccel", "cuda"] if _video_codec(src) == "hevc" else []
+
+
 def _extract_frames_to_dir(src: Path, out_dir: Path, interval: float) -> list[Path]:
     """Extract 1 frame per interval sec → out_dir/000001.jpg, 000002.jpg, …"""
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        FFMPEG, "-y", "-i", str(src),
+        FFMPEG, "-y", *_hw(src), "-i", str(src),
         "-vf", f"fps=1/{interval},scale=trunc(iw/4)*2:trunc(ih/4)*2",
         "-q:v", "5", str(out_dir / "%06d.jpg"),
     ]
@@ -219,24 +256,26 @@ def _extract_single_frame(src: Path, ts: float, out: Path):
     """Extract one frame at timestamp ts from src."""
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        FFMPEG, "-y", "-ss", f"{ts:.3f}", "-i", str(src),
+        FFMPEG, "-y", *_hw(src),
+        "-ss", f"{ts:.3f}", "-i", str(src),
         "-vframes", "1", "-q:v", "5", str(out), "-loglevel", "error",
     ]
     subprocess.run(cmd, capture_output=True)
 
 
-_X264_CRF    = str(_cfg.getint("video", "x264_crf",    fallback=15))
-_X264_PRESET = _cfg.get("video", "x264_preset", fallback="fast")
+_NVENC_CQ     = str(_cfg.getint("video", "x264_crf", fallback=15))
+_NVENC_PRESET = "p4"
 
 
 def _extract_clip(src: Path, start: float, duration: float, out: Path):
-    """Extract clip from source, re-encode to H264 for uniform codec in concat."""
+    """Extract clip from source, re-encode to H264 (NVENC) for uniform codec in concat."""
     start = max(0.0, start)
     cmd = [
         FFMPEG, "-y",
+        "-hwaccel", "cuda",
         "-ss", f"{start:.3f}", "-i", str(src),
         "-t", f"{duration:.3f}",
-        "-c:v", "libx264", "-crf", _X264_CRF, "-preset", _X264_PRESET,
+        "-c:v", "h264_nvenc", "-cq:v", _NVENC_CQ, "-preset", _NVENC_PRESET,
         "-bf", "0",
         "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
         "-avoid_negative_ts", "make_zero",
@@ -366,24 +405,32 @@ if CLIP_SCAN_PHASE == "all":
         cam = next((c for c in CAMERAS if f"/{c}/" in str(sf)), CAMERAS[0] if CAMERAS else "")
         is_main = (cam == AUDIO_CAM or not CAMERAS)
 
-        # Resume support: skip files fully processed in a prior interrupted run
+        # Resume support: skip files fully processed in a prior interrupted run.
+        # Only skip if frame thumbnails also exist — if frames/ was cleared, reprocess.
         _cached_peaks_path = _peaks_dir / f"{sf.stem}.json"
         if _cached_peaks_path.exists():
             try:
                 _cp = _json.loads(_cached_peaks_path.read_text())
                 if _cp.get("min_gap") == MIN_GAP_SEC and _cp.get("clip_dur") == CLIP_DUR_SEC:
                     _pk = _cp.get("peaks", [])
-                    print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: cached ({len(_pk)} peaks), skipping")
-                    for _p in _pk:
-                        all_clips.append({
-                            "scene":      _p["clip_name"],
-                            "score":      _p["score"],
-                            "pos_score":  0.0,
-                            "neg_score":  0.0,
-                            "is_main":    is_main,
-                            "offset_sec": max(0.0, _p["ts"] - CLIP_DUR_SEC / 2),
-                        })
-                    continue
+                    _frames_ok = _pk and any(
+                        (AUTO_DIR / "frames" / (_p["clip_name"] + "_f0.jpg")).exists()
+                        for _p in _pk
+                    )
+                    if _frames_ok:
+                        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: cached ({len(_pk)} peaks), skipping")
+                        for _p in _pk:
+                            all_clips.append({
+                                "scene":      _p["clip_name"],
+                                "score":      _p["score"],
+                                "pos_score":  0.0,
+                                "neg_score":  0.0,
+                                "is_main":    is_main,
+                                "offset_sec": max(0.0, _p["ts"] - CLIP_DUR_SEC / 2),
+                            })
+                        continue
+                    else:
+                        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: peaks cached but frames missing — reprocessing")
             except Exception:
                 pass
 

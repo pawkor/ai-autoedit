@@ -254,9 +254,11 @@ function toggleBan(scene) {
     delete _overrides[scene];
     _removedScenes.delete(scene);
   } else {
-    // Fresh ban (since last Build timeline) — dashed red until next build promotes to solid
     _overrides[scene] = 'ban-new';
     _removedScenes.delete(scene);
+    // Evict from timeline immediately so ban takes effect without rebuilding
+    const tIdx = _timeline.findIndex(c => c.scene === scene);
+    if (tIdx !== -1) { _timeline.splice(tIdx, 1); renderTimeline(); }
   }
   _saveTimeline(_jobId);
   renderPool();
@@ -277,7 +279,7 @@ function renderPool() {
   const camFiltered = _activeCameras.size
     ? _frames.filter(f => !f.camera || _activeCameras.has(f.camera))
     : _frames;
-  const available  = camFiltered.filter(f => !banned.has(f.scene) && !inTimeline.has(f.scene)).length;
+  const available  = camFiltered.filter(f => !banned.has(f.scene)).length;
   // Counter sums what each active filter shows
   const photosCount = _photos.length;
   const shown = (_filterVids ? available : 0) + (_filterPhotos ? photosCount : 0);
@@ -312,13 +314,14 @@ function renderPool() {
 
   if (!_filterVids) return;
   camFiltered.forEach(f => {
-    if (inTimeline.has(f.scene)) return;
     const isBanned    = banned.has(f.scene);
     const isBannedNew = bannedNew.has(f.scene);
     const isRemoved   = _removedScenes.has(f.scene);
+    const isInTl      = inTimeline.has(f.scene);
     const div = document.createElement('div');
     const banCls = isBannedNew ? ' banned banned-new' : (isBanned ? ' banned' : '');
-    div.className = `m-thumb ${scoreClass(f.score)}${banCls}${isRemoved ? ' removed' : ''}`;
+    const tlCls  = isInTl && !isBanned ? ' in-timeline' : '';
+    div.className = `m-thumb ${scoreClass(f.score)}${banCls}${isRemoved ? ' removed' : ''}${tlCls}`;
     div.dataset.scene = f.scene;
     div.draggable = true;
     const scoreLabel = f.score >= 0.85 ? 'High score (≥0.85) — green border'
@@ -327,6 +330,7 @@ function renderPool() {
                      : 'Very low score (<0.50)';
     div.title = isBanned ? `Banned — click to unban\n${scoreLabel}`
               : isRemoved ? `Removed from timeline — click to ban\n${scoreLabel}`
+              : isInTl ? `In timeline — click to ban and remove\n${scoreLabel}`
               : `Click to ban\n${scoreLabel}`;
     div.innerHTML = `
       <div class="m-thumb-img">

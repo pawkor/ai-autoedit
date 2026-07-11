@@ -39,7 +39,11 @@ services:
       - ./src:/app/src
       - ./config.ini:/app/config.ini:ro
       - /proc/meminfo:/proc/meminfo:ro
+      - /home/pawkor/.cache/huggingface:/home/ubuntu/.cache/huggingface
+      - /home/pawkor/.cache/aesthetic_predictor:/home/ubuntu/.cache/aesthetic_predictor
     environment:
+      TZ: Europe/Warsaw
+      NUMBA_CACHE_DIR: /tmp/numba_cache
       BROWSE_ROOT: /data
       ENABLE_AUTH: ${ENABLE_AUTH:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

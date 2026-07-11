@@ -244,16 +244,25 @@ def build_schedule(
 
     _sec_e   = section_energy or beat_energy
     _onset_e = onset_energy   or beat_energy
+
+    # Percentile-based thresholds so energy tiers distribute across the actual
+    # dynamic range of the track (flat-energy rock gets variety too).
+    import numpy as _np
+    _be = _np.array(beat_energy)
+    _p85 = float(_np.percentile(_be, 85))
+    _p65 = float(_np.percentile(_be, 65))
+    _p35 = float(_np.percentile(_be, 35))
+
     schedule: list[dict] = []
     n = len(beat_times)
     i = 0
     while i < n - 1:
         energy = beat_energy[i]
-        if energy > 0.85:
+        if energy > _p85:
             n_beats = beats_ultra_fast
-        elif energy > 0.65:
+        elif energy > _p65:
             n_beats = beats_fast
-        elif energy < 0.35:
+        elif energy < _p35:
             n_beats = beats_slow
         else:
             n_beats = beats_mid
@@ -703,8 +712,8 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
             _e["_snapped_dur"] = _this_frames / _fps_int
             _accum_frames = _ideal_total
 
-        # Parallel encode slots — NVENC has a session cap (typically 3-5)
-        trim_workers = 3 if nvenc else _WORKERS
+        # Parallel encode slots — NVENC session cap ~3-5; shorts may hold 1-3 slots concurrently
+        trim_workers = 2 if nvenc else _WORKERS
         total_clips = len(edit)
         import queue as _trim_q, threading as _thr
         _slot_pool = _trim_q.Queue()
@@ -1166,8 +1175,8 @@ def assemble(
     if not _all_scores:
         raise ValueError("scene_scores.csv is empty")
 
-    # Music-driven ignores gallery threshold — take top clips by score.
-    # Threshold read for info only; manual includes are guaranteed first.
+    # Music-driven ignores scene_selection threshold — take all clips by score.
+    # Threshold read for info logging only; manual includes are guaranteed first.
     _threshold = float(_cp.get("scene_selection", "threshold", fallback="0"))
     _above_thr = sum(1 for v in _all_scores.values() if v >= _threshold)
     _all_sorted = sorted(_all_scores.items(), key=lambda x: x[1], reverse=True)
@@ -1205,7 +1214,7 @@ def assemble(
     def _cpint(s, k, fb): v = _cp.get(s, k, fallback=fb); return int(v) if v.strip() else int(fb)
     def _cpfloat(s, k, fb): v = _cp.get(s, k, fallback=fb); return float(v) if v.strip() else float(fb)
     _beats_ultra_fast = _cpint("music_driven", "beats_ultra_fast", "2")
-    _beats_auto = _cp.getboolean("music_driven", "beats_auto", fallback=True)
+    _beats_auto = _cp.getboolean("music_driven", "beats_auto", fallback=False)
     _beats_fast = _cpint("music_driven", "beats_fast", "3")
     _beats_mid  = _cpint("music_driven", "beats_mid",  "4")
     _beats_slow = _cpint("music_driven", "beats_slow", "6")
@@ -1271,7 +1280,18 @@ def assemble(
 
     # Reserve intro + outro card time; trim slots that exceed available window.
     _reserve    = _card_dur * 2
-    avail_dur   = music_info["duration"] - music_ss - _reserve
+    _photo_reserve = 0.0
+    _photo_sel_file_early = auto_dir / "photo_selection.json"
+    if _photo_sel_file_early.exists():
+        try:
+            _psel_early = _json.loads(_photo_sel_file_early.read_text())
+            _n_photos = len([p for p in _psel_early.get("photos", []) if Path(p).exists()])
+            _photo_reserve = _n_photos * 2.5
+            if _photo_reserve:
+                print(f"  Photos: reserving {_photo_reserve:.1f}s ({_n_photos} × 2.5s) from music window", flush=True)
+        except Exception:
+            pass
+    avail_dur   = music_info["duration"] - music_ss - _reserve - _photo_reserve
     schedule = [s for s in schedule if s["start"] < avail_dur]
     if schedule and schedule[-1]["end"] > avail_dur:
         schedule[-1] = {**schedule[-1], "end": avail_dur,

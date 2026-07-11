@@ -297,16 +297,10 @@ if _prom_ok:
     _prom_gpu_pct           = Gauge("autoframe_gpu_utilization_percent",   "GPU utilization percent")
     _prom_gpu_vram_used     = Gauge("autoframe_gpu_vram_used_bytes",       "GPU VRAM used bytes")
     _prom_gpu_vram_total    = Gauge("autoframe_gpu_vram_total_bytes",      "GPU VRAM total bytes")
-    # YouTube Analytics — daily views (last 30 days), labels: date (YYYY-MM-DD), type (video|short)
-    _prom_yt_daily_views    = Gauge("yt_channel_daily_views",              "YouTube daily views by type", ["date", "type"])
-    # YouTube Analytics — latest available day (no date label, for stat panels)
-    _prom_yt_latest_views   = Gauge("yt_channel_latest_daily_views",       "YouTube latest available day views", ["type"])
 else:
     _prom_jobs_active = _prom_jobs_queued = _prom_jobs_total = _prom_job_duration = None
     _prom_cpu_pct = _prom_ram_used = _prom_ram_total = None
     _prom_gpu_pct = _prom_gpu_vram_used = _prom_gpu_vram_total = None
-    _prom_yt_daily_views = None
-    _prom_yt_latest_views = None
 
 _NO_CACHE_EXTS = {".html", ".js", ".css", ".json", ".txt", ".svg", ".ico"}
 
@@ -474,7 +468,9 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
                             job.progress_label = _pm.group(3).strip()[:50]
                         is_progress = bool(re.search(r'^\s*\d+%\||\s*\[[\u2588\u2591 ]+\]\s+\d+%|\b\d+%\|', line))
                         if not is_progress:
-                            job.log.append(f"[{time.strftime('%H:%M:%S')}] {line}")
+                            _ts = time.strftime('%H:%M:%S')
+                            job.log.append(f"[{_ts}] {line}")
+                            line = f"[{_ts}] {line}"
                         await job.broadcast({"type": "log", "line": line})
             if analyze_only:
                 job.status = "done"

@@ -766,12 +766,14 @@ async def create_job(params: JobParams, analyze_only: bool = Query(default=True)
 async def list_jobs():
     return [
         {
-            "id":         j.id,
-            "status":     j.status,
-            "phase":      j.phase,
-            "work_dir":   j.params["work_dir"],
-            "started_at": j.started_at,
-            "ended_at":   j.ended_at,
+            "id":             j.id,
+            "status":         j.status,
+            "phase":          j.phase,
+            "work_dir":       j.params["work_dir"],
+            "started_at":     j.started_at,
+            "ended_at":       j.ended_at,
+            "progress":       j.progress,
+            "progress_label": j.progress_label,
         }
         for j in sorted(jobs.values(), key=lambda j: -j.created_at)
     ]
@@ -2457,6 +2459,8 @@ async def job_frames(job_id: str):
         for _, row in df.iterrows()
     ]
 
+
+    frames = [f for f in frames if f["frame_url"] is not None]
 
     return {"frames": frames, "back_cam": {"avg_take_sec": avg_back_cam_take_sec}}
 

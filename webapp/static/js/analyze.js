@@ -56,7 +56,7 @@ async function openProjectModal() {
       set('m-settings-title',        _titleParts[0] ?? '');
       set('m-settings-intro-card',   _titleParts.slice(1).join('\n'));
       set('m-settings-cam-pattern',  cfg?.cam_pattern ?? '');
-      const _beatsAuto = cfg?.beats_auto !== false;
+      const _beatsAuto = cfg?.beats_auto === true;
       const _beatsAutoEl = document.getElementById('m-settings-beats-auto');
       if (_beatsAutoEl) {
         _beatsAutoEl.checked = _beatsAuto;

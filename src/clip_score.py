@@ -71,8 +71,12 @@ elif DEVICE == "mps":
 print(f"Model: {CLIP_MODEL} / {CLIP_PRETRAINED}")
 print(f"Batch size: {BATCH_SIZE}")
 
-model, _, preprocess = open_clip.create_model_and_transforms(CLIP_MODEL, pretrained=CLIP_PRETRAINED)
-tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
+if CLIP_PRETRAINED.startswith("hf-hub:"):
+    model, preprocess = open_clip.create_model_from_pretrained(CLIP_PRETRAINED)
+    tokenizer = open_clip.get_tokenizer(CLIP_PRETRAINED)
+else:
+    model, _, preprocess = open_clip.create_model_and_transforms(CLIP_MODEL, pretrained=CLIP_PRETRAINED)
+    tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
 model = model.to(DEVICE).eval()
 
 with torch.no_grad():

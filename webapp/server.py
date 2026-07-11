@@ -137,8 +137,6 @@ async def startup():
     asyncio.create_task(_stats_broadcaster())
     from webapp.routers.instagram import _ig_periodic_refresh
     asyncio.create_task(_ig_periodic_refresh())
-    from webapp.routers.youtube import yt_analytics_periodic
-    asyncio.create_task(yt_analytics_periodic())
 
 
 # ── WebSockets ─────────────────────────────────────────────────────────────────
