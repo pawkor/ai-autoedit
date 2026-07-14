@@ -204,7 +204,8 @@ window.mYtChapters = mYtChapters;
 
 async function mYtSaveUrl() {
   const url = document.getElementById('m-yt-existing-url').value.trim();
-  if (!url || !_mYtJobId || !_mYtFileName) return;
+  if (!_mYtJobId || !_mYtFileName) return;
+  if (!url) { mYtClearUrl(); return; }
   const status = document.getElementById('m-yt-status');
   const resp = await api.post(`/api/jobs/${_mYtJobId}/youtube-url`,
     { filename: _mYtFileName, url });

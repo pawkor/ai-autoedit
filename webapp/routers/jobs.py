@@ -1932,6 +1932,13 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
             job.params[k] = v
     if "selected_track" in data:
         job.selected_track = data["selected_track"] or None
+    if "selected_photos" in data:
+        sel_file = job.auto_dir() / "selected_photos.json"
+        try:
+            sel_file.parent.mkdir(parents=True, exist_ok=True)
+            sel_file.write_text(json.dumps(data["selected_photos"]))
+        except Exception:
+            pass
     job.save()
     return {"ok": True}
 
@@ -2645,7 +2652,15 @@ async def get_photos(job_id: str):
     exts = {'.jpg', '.jpeg', '.png', '.heic', '.webp'}
     photo_files = [p for p in pd.iterdir() if p.suffix.lower() in exts]
     thumb_dir = job.auto_dir() / "photo_thumbs"
-    selected = set(job.params.get("selected_photos") or [])
+    sel_file = job.auto_dir() / "selected_photos.json"
+    _sel_from_params = job.params.get("selected_photos") or []
+    if not _sel_from_params and sel_file.exists():
+        try:
+            _sel_from_params = json.loads(sel_file.read_text())
+            job.params["selected_photos"] = _sel_from_params
+        except Exception:
+            pass
+    selected = set(_sel_from_params)
     result = []
     for p in photo_files:
         ts = _get_photo_ts(p)

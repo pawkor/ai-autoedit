@@ -1887,7 +1887,7 @@ def assemble(
         schedule = schedule[:len(clips)]
 
     # GPS bonus: normalize speed/turn across pool, attach gps_norm to each clip
-    _gps_weight = float(_cp.get("scene_selection", "gps_weight", fallback="0.0"))
+    _gps_weight = float(_cp.get("scene_selection", "gps_weight", fallback="0.0") or "0.0")
     if _gps_weight > 0 and _gps_raw:
         _spd_vals = sorted(s for s, _ in _gps_raw.values())
         _trn_vals = sorted(t for _, t in _gps_raw.values())

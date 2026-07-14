@@ -400,7 +400,6 @@ async function pinTrack(file) {
   if (rebuild) rebuild.disabled = !_pinnedTrack;
   if (_pinnedTrack) {
     closeMusicModal();
-    await rebuildTimeline();
   }
 }
 window.pinTrack = pinTrack;

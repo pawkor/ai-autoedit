@@ -4,6 +4,29 @@ let _photoSelection = new Set();
 let _photoList = [];
 let _photoHoverTimer = null;
 let _photoHoverEl = null;
+let _preloadCache = {};
+
+function _preloadAll() {
+  for (const photo of _photoList) {
+    if (_preloadCache[photo.path]) continue;
+    const pre = new Image();
+    pre.src = `/api/file?path=${encodeURIComponent(photo.path)}`;
+    _preloadCache[photo.path] = pre;
+  }
+}
+
+function _preloadAdjacent(idx) {
+  [-2, -1, 1, 2].forEach(delta => {
+    const i = idx + delta;
+    if (i < 0 || i >= _photoList.length) return;
+    const p = _photoList[i];
+    if (!_preloadCache[p.path]) {
+      const pre = new Image();
+      pre.src = `/api/file?path=${encodeURIComponent(p.path)}`;
+      _preloadCache[p.path] = pre;
+    }
+  });
+}
 
 function _showPhotoHover(photo, e) {
   clearTimeout(_photoHoverTimer);
@@ -55,19 +78,6 @@ async function openPhotoBrowser() {
   const grid  = document.getElementById('m-photos-grid');
   if (!modal || !grid) return;
 
-  // Persist photos_dir before fetching
-  const dir = document.getElementById('m-analyze-photos-dir')?.value.trim() || '';
-  if (dir) {
-    const job = await window._modernApi.get(`/api/jobs/${_jobId}`).catch(() => null);
-    if (job?.params?.work_dir) {
-      await fetch('/api/job-config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_dir: job.params.work_dir, photos_dir: dir }),
-      }).catch(() => {});
-    }
-  }
-
   grid.innerHTML = '<span style="color:var(--muted);padding:16px">Loading…</span>';
   modal.style.display = 'flex';
 
@@ -80,8 +90,10 @@ async function openPhotoBrowser() {
   }
 
   _photoSelection = new Set(_photoList.filter(p => p.selected).map(p => p.path));
+  _preloadCache = {};
   _renderPhotoGrid();
   _updatePhotoCount();
+  _preloadAll();
 }
 window.openPhotoBrowser = openPhotoBrowser;
 
@@ -171,7 +183,7 @@ function _renderPreviewAt(idx) {
   const photo = _photoList[idx];
   const img = document.getElementById('m-photo-preview-img');
   if (img) img.src = `/api/file?path=${encodeURIComponent(photo.path)}`;
-  // update selection indicator on overlay
+  _preloadAdjacent(idx);
   _updatePreviewSelBadge();
 }
 

@@ -85,8 +85,8 @@ SMOOTH_WIN    = int(_e("CLIP_SCAN_SMOOTH", "3"))
 SCORE_FLOOR   = float(_e("CLIP_SCAN_THRESHOLD", "0.0"))
 NEG_WEIGHT    = _cfg.getfloat("clip_scoring", "neg_weight", fallback=0.5)
 CLIP_SCAN_PHASE  = _e("CLIP_SCAN_PHASE", "all")   # all | reselect | reextract
-GPS_PEAK_WEIGHT  = _cfg.getfloat("scene_selection", "gps_weight",               fallback=0.0)
-GPS_ALT_THRESH_M = _cfg.getfloat("scene_selection", "gps_altitude_threshold_m", fallback=400.0)
+GPS_PEAK_WEIGHT  = float(_cfg.get("scene_selection", "gps_weight",               fallback="0.0") or "0.0")
+GPS_ALT_THRESH_M = float(_cfg.get("scene_selection", "gps_altitude_threshold_m", fallback="400.0") or "400.0")
 
 # Model: configurable via [clip_scan] model/pretrained in config.ini
 # Use hf-hub: prefix in pretrained for models not in open_clip registry

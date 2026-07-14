@@ -149,6 +149,22 @@ async def list_files(path: str = Query(...)):
     return [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
 
 
+def _remove_upload_url(file_path: Path) -> None:
+    import json
+    auto_dir = file_path.parent / "_autoframe"
+    for name in ("ig_urls.json", "yt_urls.json"):
+        p = auto_dir / name
+        if not p.exists():
+            continue
+        try:
+            urls = json.loads(p.read_text())
+            if file_path.name in urls:
+                del urls[file_path.name]
+                p.write_text(json.dumps(urls, indent=2))
+        except Exception:
+            pass
+
+
 @router.delete("/api/file")
 async def delete_file_endpoint(path: str = Query(...)):
     f = Path(path).resolve()
@@ -156,6 +172,7 @@ async def delete_file_endpoint(path: str = Query(...)):
         raise HTTPException(403)
     if not f.is_file():
         raise HTTPException(404)
+    _remove_upload_url(f)
     f.unlink()
     return {"ok": True}
 
