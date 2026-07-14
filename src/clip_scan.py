@@ -84,7 +84,9 @@ MIN_GAP_SEC   = float(_e("CLIP_SCAN_MIN_GAP_SEC",  "30"))
 SMOOTH_WIN    = int(_e("CLIP_SCAN_SMOOTH", "3"))
 SCORE_FLOOR   = float(_e("CLIP_SCAN_THRESHOLD", "0.0"))
 NEG_WEIGHT    = _cfg.getfloat("clip_scoring", "neg_weight", fallback=0.5)
-CLIP_SCAN_PHASE = _e("CLIP_SCAN_PHASE", "all")   # all | reselect | reextract
+CLIP_SCAN_PHASE  = _e("CLIP_SCAN_PHASE", "all")   # all | reselect | reextract
+GPS_PEAK_WEIGHT  = _cfg.getfloat("scene_selection", "gps_weight",               fallback=0.0)
+GPS_ALT_THRESH_M = _cfg.getfloat("scene_selection", "gps_altitude_threshold_m", fallback=400.0)
 
 # Model: configurable via [clip_scan] model/pretrained in config.ini
 # Use hf-hub: prefix in pretrained for models not in open_clip registry
@@ -219,6 +221,23 @@ def _probe_duration(path: Path) -> float:
     )
     try: return float(r.stdout.strip())
     except: return 0.0
+
+
+def _clip_start_ts_from_source(path: Path) -> float | None:
+    """Return source video creation_time as unix timestamp (for GPS alignment)."""
+    from datetime import datetime, timezone
+    r = subprocess.run(
+        [FFPROBE, "-v", "quiet", "-show_entries", "format_tags=creation_time",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=10,
+    )
+    ts_str = r.stdout.strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y:%m:%d %H:%M:%SZ"):
+        try:
+            return datetime.strptime(ts_str, fmt).replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            pass
+    return None
 
 
 _codec_cache: dict[Path, str] = {}
@@ -460,7 +479,34 @@ if CLIP_SCAN_PHASE == "all":
                 _json.dumps({"interval": INTERVAL_SEC, "timestamps": _timestamps, "scores": raw_scores})
             )
 
-            smoothed   = _smooth(raw_scores, SMOOTH_WIN)
+            # GPS excitement boost (optional — only when gps_weight > 0 and GPS track found)
+            _score_for_peaks = raw_scores
+            if GPS_PEAK_WEIGHT > 0:
+                try:
+                    from gps_index import build_gps_index, gps_excitement_series
+                    _gps_idx = build_gps_index(WORK_DIR, rebuild=False)
+                    _gps_track = _gps_idx.get(sf.stem)
+                    if _gps_track:
+                        _ct = _clip_start_ts_from_source(sf)
+                        # Fallback: device clock may be wrong (e.g. Insta360 defaulting
+                        # to 2018). GPS track timestamps are absolute UTC — use first
+                        # GPS sample as recording origin.
+                        if _ct is None:
+                            _ct = _gps_track[0]["ts"]
+                        if _ct is not None:
+                            _offsets  = [i * INTERVAL_SEC for i in range(len(raw_scores))]
+                            _gps_exc  = gps_excitement_series(
+                                _gps_track, _ct, _offsets, GPS_ALT_THRESH_M)
+                            _score_for_peaks = [
+                                c + GPS_PEAK_WEIGHT * g
+                                for c, g in zip(raw_scores, _gps_exc)
+                            ]
+                            _gps_boosted = sum(1 for g in _gps_exc if g > 0.1)
+                            print(f"    GPS boost: {_gps_boosted}/{len(_gps_exc)} frames above 0.1")
+                except Exception as _ge:
+                    print(f"    GPS boost skipped: {_ge}")
+
+            smoothed   = _smooth(_score_for_peaks, SMOOTH_WIN)
             peak_idxs  = _find_peaks(smoothed, min_gap_frames, SCORE_FLOOR)
             if not peak_idxs:
                 print(f"    No peaks found")

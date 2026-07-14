@@ -158,20 +158,23 @@ def extract_gps_track(mp4_path: Path, exiftool: str = "exiftool") -> list[dict]:
 
     track.sort(key=lambda x: x["ts"])
 
-    # Compute speed (km/h) and turn rate (deg/s) between consecutive 1-second samples
+    # Compute speed (km/h), turn rate (deg/s), altitude change rate (m/s)
     for i, pt in enumerate(track):
         if i == 0:
-            pt["speed_kmh"] = 0.0
-            pt["turn_deg_s"] = 0.0
+            pt["speed_kmh"]    = 0.0
+            pt["turn_deg_s"]   = 0.0
+            pt["alt_change_ms"] = 0.0
             continue
         prev = track[i - 1]
         dt = pt["ts"] - prev["ts"]
         if dt <= 0:
-            pt["speed_kmh"] = 0.0
-            pt["turn_deg_s"] = 0.0
+            pt["speed_kmh"]    = 0.0
+            pt["turn_deg_s"]   = 0.0
+            pt["alt_change_ms"] = 0.0
             continue
         dist_m = _haversine_m(prev["lat"], prev["lon"], pt["lat"], pt["lon"])
-        pt["speed_kmh"] = (dist_m / dt) * 3.6
+        pt["speed_kmh"]    = (dist_m / dt) * 3.6
+        pt["alt_change_ms"] = abs(pt["alt"] - prev["alt"]) / dt
         if i >= 2:
             b_prev = _bearing(track[i - 2]["lat"], track[i - 2]["lon"],
                                prev["lat"], prev["lon"])
@@ -181,6 +184,65 @@ def extract_gps_track(mp4_path: Path, exiftool: str = "exiftool") -> list[dict]:
             pt["turn_deg_s"] = 0.0
 
     return track
+
+
+def gps_excitement_series(
+    track: list[dict],
+    creation_time: float,
+    frame_offsets: list[float],
+    altitude_threshold_m: float = 400.0,
+) -> list[float]:
+    """
+    Compute GPS excitement for each frame (given as offsets in seconds from video start).
+    Excitement = turn_rate + alt_change + altitude_bonus, normalized to 0-1.
+    Returns [0.0]*len(frame_offsets) when no GPS data.
+    """
+    if not track or not frame_offsets:
+        return [0.0] * len(frame_offsets)
+
+    # Raw excitement per GPS point
+    ts_excite: list[tuple[float, float]] = []
+    for pt in track:
+        turn = pt.get("turn_deg_s",    0.0)
+        ac   = pt.get("alt_change_ms", 0.0)
+        alt  = pt.get("alt",           0.0)
+        base = turn * 2.0 + ac * 4.0
+        if alt > altitude_threshold_m:
+            base *= 1.0 + min((alt - altitude_threshold_m) / 700.0, 0.6)
+        ts_excite.append((pt["ts"], base))
+
+    # Smooth ±3s window
+    smoothed: list[tuple[float, float]] = []
+    n = len(ts_excite)
+    for i, (ts, _) in enumerate(ts_excite):
+        window = [ts_excite[j][1] for j in range(max(0, i - 3), min(n, i + 4))]
+        smoothed.append((ts, sum(window) / len(window)))
+
+    # Normalize to 0-1 (99th percentile)
+    vals = sorted(v for _, v in smoothed)
+    p99  = vals[max(0, int(0.99 * len(vals)) - 1)] if vals else 1.0
+    if p99 < 0.001:
+        p99 = 1.0
+    ts_arr = [t for t, _ in smoothed]
+    ex_arr = [min(v / p99, 1.0) for _, v in smoothed]
+
+    # Nearest GPS lookup per frame offset
+    result: list[float] = []
+    for offset in frame_offsets:
+        abs_ts = creation_time + offset
+        lo, hi, best = 0, len(ts_arr) - 1, 0
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            best = mid
+            if ts_arr[mid] < abs_ts:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        candidates = [i for i in (best - 1, best, best + 1) if 0 <= i < len(ts_arr)]
+        closest = min(candidates, key=lambda i: abs(ts_arr[i] - abs_ts))
+        result.append(ex_arr[closest] if abs(ts_arr[closest] - abs_ts) <= 30 else 0.0)
+
+    return result
 
 
 # ── Index builder ─────────────────────────────────────────────────────────────
@@ -203,9 +265,14 @@ def build_gps_index(
     if not rebuild and cache_path.exists():
         try:
             data = json.loads(cache_path.read_text())
-            total = sum(len(v) for v in data.values())
-            print(f"  GPS index: loaded {total} samples from cache ({len(data)} files)")
-            return data
+            # Invalidate cache if it predates alt_change_ms field
+            _sample = next((v[1] for v in data.values() if len(v) > 1), None)
+            if _sample and "alt_change_ms" not in _sample:
+                print("  GPS index: cache outdated (no alt_change_ms) — rebuilding")
+            else:
+                total = sum(len(v) for v in data.values())
+                print(f"  GPS index: loaded {total} samples from cache ({len(data)} files)")
+                return data
         except Exception:
             pass
 
@@ -214,6 +281,8 @@ def build_gps_index(
         if f.suffix.lower() in _VIDEO_EXT
         and "_autoframe" not in f.parts
         and not f.name.lower().endswith(".lrv")
+        and not f.stem.endswith("_preview")
+        and not any(seg in f.stem for seg in ("-md_v", "-v0", "-v1", "-v2", "-v3", "-v4", "-v5"))
     ]
     if not mp4_files:
         return {}
@@ -291,18 +360,26 @@ def _gps_metrics(track: list[dict], clip_start: float, clip_dur: float) -> dict:
     pts = [p for p in track if clip_start <= p["ts"] <= clip_end]
     if not pts:
         return {}
-    speeds = [p["speed_kmh"] for p in pts]
-    turns  = [p["turn_deg_s"] for p in pts]
+    speeds   = [p["speed_kmh"]     for p in pts]
+    alts     = [p["alt"]           for p in pts]
+    alt_chgs = [p.get("alt_change_ms", 0.0) for p in pts]
+    # Turn rate only from moving samples (≥5 km/h) — eliminates GPS calibration
+    # artifacts where the device appears to spin at 180°/s while stationary.
+    moving = [p for p in pts if p.get("speed_kmh", 0) >= 5.0]
+    turns  = [p["turn_deg_s"] for p in moving] if moving else [0.0]
     return {
-        "gps_speed_avg": round(sum(speeds) / len(speeds), 1),
-        "gps_speed_max": round(max(speeds), 1),
-        "gps_turn_max":  round(max(turns),  1),
+        "gps_speed_avg":      round(sum(speeds)   / len(speeds), 1),
+        "gps_speed_max":      round(max(speeds),                 1),
+        "gps_turn_max":       round(max(turns),                  1),
+        "gps_altitude_avg":   round(sum(alts)     / len(alts),   1),
+        "gps_alt_change_max": round(max(alt_chgs),               2),
     }
 
 
 # ── CSV annotation ────────────────────────────────────────────────────────────
 
-GPS_COLS = ["gps_speed_avg", "gps_speed_max", "gps_turn_max"]
+GPS_COLS = ["gps_speed_avg", "gps_speed_max", "gps_turn_max",
+            "gps_altitude_avg", "gps_alt_change_max"]
 _STEM_RE = re.compile(r"-(scene|clip)-\d+$")
 
 def annotate_scores_csv(
@@ -311,10 +388,12 @@ def annotate_scores_csv(
     gps_index: dict[str, list[dict]],
     ffprobe: str = "ffprobe",
     cam_offsets: dict[str, float] | None = None,
+    work_dir: Path | None = None,
 ) -> bool:
     """
     Add GPS columns to scores_csv in-place.
     cam_offsets: {camera_name: offset_seconds} — same as [cam_offsets] in config.ini.
+    work_dir: used to find source files when clips lack creation_time (NVENC strips it).
     Returns True if at least one clip was annotated.
     """
     if not scores_csv.exists() or not gps_index:
@@ -339,7 +418,16 @@ def annotate_scores_csv(
             continue
 
         clip_path = autocut_dir / f"{scene}.mp4"
-        clip_start = _clip_start_ts(clip_path, ffprobe=ffprobe)
+
+        # GPS track timestamps are absolute UTC (from satellites) — reliable
+        # even when device clock is wrong (Insta360 default-date bug).
+        # Skip ffprobe on clips: NVENC strips creation_time anyway, saving
+        # 1 subprocess call per clip (hundreds of calls per project).
+        try:
+            clip_start = track[0]["ts"] + float(row.get("offset_sec") or 0)
+        except (TypeError, ValueError, IndexError):
+            clip_start = _clip_start_ts(clip_path, ffprobe=ffprobe)
+
         if clip_start is None:
             for col in GPS_COLS:
                 row.setdefault(col, "")

@@ -14,6 +14,7 @@ let _activeCameras = new Set(); // currently visible cameras in pool filter
 let _photos      = [];     // selected photos: [{path, thumb_url, filename, timestamp}]
 let _filterVids  = true;   // pool source filter: video clips visible
 let _filterPhotos = true;  // pool source filter: photos visible
+let _poolSearch  = '';     // pool search/filter query
 
 // ── Timeline persistence (backend) ───────────────────────────────────────────
 let _saveTlTimer = null;
@@ -208,6 +209,12 @@ function toggleSourceFilter(kind) {
 }
 window.toggleSourceFilter = toggleSourceFilter;
 
+function filterPool(q) {
+  _poolSearch = (q || '').trim();
+  renderPool();
+}
+window.filterPool = filterPool;
+
 function _refreshSourceFilterButtons() {
   const v = document.getElementById('m-filter-vids');
   const p = document.getElementById('m-filter-photos');
@@ -258,7 +265,7 @@ function toggleBan(scene) {
     _removedScenes.delete(scene);
     // Evict from timeline immediately so ban takes effect without rebuilding
     const tIdx = _timeline.findIndex(c => c.scene === scene);
-    if (tIdx !== -1) { _timeline.splice(tIdx, 1); renderTimeline(); }
+    if (tIdx !== -1) { _timeline.splice(tIdx, 1); drawTimeline(); }
   }
   _saveTimeline(_jobId);
   renderPool();
@@ -276,9 +283,11 @@ function renderPool() {
   const banned     = new Set(Object.keys(_overrides).filter(s => _isBanned(s)));
   const bannedNew  = new Set(Object.keys(_overrides).filter(s => _overrides[s] === 'ban-new'));
   const inTimeline = new Set(_timeline.map(c => c.scene));
-  const camFiltered = _activeCameras.size
+  const _sq = _poolSearch.toLowerCase();
+  const camFiltered = (_activeCameras.size
     ? _frames.filter(f => !f.camera || _activeCameras.has(f.camera))
-    : _frames;
+    : _frames
+  ).filter(f => !_sq || f.scene.toLowerCase().includes(_sq));
   const available  = camFiltered.filter(f => !banned.has(f.scene)).length;
   // Counter sums what each active filter shows
   const photosCount = _photos.length;
@@ -288,8 +297,9 @@ function renderPool() {
   grid.innerHTML = '';
 
   // Photos row at top — only when photos filter active
-  if (_filterPhotos && _photos.length) {
-    for (const ph of _photos) {
+  const _photosFiltered = _sq ? _photos.filter(ph => (ph.filename||'').toLowerCase().includes(_sq)) : _photos;
+  if (_filterPhotos && _photosFiltered.length) {
+    for (const ph of _photosFiltered) {
       const div = document.createElement('div');
       div.className = 'm-thumb m-thumb-photo';
       div.title = ph.filename || 'photo';
@@ -563,9 +573,12 @@ function drawTimeline() {
       div.title = `photo · ${slot.duration.toFixed(1)}s`;
       div.style.outline = '2px solid #818cf8';
       div.innerHTML = `
-        <div class="m-clip-thumb">${imgSrc ? `<img src="${imgSrc}" loading="lazy" draggable="false">` : '<span style="font-size:16px;display:flex;align-items:center;justify-content:center;height:100%">🖼</span>'}</div>
-        <div class="m-clip-score-bar" style="background:#818cf8"></div>
-        <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>`;
+        <div class="m-clip-thumb">
+          ${imgSrc ? `<img src="${imgSrc}" loading="lazy" draggable="false">` : '<span style="font-size:16px;display:flex;align-items:center;justify-content:center;height:100%">🖼</span>'}
+          <div class="m-clip-score-bar" style="background:#818cf8"></div>
+        </div>
+        <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>
+        <div class="m-clip-dur">${slot.duration.toFixed(1)}s</div>`;
     } else {
       const scoreColor = slot.clip_score >= 0.85 ? '#22c55e'
                        : slot.clip_score >= 0.70 ? '#4ade80'
@@ -576,9 +589,12 @@ function drawTimeline() {
       div.dataset.scene = slot.scene;
       div.title = `${slot.scene} · ${slot.duration.toFixed(1)}s · score ${slot.clip_score?.toFixed(3)}`;
       div.innerHTML = `
-        <div class="m-clip-thumb">${imgSrc ? `<img src="${imgSrc}" loading="lazy" draggable="false">` : ''}</div>
-        <div class="m-clip-score-bar" style="background:${scoreColor}"></div>
-        <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>`;
+        <div class="m-clip-thumb">
+          ${imgSrc ? `<img src="${imgSrc}" loading="lazy" draggable="false">` : ''}
+          <div class="m-clip-score-bar" style="background:${scoreColor}"></div>
+        </div>
+        <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>
+        <div class="m-clip-dur">${slot.duration.toFixed(1)}s</div>`;
       div.addEventListener('mouseenter', () => _showTlPreview(div, frameUrl));
       div.addEventListener('mouseleave', _hideTlPreview);
     }
@@ -888,96 +904,78 @@ function _setShortsRenderBusy(busy) {
   el.textContent = busy ? 'Generating…' : '▶ Shorts';
 }
 
-// ── Log panel ─────────────────────────────────────────────────────────────────
-let _logLines = [];
-let _logOpen  = false;
+// ── Log modal ──────────────────────────────────────────────────────────────────
+let _logLines     = [];
+let _logModalOpen = false;
+
+function _logRenderLines() {
+  const el = document.getElementById('m-log-lines');
+  if (!el) return;
+  el.innerHTML = '';
+  _logLines.forEach(line => {
+    const div = document.createElement('div');
+    div.className = 'll' + (/error|fail|Error|Fail/i.test(line) ? ' err' : '');
+    div.textContent = line;
+    el.appendChild(div);
+  });
+  el.scrollTop = el.scrollHeight;
+}
+
+function openLogModal() {
+  _logModalOpen = true;
+  const modal = document.getElementById('m-log-modal');
+  if (modal) modal.style.display = '';
+  _logRenderLines();
+  _updateLogBadge();
+}
+
+function closeLogModal() {
+  _logModalOpen = false;
+  const modal = document.getElementById('m-log-modal');
+  if (modal) modal.style.display = 'none';
+  _updateLogBadge();
+}
+
+function _updateLogBadge() {
+  const navBtn = document.querySelector('#m-bottom-nav [data-tab="log"]');
+  if (navBtn) navBtn.classList.toggle('has-log', _logLines.length > 0 && !_logModalOpen);
+}
 
 function _appendLog(line) {
   _logLines.push(line);
   if (_logLines.length > 200) _logLines.shift();
-  const panel = document.getElementById('m-log');
-  if (panel) panel.style.display = '';
   const meta = document.getElementById('m-log-meta');
   if (meta) meta.textContent = `${_logLines.length} lines`;
-  if (!_logOpen) {
-    if (_logLines.length === 1) {
-      _logOpen = true;
-      const el2   = document.getElementById('m-log-lines');
-      const label = document.getElementById('m-log-toggle');
-      if (el2)   el2.style.display = '';
-      if (label) label.textContent = 'LOG ▾';
-    } else {
-      return;
-    }
+  if (_logLines.length === 1) {
+    openLogModal();
+    return;
   }
-  const el = document.getElementById('m-log-lines');
-  if (!el) return;
-  const div = document.createElement('div');
-  div.className = 'll' + (/error|fail|Error|Fail/i.test(line) ? ' err' : '');
-  div.textContent = line;
-  el.appendChild(div);
-  el.scrollTop = el.scrollHeight;
-}
-
-function toggleLog() {
-  _logOpen = !_logOpen;
-  const el    = document.getElementById('m-log-lines');
-  const label = document.getElementById('m-log-toggle');
-  if (!el) return;
-  if (_logOpen) {
-    el.style.display = '';
-    if (label) label.textContent = 'LOG ▾';
-    el.innerHTML = '';
-    _logLines.forEach(line => {
+  if (_logModalOpen) {
+    const el = document.getElementById('m-log-lines');
+    if (el) {
       const div = document.createElement('div');
       div.className = 'll' + (/error|fail|Error|Fail/i.test(line) ? ' err' : '');
       div.textContent = line;
       el.appendChild(div);
-    });
-    el.scrollTop = el.scrollHeight;
-  } else {
-    el.style.display = 'none';
-    if (label) label.textContent = 'LOG ▸';
+      el.scrollTop = el.scrollHeight;
+    }
   }
+  _updateLogBadge();
 }
-window.toggleLog = toggleLog;
-
-let _logMaximized = false;
-
-function _collapseLogMax() {
-  if (!_logMaximized) return;
-  _logMaximized = false;
-  const log  = document.getElementById('m-log');
-  const pool = document.getElementById('m-pool');
-  const btn  = document.getElementById('m-log-max-btn');
-  if (log)  log.classList.remove('m-log-maximized');
-  if (pool) pool.style.display = '';
-  if (btn)  btn.textContent = '⤢';
-}
-
-function toggleLogMax() {
-  _logMaximized = !_logMaximized;
-  const log   = document.getElementById('m-log');
-  const pool  = document.getElementById('m-pool');
-  const btn   = document.getElementById('m-log-max-btn');
-  if (log)  log.classList.toggle('m-log-maximized', _logMaximized);
-  if (pool) pool.style.display = _logMaximized ? 'none' : '';
-  if (btn)  btn.textContent = _logMaximized ? '⤡' : '⤢';
-  if (_logMaximized && !_logOpen) toggleLog();
-}
-window.toggleLogMax = toggleLogMax;
 
 function clearLog() {
-  _collapseLogMax();
   _logLines = [];
   const el = document.getElementById('m-log-lines');
   if (el) el.innerHTML = '';
-  const panel = document.getElementById('m-log');
-  if (panel) panel.style.display = 'none';
   const meta = document.getElementById('m-log-meta');
   if (meta) meta.textContent = '';
+  closeLogModal();
 }
-window.clearLog = clearLog;
+window.clearLog      = clearLog;
+window.openLogModal  = openLogModal;
+window.closeLogModal = closeLogModal;
+window.toggleLog     = openLogModal;   // backward compat
+window.toggleLogMax  = openLogModal;   // backward compat
 
 // ── Preview (NVENC stream) ────────────────────────────────────────────────────
 let _previewActive = false;
@@ -1087,7 +1085,7 @@ async function loadResults() {
   if (entries.length === 0) return;
 
   // fingerprint — skip rebuild if unchanged
-  const fp = JSON.stringify(entries.map(([n, i]) => [n, i.size_mb]));
+  const fp = JSON.stringify(entries.map(([n, i]) => [n, i.size_mb, i.yt_url || '', i.ig_url || '']));
   if (_resultsData._fp === fp) return;
   _resultsData = data || {};
   _resultsData._fp = fp;
@@ -1210,7 +1208,7 @@ function _renderResultsList() {
       e.stopPropagation();
       if (!confirm(`Delete ${name} from disk?`)) return;
       const ok = await api.del(`/api/jobs/${_jobId}/result-file?filename=${encodeURIComponent(name)}`);
-      if (ok) { row.remove(); } else { alert('Delete failed'); }
+      if (ok) { row.remove(); loadResults(); } else { alert('Delete failed'); }
     };
 
     row.appendChild(rfName);
@@ -1382,10 +1380,16 @@ document.addEventListener('keydown', e => {
   const visible = id => { const el = document.getElementById(id); return el && el.style.display !== 'none'; };
   if (visible('m-preview-modal'))     { closePreviewModal();     return; }
   if (visible('m-appsettings-modal')) { closeAppSettingsModal(); return; }
+  if (visible('m-yt-modal'))          { mYtClose();              return; }
+  if (visible('m-yts-modal'))         { mYtsClose();             return; }
+  if (visible('m-ig-modal'))          { mIgClose();              return; }
+  if (visible('m-picture-modal'))     { closePictureModal();     return; }
+  if (visible('m-photos-modal'))      { closePhotoBrowser();     return; }
   if (visible('m-project-modal'))     { closeProjectModal();     return; }
   if (visible('m-shorts-modal'))      { closeShortsModal();      return; }
   if (visible('m-music-modal'))       { closeMusicModal();       return; }
   if (visible('m-results-modal'))     { closeResultsModal();     return; }
+  if (visible('m-log-modal'))         { closeLogModal();         return; }
 });
 
 document.addEventListener('DOMContentLoaded', async () => {

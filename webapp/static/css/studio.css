@@ -150,16 +150,20 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-thumb.in-timeline::after { content: '▶'; position: absolute; top: 3px; right: 5px; font-size: 9px; color: #60a5fa; pointer-events: none; }
 .m-clip { flex-shrink: 0; background: var(--bg2); border: 1px solid var(--border);
           border-radius: 4px; cursor: grab; position: relative; display: flex;
-          align-items: center; justify-content: center; min-width: 24px;
+          flex-direction: column; min-width: 24px;
           transition: opacity .15s; user-select: none; overflow: hidden; }
 .m-clip:active { cursor: grabbing; opacity: .7; }
-.m-clip-thumb { position: absolute; inset: 0; }
-.m-clip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
-.m-clip-score-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 3px;
-                    border-radius: 0 0 3px 3px; z-index: 1; }
-.m-clip-ts { position: absolute; top: 1px; left: 2px; font-size: 8px; line-height: 1;
-             color: #fff; text-shadow: 0 0 3px #000; z-index: 2;
-             white-space: nowrap; pointer-events: none; }
+.m-clip-thumb { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+.m-clip-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.m-clip-score-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; z-index: 1; }
+.m-clip-ts  { position: absolute; top: 1px; left: 2px; font-size: 8px; line-height: 1;
+              color: #fff; text-shadow: 0 0 3px #000; z-index: 2;
+              white-space: nowrap; pointer-events: none; }
+.m-clip-dur { height: 14px; flex-shrink: 0; background: var(--bg1);
+              border-top: 1px solid var(--border);
+              display: flex; align-items: center; justify-content: center;
+              font-size: 8px; color: var(--fg1);
+              white-space: nowrap; pointer-events: none; }
 
 /* ── Timeline clip hover preview ─────────────────────────────────────────── */
 #m-tl-preview { position: fixed; width: 480px; aspect-ratio: 16/9; background: #000;
@@ -411,6 +415,92 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 #m-project-modal.show-help .m-field-help { display:block; }
 #m-help-btn { opacity:.5; transition:opacity .15s; }
 #m-help-btn.active { opacity:1; color:var(--blue,#3b82f6); }
+
+/* ── Bottom nav + hamburger (mobile, hidden on desktop) ──────────────────── */
+#m-hamburger { display: none; }
+#m-bottom-nav { display: none; }
+#m-sidebar-overlay { display: none; position: fixed; inset: 0;
+                     background: rgba(0,0,0,.45); z-index: 899; }
+.m-bnav-tab { flex: 1; background: none; border: none; cursor: pointer;
+              display: flex; flex-direction: column; align-items: center;
+              justify-content: center; gap: 2px; color: var(--muted);
+              font-family: var(--font); transition: color .15s; padding: 4px 0; }
+.m-bnav-tab:hover { color: var(--text); }
+.m-bnav-tab.active { color: var(--text); }
+.m-bnav-tab.active .m-bnav-icon { color: var(--blue); }
+.m-bnav-icon { font-size: 18px; line-height: 1; display: block; }
+.m-bnav-label { font-size: 10px; font-weight: 500; letter-spacing: .03em; }
+.m-bnav-tab.has-log .m-bnav-icon { position: relative; }
+.m-bnav-tab.has-log .m-bnav-icon::after {
+  content: ''; position: absolute; top: 0; right: -4px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+
+/* ── Responsive mobile ≤768px ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Hamburger visible */
+  #m-hamburger { display: flex !important; }
+
+  /* Sidebar: fixed drawer from left */
+  #m-sidebar {
+    position: fixed; left: -100%; top: 0;
+    height: 100dvh; width: 80%; max-width: 280px;
+    z-index: 900; transition: left .25s ease; box-shadow: none;
+  }
+  #m-sidebar.open {
+    left: 0;
+    box-shadow: 4px 0 24px rgba(0,0,0,.55);
+  }
+  #m-sidebar-overlay.open { display: block; }
+
+  /* Right panel: bottom sheet sliding up */
+  #m-panel {
+    position: fixed; bottom: 56px; left: 0; right: 0;
+    width: 100%; border-left: none; border-top: 1px solid var(--border);
+    transform: translateY(100%); transition: transform .25s ease;
+    z-index: 200; max-height: 65vh; overflow-y: auto;
+  }
+  #m-panel.mobile-open { transform: translateY(0); }
+
+  /* Bottom nav visible */
+  #m-bottom-nav {
+    display: flex !important;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: 56px; background: var(--bg1);
+    border-top: 1px solid var(--border); z-index: 300;
+  }
+
+  /* Main: pad for bottom nav */
+  #m-main { padding-bottom: 56px; }
+
+  /* Topbar: hide secondary items */
+  #m-hw-monitor { display: none !important; }
+  #m-btn-preview { display: none !important; }
+  #m-btn-shorts  { display: none !important; }
+  #m-lang-btn    { display: none !important; }
+  #m-btn-log     { display: none !important; } /* in bottom nav instead */
+
+  /* Pool grid: 2 columns */
+  #m-pool-grid {
+    grid-template-columns: repeat(2, 1fr);
+    --tile-min: 0px;
+  }
+
+  /* Sections: hide via JS tab switching */
+  #m-pool.mobile-hidden      { display: none; }
+  #m-timeline-wrap.mobile-hidden { display: none; }
+
+  /* Timeline preview: smaller on phone */
+  #m-tl-preview { width: 220px; }
+
+  /* Modals: full width on phone */
+  .m-modal {
+    width: 100% !important; max-width: 100% !important;
+    border-radius: 0 !important; max-height: 100dvh !important;
+  }
+  /* Log modal: full screen */
+  #m-log-modal { top: 0 !important; }
+  #m-log-modal .m-modal { height: 100dvh !important; }
+}
 
 /* ── Tooltips (data-tip) ───────────────────────────────────────────────────── */
 [data-tip] { position: relative; }

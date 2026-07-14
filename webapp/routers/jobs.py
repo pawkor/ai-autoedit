@@ -87,11 +87,13 @@ _JOB_CONFIG_MAP = {
     "clip_scan_clip_dur":  ("clip_scan", "clip_dur_sec"),
     "clip_scan_min_gap":   ("clip_scan", "min_gap_sec"),
     "beats_auto":          ("music_driven", "beats_auto"),
+    "beats_method":        ("music_driven", "beats_method"),
     "beats_fast":          ("music_driven", "beats_fast"),
     "beats_mid":           ("music_driven", "beats_mid"),
     "beats_slow":          ("music_driven", "beats_slow"),
     "cam_pattern":         ("music_driven", "cam_pattern"),
-    "gps_weight":          ("scene_selection", "gps_weight"),
+    "gps_weight":               ("scene_selection", "gps_weight"),
+    "gps_altitude_threshold_m": ("scene_selection", "gps_altitude_threshold_m"),
     "photos_dir":            ("photos", "dir"),
     "cc_brightness":         ("color_correct", "brightness"),
     "cc_gamma":              ("color_correct", "gamma"),
@@ -183,7 +185,8 @@ def read_job_config(work_dir: Path) -> dict:
                     result[field] = f"{int(v) if v == int(v) else v}s"
                 elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold",
                                "clip_scan_interval", "clip_scan_clip_dur", "clip_scan_min_gap",
-                               "beats_fast", "beats_mid", "beats_slow", "gps_weight"):
+                               "beats_fast", "beats_mid", "beats_slow",
+                               "gps_weight", "gps_altitude_threshold_m"):
                     result[field] = float(raw.rstrip('s').strip())
                 elif field == "cameras":
                     result[field] = [c.strip() for c in raw.split(",") if c.strip()]
@@ -1160,10 +1163,10 @@ async def _preview_sequence_inner(job_id: str):
             cwd=str(SCRIPT_DIR),
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
+        _out = stdout.decode(errors='replace')
+        print(f"[preview-sequence] {job_id}:\n{_out}", flush=True)
         if proc.returncode != 0:
-            err = stdout.decode(errors='replace')[-2000:]
-            print(f"[preview-sequence] dry-run failed (rc={proc.returncode}):\n{err}", flush=True)
-            raise HTTPException(500, f"Dry-run failed:\n{err}")
+            raise HTTPException(500, f"Dry-run failed:\n{_out[-2000:]}")
     except asyncio.TimeoutError:
         try: proc.kill()
         except Exception: pass
@@ -1923,7 +1926,7 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "beats_auto", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_duration", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cam_crop_16x9", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "beats_auto", "beats_method", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_duration", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cam_crop_16x9", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v
@@ -2698,10 +2701,9 @@ async def suggest_clip_params(job_id: str):
     if total_sec <= 0:
         raise HTTPException(422, "Could not read durations from video files")
 
-    raw_gap  = total_sec / 80
-    min_gap  = max(15, min(120, round(raw_gap / 5) * 5))
-    interval = max(2, round(min_gap / 15))
-    clip_dur = min(10, max(4, round(min_gap * 0.3 / 2) * 2))
+    clip_dur = min(12, max(6, round(total_sec / 180)))
+    min_gap  = min(120, max(20, round(total_sec / 30 / 5) * 5))
+    interval = max(3, clip_dur // 3)
 
     return {
         "clip_dur":  clip_dur,
@@ -2748,10 +2750,9 @@ async def suggest_clip_params_by_dir(work_dir: str = Query(...)):
     if total_sec <= 0:
         raise HTTPException(422, "Could not read durations from video files")
 
-    raw_gap  = total_sec / 80
-    min_gap  = max(15, min(120, round(raw_gap / 5) * 5))
-    interval = max(2, round(min_gap / 15))
-    clip_dur = min(10, max(4, round(min_gap * 0.3 / 2) * 2))
+    clip_dur = min(12, max(6, round(total_sec / 180)))
+    min_gap  = min(120, max(20, round(total_sec / 30 / 5) * 5))
+    interval = max(3, clip_dur // 3)
 
     return {
         "clip_dur":  clip_dur,

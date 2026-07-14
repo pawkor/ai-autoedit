@@ -116,7 +116,9 @@ async function mYtOpen(filePath, fileName, existingUrl, jobId, workDir) {
   document.getElementById('m-yt-title').value = savedTitle || projectName;
   document.getElementById('m-yt-desc').value  = savedDesc  || _YT_DEFAULT_FOOTER;
   document.getElementById('m-yt-notes').value = savedNotes;
-  document.querySelector('input[name="m-yt-privacy"][value="unlisted"]').checked = true;
+  const _savedPrivacy = localStorage.getItem('yt_privacy') || 'unlisted';
+  const _privEl = document.querySelector(`input[name="m-yt-privacy"][value="${_savedPrivacy}"]`);
+  if (_privEl) _privEl.checked = true;
   document.getElementById('m-yt-new-playlist').style.display = 'none';
   document.getElementById('m-yt-new-playlist').value = '';
 
@@ -247,6 +249,8 @@ async function mYtUpload() {
   const title = document.getElementById('m-yt-title').value.trim();
   if (!title) { alert('Enter a title'); return; }
   const privacy    = document.querySelector('input[name="m-yt-privacy"]:checked')?.value || 'unlisted';
+  localStorage.setItem('yt_privacy', privacy);
+  _mYtMetaSaved = false; await mYtMetaSave();
   const playlistId = document.getElementById('m-yt-new-playlist').style.display !== 'none'
     ? null : (document.getElementById('m-yt-playlist').value || null);
   const newPlaylist = document.getElementById('m-yt-new-playlist').value.trim() || null;

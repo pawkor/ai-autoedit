@@ -41,6 +41,164 @@ def _ts() -> str:
 
 # ── Music analysis ────────────────────────────────────────────────────────────
 
+def _get_vocals_demucs(music_path: Path, sr: int) -> "np.ndarray | None":
+    """
+    Separate vocals via Meta Demucs (htdemucs) Python API.
+    Uses soundfile for output (avoids torchaudio.save → torchcodec dependency).
+    Returns mono waveform at `sr` Hz, or None if Demucs unavailable/fails.
+    Cache: .vocals_{stem}.wav next to the music file.
+    """
+    cache = music_path.parent / f".vocals_{music_path.stem}.wav"
+    if cache.exists():
+        try:
+            import soundfile as _sf
+            y_voc, _vsr = _sf.read(str(cache), always_2d=False)
+            return y_voc if _vsr == sr else None
+        except Exception:
+            pass
+
+    try:
+        import torch
+        import soundfile as _sf
+        import librosa as _lib
+        from demucs.pretrained import get_model as _get_model
+        from demucs.apply import apply_model as _apply_model
+    except ImportError:
+        return None
+
+    try:
+        # Redirect model cache to writable /data/.cache/torch
+        _cache_root = Path(os.environ.get("DATA_DIR", "/data")) / ".cache"
+        _cache_root.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("TORCH_HOME", str(_cache_root / "torch"))
+
+        # Decode music → stereo 44100 Hz WAV via ffmpeg (avoids torchaudio.load)
+        _tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        _tmp.close()
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(music_path),
+                 "-ar", "44100", "-ac", "2", _tmp.name],
+                check=True,
+            )
+            wav_np, wav_sr = _sf.read(_tmp.name, always_2d=True)  # [samples, channels]
+        finally:
+            Path(_tmp.name).unlink(missing_ok=True)
+
+        # [batch=1, channels, samples]
+        wav_t = torch.tensor(wav_np.T, dtype=torch.float32).unsqueeze(0)
+
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = _get_model("htdemucs")
+        model.to(_device).eval()
+
+        # Resample to model's native sr if needed
+        if wav_sr != model.samplerate:
+            import torchaudio as _ta
+            wav_t = _ta.functional.resample(wav_t, wav_sr, model.samplerate)
+
+        with torch.no_grad():
+            sources = _apply_model(model, wav_t.to(_device), overlap=0.25, shifts=0)
+
+        vocals_idx = model.sources.index("vocals")
+        vocals_mono = sources[0, vocals_idx].mean(0).cpu().numpy()  # [samples]
+
+        # Resample to analysis sr and save
+        vocals_rs = _lib.resample(vocals_mono, orig_sr=model.samplerate, target_sr=sr)
+        _sf.write(str(cache), vocals_rs, sr)
+        del model, sources, wav_t
+        return vocals_rs
+
+    except Exception as _e:
+        print(f"  [Demucs] failed: {_e}")
+        return None
+
+def _get_chorus_whisperx(music_path: Path) -> list[tuple[float, float]]:
+    """
+    Use WhisperX forced alignment to find chorus regions via repeated lyrics.
+    Returns list of (start, end) timestamp pairs.
+    Returns [] if WhisperX unavailable, transcription fails, or music is instrumental.
+    Cache: .chorus_{stem}.json next to music file.
+    """
+    cache = music_path.parent / f".chorus_{music_path.stem}.json"
+    if cache.exists():
+        try:
+            return [tuple(x) for x in _json.loads(cache.read_text())]
+        except Exception:
+            pass
+
+    try:
+        # torchaudio ≥2.1 removed AudioMetaData; patch before importing whisperx
+        import torchaudio as _ta
+        if not hasattr(_ta, "AudioMetaData"):
+            _ta.AudioMetaData = type("AudioMetaData", (), {})
+        import whisperx as _wx
+    except (ImportError, Exception):
+        return []
+
+    try:
+        _device = "cuda"
+        _model = _wx.load_model("large-v3", _device, compute_type="float16")
+        _audio = _wx.load_audio(str(music_path))
+        _res   = _model.transcribe(_audio, batch_size=16)
+        del _model  # free VRAM before alignment model loads
+
+        _lang = _res.get("language", "en") or "en"
+        _ma, _meta = _wx.load_align_model(language_code=_lang, device=_device)
+        _res = _wx.align(_res["segments"], _ma, _meta, _audio, _device,
+                          return_char_alignments=False)
+        del _ma
+
+        words = [
+            {"word": w["word"].lower().strip("'\".,!? "), "start": w["start"]}
+            for w in _res.get("word_segments", [])
+            if w.get("word") and w.get("start") is not None
+        ]
+        if len(words) < 20:
+            return []  # instrumental / too sparse to detect structure
+
+        # Sliding 4-second windows; signature = first 5 non-empty words
+        WIN, STEP = 4.0, 2.0
+        duration = float(_audio.shape[-1]) / 16000
+        fingerprints: dict[str, list[float]] = {}
+        t = 0.0
+        while t < duration:
+            bucket = [w["word"] for w in words if t <= w["start"] < t + WIN][:5]
+            sig = " ".join(w for w in bucket if w)
+            if len(sig.split()) >= 3:
+                fingerprints.setdefault(sig, []).append(t)
+            t += STEP
+
+        # Repeated fingerprints (≥3 occurrences) mark chorus
+        chorus_ts: list[float] = sorted({
+            ts for sig, times in fingerprints.items()
+            if len(times) >= 3
+            for ts in times
+        })
+        if not chorus_ts:
+            return []
+
+        # Merge overlapping windows into contiguous regions
+        regions: list[tuple[float, float]] = []
+        r_start = chorus_ts[0]
+        r_end   = chorus_ts[0] + WIN
+        for t in chorus_ts[1:]:
+            if t <= r_end + STEP:
+                r_end = t + WIN
+            else:
+                regions.append((r_start, r_end))
+                r_start, r_end = t, t + WIN
+        regions.append((r_start, r_end))
+
+        cache.write_text(_json.dumps(regions))
+        print(f"  [WhisperX] {len(regions)} chorus region(s) detected  lang={_lang}")
+        return regions
+
+    except Exception as _e:
+        print(f"  [WhisperX] skipped: {_e}")
+        return []
+
+
 def analyze_music(music_path: Path) -> dict:
     """
     Returns: duration, tempo, beat_times[], beat_energy[] (normalised 0-1).
@@ -55,6 +213,7 @@ def analyze_music(music_path: Path) -> dict:
     ffmpeg = "ffmpeg"
     _tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     _tmp.close()
+    _beatnet_beats: list[float] | None = None
     try:
         subprocess.run(
             [ffmpeg, "-y", "-loglevel", "error", "-i", str(music_path),
@@ -62,6 +221,16 @@ def analyze_music(music_path: Path) -> dict:
             check=True,
         )
         y, sr = librosa.load(_tmp.name, sr=None, mono=True)
+        try:
+            from beatnet import BeatNet as _BeatNet
+            _bn_out = np.array(
+                _BeatNet(1, mode="offline", inference_model="DBN",
+                         plot=[], thread=False).process(_tmp.name)
+            )
+            if _bn_out.ndim == 2 and len(_bn_out) > 4:
+                _beatnet_beats = _bn_out[:, 0].tolist()
+        except Exception:
+            pass
     finally:
         Path(_tmp.name).unlink(missing_ok=True)
     duration = len(y) / sr
@@ -72,6 +241,12 @@ def analyze_music(music_path: Path) -> dict:
     tempo, beat_frames = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, hop_length=hop)
     tempo = float(np.squeeze(tempo))  # librosa ≥0.10 returns 0-dim array
     beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=hop).tolist()
+
+    if _beatnet_beats:
+        beat_times = _beatnet_beats
+        _ivals = np.diff(beat_times)
+        tempo = 60.0 / float(np.median(_ivals)) if len(_ivals) > 0 else tempo
+        print(f"  [BeatNet] {len(beat_times)} beats  {tempo:.0f} BPM")
 
     # PLP (Predominant Local Pulse) — rhythmic intensity per beat.
     pulse = librosa.beat.plp(onset_envelope=onset_env, sr=sr, hop_length=hop)
@@ -84,21 +259,29 @@ def analyze_music(music_path: Path) -> dict:
     else:
         beat_energy = np.ones(len(beat_times)) * 0.5
 
-    # Onset strength on percussive component only (HPSS).
-    # Full-mix onset_strength misses sparse kick/bass hits when guitar/piano fill the spectrum.
-    # HPSS isolates transient attacks → "dum dum" bass hits dominate instead of drowning.
+    # Onset strength on percussive and harmonic/vocal components.
+    # Percussion (kick/snare): HPSS isolation is sufficient and fast.
+    # Vocals (melodic attacks, "the best"): Demucs separation preferred — 10-30 ms
+    # accuracy vs HPSS 20-60 ms. Falls back to HPSS harmonic if Demucs unavailable.
     try:
-        _, y_perc = librosa.effects.hpss(y, margin=4.0)
+        y_harm, y_perc = librosa.effects.hpss(y, margin=4.0)
         onset_env_perc = librosa.onset.onset_strength(y=y_perc, sr=sr, hop_length=hop)
+        onset_env_harm = librosa.onset.onset_strength(y=y_harm, sr=sr, hop_length=hop)
+        _y_voc = _get_vocals_demucs(music_path, sr)
+        if _y_voc is not None:
+            onset_env_harm = librosa.onset.onset_strength(y=_y_voc, sr=sr, hop_length=hop)
+            print("  [Demucs] vocal onset active")
     except Exception:
-        onset_env_perc = onset_env  # fallback to full-mix onset
+        onset_env_perc = onset_env
+        onset_env_harm = onset_env
     onset_times = librosa.times_like(onset_env_perc, sr=sr, hop_length=hop)
     onset_at_beats = np.interp(beat_times, onset_times, onset_env_perc)
     o_min, o_max = onset_at_beats.min(), onset_at_beats.max()
-    if o_max > o_min:
-        onset_at_beats = (onset_at_beats - o_min) / (o_max - o_min)
-    else:
-        onset_at_beats = np.ones(len(beat_times)) * 0.5
+    onset_at_beats = (onset_at_beats - o_min) / (o_max - o_min) if o_max > o_min else np.ones(len(beat_times)) * 0.5
+
+    harm_at_beats = np.interp(beat_times, onset_times, onset_env_harm)
+    h_min, h_max = harm_at_beats.min(), harm_at_beats.max()
+    harm_at_beats = (harm_at_beats - h_min) / (h_max - h_min) if h_max > h_min else np.ones(len(beat_times)) * 0.5
 
     # Section-level energy: RMS smoothed over ~4s windows.
     # This captures intro/verse/chorus/outro dynamics rather than per-beat pulse.
@@ -125,16 +308,59 @@ def analyze_music(music_path: Path) -> dict:
     oep_max = onset_env_perc.max()
     onset_env_perc_norm = (onset_env_perc / oep_max).tolist() if oep_max > 0 else onset_env_perc.tolist()
 
+    # Structural segmentation: agglomerative clustering on chroma+MFCC.
+    # Identifies verse/chorus/bridge boundaries; each segment gets an RMS energy level.
+    try:
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop)
+        mfcc   = librosa.feature.mfcc(y=y, sr=sr, hop_length=hop, n_mfcc=13)
+        feat   = np.vstack([chroma, mfcc])
+        k      = max(4, min(12, int(duration / 30)))  # ~1 boundary per 30s
+        bound_frames = librosa.segment.agglomerative(feat, k=k)
+        bound_times  = librosa.frames_to_time(bound_frames, sr=sr, hop_length=hop)
+        seg_bounds   = np.concatenate([[0.0], bound_times, [float(duration)]])
+        _segs: list[dict] = []
+        for _si in range(len(seg_bounds) - 1):
+            _ts, _te = float(seg_bounds[_si]), float(seg_bounds[_si + 1])
+            _mask    = (rms_times >= _ts) & (rms_times < _te)
+            _segs.append({"start": _ts, "end": _te,
+                          "rms": float(rms_smooth[_mask].mean()) if _mask.any() else 0.0})
+        _rms_v = np.array([s["rms"] for s in _segs])
+        if _rms_v.max() > _rms_v.min():
+            _rms_v = (_rms_v - _rms_v.min()) / (_rms_v.max() - _rms_v.min())
+        for _si, _seg in enumerate(_segs):
+            _seg["energy"] = float(_rms_v[_si])
+        segments = _segs
+    except Exception as _seg_err:
+        segments = []
+
+    # Boost segment energy at chorus regions detected via WhisperX repeated lyrics.
+    # Additive+multiplicative so even low-RMS choruses (e.g. soft intro chorus) pull up.
+    _chorus_regions = _get_chorus_whisperx(music_path)
+    if _chorus_regions and segments:
+        _boosted = 0
+        for seg in segments:
+            seg_mid = (seg["start"] + seg["end"]) / 2
+            for c_start, c_end in _chorus_regions:
+                if c_start <= seg_mid < c_end:
+                    seg["energy"] = min(1.0, seg["energy"] * 1.3 + 0.25)
+                    _boosted += 1
+                    break
+        if _boosted:
+            print(f"  [WhisperX] boosted {_boosted}/{len(segments)} segments")
+
     print(f" {duration:.1f}s  {tempo:.0f} BPM  {len(beat_times)} beats  "
-          f"section_e=[{section_energy.min():.2f}..{section_energy.max():.2f}]")
+          f"section_e=[{section_energy.min():.2f}..{section_energy.max():.2f}]"
+          f"  segs={len(segments)}")
     return {
         "duration":         duration,
         "tempo":            tempo,
         "beat_times":       beat_times,
         "beat_energy":      beat_energy.tolist(),
         "onset_energy":     onset_at_beats.tolist(),
+        "harm_energy":      harm_at_beats.tolist(),
         "section_energy":   section_energy.tolist(),
-        "onset_env_perc":   onset_env_perc_norm,  # raw percussive envelope for peak-based cutting
+        "onset_env_perc":   onset_env_perc_norm,
+        "segments":         segments,
         "sr":               sr,
         "hop":              hop,
     }
@@ -214,6 +440,91 @@ def _build_schedule_peaks(
     return schedule
 
 
+def _build_schedule_segments(
+    beat_times: list[float],
+    segments: list[dict],
+    beats_ultra_fast: int,
+    beats_fast: int,
+    beats_mid: int,
+    beats_slow: int,
+    section_energy: list[float] | None = None,
+    perc_energy: list[float] | None = None,
+    harm_energy: list[float] | None = None,
+) -> list[dict]:
+    """
+    Segment-aware beat-grid schedule.
+    Blend: 35% segment context (verse/chorus) + 15% section RMS + 50% event energy.
+    Event energy = max(percussive onset, harmonic onset) — catches both kick drums
+    and vocal attacks (e.g. "the best") so cuts land on musically meaningful moments.
+    """
+    import numpy as _np
+
+    def _seg_energy(t: float) -> float:
+        for seg in segments:
+            if seg["start"] <= t < seg["end"]:
+                return seg["energy"]
+        return segments[-1]["energy"] if segments else 0.5
+
+    n = len(beat_times)
+    seg_e_arr = _np.array([_seg_energy(beat_times[i]) for i in range(n)])
+
+    def _norm(lst):
+        a = _np.array(lst[:n], dtype=float)
+        lo, hi = a.min(), a.max()
+        return (a - lo) / (hi - lo) if hi > lo else _np.full(n, 0.5)
+
+    se_norm   = _norm(section_energy) if section_energy and len(section_energy) >= n else _np.full(n, 0.5)
+    perc_norm = _norm(perc_energy)    if perc_energy    and len(perc_energy)    >= n else _np.full(n, 0.5)
+    harm_norm = _norm(harm_energy)    if harm_energy    and len(harm_energy)    >= n else _np.full(n, 0.5)
+
+    # event_energy: max of percussive (kick/snare) and harmonic (vocal/guitar attack)
+    event = _np.maximum(perc_norm, harm_norm)
+    blended = 0.35 * seg_e_arr + 0.15 * se_norm + 0.50 * event
+
+    # Thresholds tuned for screen-time balance at high BPM:
+    # 35% beats→ultra, 25%→fast, 25%→mid, 15%→slow
+    # (proportional timeline: ultra slots are narrow so use more of them)
+    _p_ultra = float(_np.percentile(blended, 65))
+    _p_fast  = float(_np.percentile(blended, 40))
+    _p_slow  = float(_np.percentile(blended, 15))
+
+    schedule: list[dict] = []
+    i = 0
+    while i < n - 1:
+        energy = float(blended[i])
+        if energy > _p_ultra:
+            n_beats = beats_ultra_fast
+        elif energy > _p_fast:
+            n_beats = beats_fast
+        elif energy < _p_slow:
+            n_beats = beats_slow
+        else:
+            n_beats = beats_mid
+        end_i = min(i + n_beats, n - 1)
+        dur   = beat_times[end_i] - beat_times[i]
+        if dur >= 0.4:
+            schedule.append({
+                "start":    beat_times[i],
+                "end":      beat_times[end_i],
+                "duration": dur,
+                "energy":   energy,
+                "n_beats":  n_beats,
+            })
+        i = end_i
+
+    if schedule:
+        durs = [s["duration"] for s in schedule]
+        n_u = sum(1 for s in schedule if s["n_beats"] == beats_ultra_fast)
+        n_f = sum(1 for s in schedule if s["n_beats"] == beats_fast)
+        n_m = sum(1 for s in schedule if s["n_beats"] == beats_mid)
+        n_s = sum(1 for s in schedule if s["n_beats"] == beats_slow)
+        print(f"  Schedule (segments): {len(schedule)} slots  "
+              f"min={min(durs):.1f}s  max={max(durs):.1f}s  avg={sum(durs)/len(durs):.1f}s  "
+              f"total={schedule[-1]['end']:.1f}s  "
+              f"ultra={n_u}  fast={n_f}  mid={n_m}  slow={n_s}")
+    return schedule
+
+
 def build_schedule(
     beat_times: list[float],
     beat_energy: list[float],
@@ -257,7 +568,7 @@ def build_schedule(
     n = len(beat_times)
     i = 0
     while i < n - 1:
-        energy = beat_energy[i]
+        energy = _sec_e[i]  # section_energy (4s RMS) reflects musical structure better than PLP
         if energy > _p85:
             n_beats = beats_ultra_fast
         elif energy > _p65:
@@ -459,7 +770,8 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 cam_pattern: str = "",
                 cam_order: list[str] | None = None,
                 max_consecutive_cam: int = 3,
-                gps_weight: float = 0.0) -> list[dict]:
+                gps_weight: float = 0.0,
+                mood_weight: float = 0.0) -> list[dict]:
     """
     Assign best clip to each slot.
     Scoring per candidate (when chron_weight=0):
@@ -584,14 +896,23 @@ def match_clips(schedule: list[dict], clips: list[dict],
             motion_match = 1.0 - abs(energy - c.get("motion_norm", 0.5))
             # GPS bonus: high speed/turn clips score higher; max contribution = gps_weight * 0.3
             _gps = c.get("gps_norm", 0.0) * gps_weight * 0.3
+            # Mood score: interpolate action↔scenic by slot energy
+            # energy=1.0 (chorus/ultra) → action clip; energy=0.0 (verse/slow) → scenic clip
+            _act = c.get("action_score", float("nan"))
+            _sce = c.get("scenic_score", float("nan"))
+            _has_mood = mood_weight > 0 and _act == _act and _sce == _sce  # nan-safe
             if _chron_w > 0 and c.get("clip_time_norm") is not None:
                 music_pos   = slot["start"] / total_music_dur
                 chron_match = 1.0 - abs(music_pos - c["clip_time_norm"])
-                return (c["score"] * 0.50
-                        + motion_match  * 0.30
-                        + chron_match   * _chron_w
-                        + _gps)
-            # High-energy slots: favor motion over CLIP score for more dynamic feel
+                if _has_mood:
+                    _mood = energy * _act + (1.0 - energy) * _sce
+                    return (_mood * 0.35 + motion_match * 0.25
+                            + chron_match * _chron_w + c["score"] * 0.20 + _gps)
+                return (c["score"] * 0.50 + motion_match * 0.30 + chron_match * _chron_w + _gps)
+            if _has_mood:
+                _mood = energy * _act + (1.0 - energy) * _sce
+                return _mood * 0.45 + motion_match * 0.30 + c["score"] * 0.25 + _gps
+            # Fallback (no mood scores): original formula
             if energy > 0.65:
                 return c["score"] * 0.45 + motion_match * 0.55 + _gps
             return c["score"] * 0.60 + motion_match * 0.40 + _gps
@@ -1138,6 +1459,7 @@ def assemble(
     # Load CLIP scores; hard-exclude banned scenes and negative-dominant scenes
     _all_scores: dict[str, float] = {}
     _gps_raw:    dict[str, tuple[float, float]] = {}
+    _mood_raw:   dict[str, tuple[float, float]] = {}
     _neg_excluded = 0
     _BRIGHTNESS_BAN = float(_cp.get("music_driven", "brightness_ban", fallback="50.0") or "50.0")
     _dark_excluded = 0
@@ -1166,6 +1488,13 @@ def assemble(
                     )
                 except (ValueError, TypeError):
                     pass
+                _a_str  = row.get("action_score", "")
+                _sc_str = row.get("scenic_score", "")
+                if _a_str not in ("", "nan") and _sc_str not in ("", "nan"):
+                    try:
+                        _mood_raw[scene] = (float(_a_str), float(_sc_str))
+                    except ValueError:
+                        pass
             except (KeyError, ValueError):
                 pass
     if _dark_excluded:
@@ -1214,7 +1543,8 @@ def assemble(
     def _cpint(s, k, fb): v = _cp.get(s, k, fallback=fb); return int(v) if v.strip() else int(fb)
     def _cpfloat(s, k, fb): v = _cp.get(s, k, fallback=fb); return float(v) if v.strip() else float(fb)
     _beats_ultra_fast = _cpint("music_driven", "beats_ultra_fast", "2")
-    _beats_auto = _cp.getboolean("music_driven", "beats_auto", fallback=False)
+    _beats_auto   = _cp.getboolean("music_driven", "beats_auto",   fallback=False)
+    _beats_method = _cp.get(       "music_driven", "beats_method", fallback="segments")
     _beats_fast = _cpint("music_driven", "beats_fast", "3")
     _beats_mid  = _cpint("music_driven", "beats_mid",  "4")
     _beats_slow = _cpint("music_driven", "beats_slow", "6")
@@ -1240,17 +1570,44 @@ def assemble(
           f"slow={_beats_slow}({_beats_slow*_beat_sec:.1f}s)")
     _section_energy  = music_info.get("section_energy")
     _onset_energy    = music_info.get("onset_energy")
+    _harm_energy     = music_info.get("harm_energy")
     _onset_env_perc  = music_info.get("onset_env_perc")
+    _segments_data   = music_info.get("segments", [])
     _music_sr        = music_info.get("sr", 22050)
     _music_hop       = music_info.get("hop", 512)
-    schedule = build_schedule(beat_times, beat_energy,
+
+    def _make_schedule(bt, be):
+        if _beats_auto and _onset_env_perc:
+            # Legacy onset-peak mode (dense music → fixed min_shot_sec gap)
+            return build_schedule(bt, be,
+                                  _beats_ultra_fast, _beats_fast, _beats_mid, _beats_slow,
+                                  auto=True,
+                                  min_shot_sec=_min_shot_sec, max_shot_sec=_max_shot_sec,
+                                  section_energy=_section_energy,
+                                  onset_energy=_onset_energy,
+                                  onset_env_perc=_onset_env_perc,
+                                  sr=_music_sr, hop=_music_hop)
+        if _beats_method == "segments" and _segments_data:
+            sched = _build_schedule_segments(bt, _segments_data,
+                                             _beats_ultra_fast, _beats_fast,
+                                             _beats_mid, _beats_slow,
+                                             section_energy=_section_energy,
+                                             perc_energy=_onset_energy,
+                                             harm_energy=_harm_energy)
+            if sched:
+                return sched
+            print("  Segments schedule empty — falling back to section energy")
+        # section mode: beat-grid with section_energy (4s RMS) + percentile tiers
+        return build_schedule(bt, be,
                               _beats_ultra_fast, _beats_fast, _beats_mid, _beats_slow,
-                              auto=_beats_auto,
+                              auto=False,
                               min_shot_sec=_min_shot_sec, max_shot_sec=_max_shot_sec,
                               section_energy=_section_energy,
                               onset_energy=_onset_energy,
                               onset_env_perc=_onset_env_perc,
                               sr=_music_sr, hop=_music_hop)
+
+    schedule = _make_schedule(beat_times, beat_energy)
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
 
@@ -1270,8 +1627,7 @@ def assemble(
         _bt_sync = beat_times[_sync_idx:]
         _be_sync = list(beat_energy)[_sync_idx:]
         if len(_bt_sync) > 1:
-            schedule = build_schedule(_bt_sync, _be_sync,
-                                      _beats_ultra_fast, _beats_fast, _beats_mid, _beats_slow)
+            schedule = _make_schedule(_bt_sync, _be_sync)
             print(f"  Intro sync: music_ss={music_ss:.3f}s  "
                   f"first_cut_beat={_sync_beat:.3f}s  "
                   f"card={_card_dur:.1f}s  drift={abs(_sync_beat-_target)*1000:.0f}ms")
@@ -1450,9 +1806,9 @@ def assemble(
     # Filter out static clips: configurable via [music_driven] min_motion_score (0.0 = off)
     # Smart-detect: ≤1.0 = relative (motion_norm); >1.0 = absolute pixel diff (motion_level).
     # Absolute is more robust — relative gives 1.0 to least-static clip even if absolutely static.
-    # Active in dry-run too so Build Timeline preview matches final render.
+    # Skipped in dry-run: motion_level is always 0 there (motion analysis not run).
     _min_motion = float(_cp.get("music_driven", "min_motion_score", fallback="5.0"))
-    if _min_motion > 0 and len(clips) > len(schedule):
+    if _min_motion > 0 and len(clips) > len(schedule) and not dry_run:
         _field = "motion_norm" if _min_motion <= 1.0 else "motion_level"
         _before = len(clips)
         _filtered = [c for c in clips if c.get(_field, 0) >= _min_motion]
@@ -1533,23 +1889,37 @@ def assemble(
     # GPS bonus: normalize speed/turn across pool, attach gps_norm to each clip
     _gps_weight = float(_cp.get("scene_selection", "gps_weight", fallback="0.0"))
     if _gps_weight > 0 and _gps_raw:
-        _spd_vals = [s for s, _ in _gps_raw.values()]
-        _trn_vals = [t for _, t in _gps_raw.values()]
-        _spd_max  = max(_spd_vals) or 1.0
-        _trn_max  = max(_trn_vals) or 1.0
+        _spd_vals = sorted(s for s, _ in _gps_raw.values())
+        _trn_vals = sorted(t for _, t in _gps_raw.values())
+        # 95th percentile normalization — robust against GPS artifacts (e.g.
+        # 160°/s spin at standstill that would otherwise dominate max-based scale)
+        _p95 = int(len(_spd_vals) * 0.95)
+        _spd_ref = _spd_vals[_p95] or 1.0
+        _trn_ref = _trn_vals[_p95] or 1.0
         _gps_annotated = sum(1 for s, _ in _gps_raw.values() if s > 0)
         for c in clips:
             spd, trn = _gps_raw.get(c["scene"], (0.0, 0.0))
-            c["gps_norm"] = (spd / _spd_max) * 0.7 + (trn / _trn_max) * 0.3
+            c["gps_norm"] = min(1.0, (spd / _spd_ref) * 0.7 + (trn / _trn_ref) * 0.3)
         print(f"  GPS blend (music-driven): weight={_gps_weight}  "
-              f"annotated={_gps_annotated}/{len(_all_scores)} scenes")
+              f"annotated={_gps_annotated}/{len(_all_scores)} scenes  "
+              f"spd_p95={_spd_ref:.0f}km/h  trn_p95={_trn_ref:.0f}°/s")
+
+    # Attach mood scores to all clips (incl. those added by post-motion balance)
+    if _mood_raw:
+        for _mc in clips:
+            _ma, _msc = _mood_raw.get(_mc["scene"], (float("nan"), float("nan")))
+            _mc["action_score"] = _ma
+            _mc["scenic_score"] = _msc
+        _mood_cnt = sum(1 for _mc in clips if _mc.get("action_score") == _mc.get("action_score"))
+        print(f"  Mood scores: {_mood_cnt}/{len(clips)} clips annotated (action/scenic)")
 
     # 4. Match clips to schedule
     _chron_weight = 0.20 if stem_to_time else 0.0
     edit = match_clips(schedule, clips, chron_weight=_chron_weight,
                        cam_pattern=_cam_pattern, cam_order=_cam_order,
                        max_consecutive_cam=_max_consecutive_cam,
-                       gps_weight=_gps_weight)
+                       gps_weight=_gps_weight,
+                       mood_weight=1.0 if _mood_raw else 0.0)
     if not edit:
         raise RuntimeError("Clip matching produced no edit")
 

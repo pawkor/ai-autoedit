@@ -32,3 +32,13 @@ prometheus_client==0.21.1
 # Privacy & OCR
 ultralytics>=8.3.0
 easyocr>=1.7.1
+
+# Beat detection (optional — better tempo tracking for music-driven; active after container rebuild)
+BeatNet>=1.1.1
+
+# Vocal separation (optional — replaces HPSS harmonic for harm_energy onset accuracy)
+demucs>=4.0.1
+
+# whisperx (chorus detection) excluded — incompatible with torchaudio 2.11+cu128
+# (AttributeError: list_audio_backends / AudioMetaData removed in torchaudio 2.x)
+# Code in music_driven.py handles ImportError gracefully (returns [] silently)

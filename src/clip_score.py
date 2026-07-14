@@ -23,7 +23,7 @@ from torch.utils.data import Dataset, DataLoader
 
 _cfg = configparser.ConfigParser()
 _script_dir = Path(__file__).resolve().parent
-_cfg.read([_script_dir / "config.ini", Path.cwd() / "config.ini"])
+_cfg.read([_script_dir.parent / "config.ini", _script_dir / "config.ini", Path.cwd() / "config.ini"])
 
 FRAMES_DIR        = os.environ.get("FRAMES_DIR", "frames/")
 OUTPUT_CSV        = os.environ.get("OUTPUT_CSV", "scene_scores.csv")
@@ -236,6 +236,8 @@ def _load_aesthetic_predictor():
 
 aes_scores: dict[str, float] = {}
 _brightness_map: dict[str, float] = {}
+_mood_action_map: dict[str, float] = {}
+_mood_scenic_map: dict[str, float] = {}
 try:
     _aes_model = _load_aesthetic_predictor()
     _stems = list(scene_best.keys())
@@ -309,9 +311,46 @@ try:
 except Exception as _e:
     print(f"Aesthetic scoring skipped: {_e}")
 
+# ── Mood scoring ──
+if _cfg.getboolean("mood_scoring", "enabled", fallback=False) and scene_embs:
+    _action_prompts_raw = _cfg.get("mood_scoring", "action_prompts", fallback="")
+    _scenic_prompts_raw = _cfg.get("mood_scoring", "scenic_prompts", fallback="")
+    _action_prompts = _parse_prompts(_action_prompts_raw)
+    _scenic_prompts = _parse_prompts(_scenic_prompts_raw)
+    if _action_prompts and _scenic_prompts:
+        print(f"Mood scoring ({len(_action_prompts)} action + {len(_scenic_prompts)} scenic prompts)...")
+        try:
+            with torch.no_grad():
+                _act_tokens = tokenizer(_action_prompts).to(DEVICE)
+                _sce_tokens = tokenizer(_scenic_prompts).to(DEVICE)
+                _act_feat = model.encode_text(_act_tokens).float()
+                _sce_feat = model.encode_text(_sce_tokens).float()
+                _act_feat /= _act_feat.norm(dim=-1, keepdim=True)
+                _sce_feat /= _sce_feat.norm(dim=-1, keepdim=True)
+                _act_mean = _act_feat.mean(dim=0)
+                _sce_mean = _sce_feat.mean(dim=0)
+                _act_mean /= _act_mean.norm()
+                _sce_mean /= _sce_mean.norm()
+                _mscene_list = list(scene_embs.keys())
+                _emb_t = torch.tensor(
+                    np.array([scene_embs[s] for s in _mscene_list]), dtype=torch.float32
+                ).to(DEVICE)
+                _act_s = (_emb_t @ _act_mean).cpu().tolist()
+                _sce_s = (_emb_t @ _sce_mean).cpu().tolist()
+            for _ms, _ma, _msc in zip(_mscene_list, _act_s, _sce_s):
+                _mood_action_map[_ms] = round(float(_ma), 4)
+                _mood_scenic_map[_ms]  = round(float(_msc), 4)
+            print(f"  action {min(_act_s):.3f}–{max(_act_s):.3f}  scenic {min(_sce_s):.3f}–{max(_sce_s):.3f}")
+        except Exception as _me:
+            print(f"Mood scoring failed: {_me}")
+    else:
+        print("Mood scoring: skipped (no prompts configured in [mood_scoring])")
+
 for r in results:
     r["aesthetic_score"] = round(aes_scores.get(r["scene"], float("nan")), 4)
     r["avg_brightness"]  = _brightness_map.get(r["scene"], float("nan"))
+    r["action_score"]    = _mood_action_map.get(r["scene"], float("nan"))
+    r["scenic_score"]    = _mood_scenic_map.get(r["scene"], float("nan"))
 
 df_all = pd.DataFrame(results).sort_values("score", ascending=False)
 

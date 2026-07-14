@@ -494,6 +494,43 @@ def _back_cam_sources(cam_src_csv: Path, main_cam: str) -> set[str]:
                 if r.get("camera") != main_cam}
 
 
+async def _run_mood_score_if_needed(
+    scores_csv: Path, auto_dir: Path, work_dir: Path,
+    safe_env: dict, mood_enabled: bool,
+) -> list[str]:
+    """Run mood_score.py when action_score column is missing from CSV.
+    Returns log lines to stream to the client."""
+    if not mood_enabled or not scores_csv.exists():
+        return []
+    try:
+        import pandas as _mpd
+        _cols = _mpd.read_csv(scores_csv, nrows=1).columns.tolist()
+        if "action_score" in _cols:
+            return []
+    except Exception:
+        return []
+    lines: list[str] = ["  Mood scoring (cached embeddings)..."]
+    mood_env = {
+        **safe_env,
+        "OUTPUT_CSV":      str(scores_csv),
+        "EMBEDDINGS_FILE": str(auto_dir / "scene_embeddings.npz"),
+    }
+    allcam = auto_dir / "scene_scores_allcam.csv"
+    if allcam.exists():
+        mood_env["OUTPUT_CSV_ALLCAM"] = str(allcam)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(SCRIPT_DIR / "mood_score.py"),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        cwd=str(work_dir), env=mood_env,
+    )
+    async for _raw in proc.stdout:
+        _l = _raw.decode("utf-8", errors="replace").rstrip()
+        if _l:
+            lines.append(f"  {_l}")
+    await proc.wait()
+    return lines
+
+
 async def estimate(params: dict, work_dir: Path) -> dict:
     """
     Run select_scenes.py with DRY_RUN=1 and return
@@ -1302,6 +1339,9 @@ async def run(params: dict, work_dir: Path,
     import hashlib as _hashlib, configparser as _hcfg
     _hconfig = _hcfg.ConfigParser()
     _hconfig.read(SCRIPT_DIR / "config.ini")
+    _global_cfg = _hcfg.ConfigParser()
+    _global_cfg.read([APP_DIR / "config.ini", SCRIPT_DIR / "config.ini"])
+    _mood_enabled = _global_cfg.getboolean("mood_scoring", "enabled", fallback=False)
     _model_tag = (_hconfig.get("clip_scoring", "model",      fallback="ViT-L-14") + "/" +
                   _hconfig.get("clip_scoring", "pretrained", fallback="openai"))
     _cur_hash = _hashlib.sha256(
@@ -1356,9 +1396,13 @@ async def run(params: dict, work_dir: Path,
             else:
                 _csv_count = len(pd.read_csv(scores_csv)) if scores_csv.exists() else 0
                 yield f"  Cached ({_csv_count} scenes)"
+                for _ml in await _run_mood_score_if_needed(scores_csv, auto_dir, work_dir, _safe_env, _mood_enabled):
+                    yield _ml
         else:
             _csv_count = len(pd.read_csv(scores_csv)) if scores_csv.exists() else 0
             yield f"  Cached ({_csv_count} scenes, from CLIP-first scan)"
+            for _ml in await _run_mood_score_if_needed(scores_csv, auto_dir, work_dir, _safe_env, _mood_enabled):
+                yield _ml
     if not clip_first and scores_csv.exists():
         try:
             _check_df = pd.read_csv(scores_csv)
@@ -1386,6 +1430,8 @@ async def run(params: dict, work_dir: Path,
                 yield "  Prompts changed — rescoring..."
             else:
                 yield f"  Cached ({_csv_count} scenes)"
+                for _ml in await _run_mood_score_if_needed(scores_csv, auto_dir, work_dir, _safe_env, _mood_enabled):
+                    yield _ml
         except Exception:
             scores_csv.unlink()
             yield "  Corrupt scores CSV — rescoring..."
@@ -1462,7 +1508,7 @@ async def run(params: dict, work_dir: Path,
             _gps_ok = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: _gps_annotate(
                     _gps_csv, auto_dir / "autocut", _gps_index,
-                    ffprobe=ffprobe, cam_offsets=_cam_offsets,
+                    ffprobe=ffprobe, cam_offsets=_cam_offsets, work_dir=work_dir,
                 )
             )
             if _gps_ok:

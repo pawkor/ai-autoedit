@@ -56,18 +56,15 @@ async function openProjectModal() {
       set('m-settings-title',        _titleParts[0] ?? '');
       set('m-settings-intro-card',   _titleParts.slice(1).join('\n'));
       set('m-settings-cam-pattern',  cfg?.cam_pattern ?? '');
-      const _beatsAuto = cfg?.beats_auto === true;
-      const _beatsAutoEl = document.getElementById('m-settings-beats-auto');
-      if (_beatsAutoEl) {
-        _beatsAutoEl.checked = _beatsAuto;
-        const _manual = document.getElementById('m-beats-manual');
-        if (_manual) _manual.style.display = _beatsAuto ? 'none' : 'flex';
-      }
+      const _bmEl = document.getElementById('m-settings-beats-method');
+      if (_bmEl && cfg?.beats_method) _bmEl.value = cfg.beats_method;
       set('m-settings-beats-fast',   cfg?.beats_fast  ?? '');
       set('m-settings-beats-mid',    cfg?.beats_mid   ?? '');
       set('m-settings-beats-slow',   cfg?.beats_slow  ?? '');
-      set('m-settings-shorts-music', cfg?.shorts_music_dir ?? '');
-      set('m-analyze-photos-dir',    cfg?.photos_dir || (wd + '/photos'));
+      set('m-settings-shorts-music',      cfg?.shorts_music_dir ?? '');
+      set('m-analyze-photos-dir',         cfg?.photos_dir || (wd + '/photos'));
+      set('m-settings-gps-weight',        cfg?.gps_weight                 ?? '');
+      set('m-settings-gps-alt-threshold', cfg?.gps_altitude_threshold_m   ?? '');
       const _tm = cfg?.ui_timeline_method ?? 'music-driven';
       const _tmEl = document.getElementById('m-settings-timeline-method');
       if (_tmEl) { _tmEl.value = _tm; _applyTimelineMethod(_tm); }
@@ -581,10 +578,12 @@ async function saveProjectModal() {
       photos_dir:            document.getElementById('m-analyze-photos-dir')?.value.trim()    || null,
       cam_pattern:           document.getElementById('m-settings-cam-pattern')?.value.trim()  || '',
       ui_timeline_method:    document.getElementById('m-settings-timeline-method')?.value || 'music-driven',
-      beats_auto:            document.getElementById('m-settings-beats-auto')?.checked ?? true,
-      beats_fast:            parseInt(document.getElementById('m-settings-beats-fast')?.value)  || null,
-      beats_mid:             parseInt(document.getElementById('m-settings-beats-mid')?.value)   || null,
-      beats_slow:            parseInt(document.getElementById('m-settings-beats-slow')?.value)  || null,
+      beats_method:               document.getElementById('m-settings-beats-method')?.value ?? 'segments',
+      beats_fast:                 parseInt(document.getElementById('m-settings-beats-fast')?.value)  || null,
+      beats_mid:                  parseInt(document.getElementById('m-settings-beats-mid')?.value)   || null,
+      beats_slow:                 parseInt(document.getElementById('m-settings-beats-slow')?.value)  || null,
+      gps_weight:                 parseFloat(document.getElementById('m-settings-gps-weight')?.value) || null,
+      gps_altitude_threshold_m:   parseFloat(document.getElementById('m-settings-gps-alt-threshold')?.value) || null,
     }),
   });
   if (!cfgR.ok) { if (status) status.textContent = '✗ Save failed'; return; }
