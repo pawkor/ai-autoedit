@@ -7,7 +7,7 @@ websockets==14.2
 
 # AI pipeline
 # torch+cu128: installed via --extra-index-url in Dockerfile
-torch==2.11.0+cu128
+torch==2.13.0
 torchvision==0.26.0+cu128
 open_clip_torch==3.3.0
 transformers>=4.40.0
