@@ -19,15 +19,43 @@ let _poolSearch  = '';     // pool search/filter query
 // ── Timeline persistence (backend) ───────────────────────────────────────────
 let _saveTlTimer = null;
 let _savePatternTimer = null;
+let _pendingTlSave = null;  // {jobId, payload} — snapshot taken at schedule time
+let _tlSaveInflight = null; // PATCH currently in progress (Promise)
+function _flushTlSave() {
+  if (_saveTlTimer) { clearTimeout(_saveTlTimer); _saveTlTimer = null; }
+  if (_pendingTlSave) {
+    const { jobId, payload } = _pendingTlSave;
+    _pendingTlSave = null;
+    // Serialize after any PATCH already in flight, and track this one so
+    // Render/Build can await it even after the timer fired.
+    const prev = _tlSaveInflight || Promise.resolve();
+    const p = prev.catch(() => {})
+      .then(() => api.patch(`/api/jobs/${jobId}/params`, payload))
+      .finally(() => { if (_tlSaveInflight === p) _tlSaveInflight = null; });
+    _tlSaveInflight = p;
+  }
+  return _tlSaveInflight || Promise.resolve();
+}
+function _cancelTlSave() {
+  // Drop the not-yet-sent snapshot; return the in-flight PATCH (if any) so
+  // callers can await it before overwriting server state.
+  if (_saveTlTimer) { clearTimeout(_saveTlTimer); _saveTlTimer = null; }
+  _pendingTlSave = null;
+  return _tlSaveInflight || Promise.resolve();
+}
 function _saveTimeline(jobId) {
   if (!jobId) return;
+  // Pending save for a different project must not be dropped — send it now.
+  if (_pendingTlSave && _pendingTlSave.jobId !== jobId) _flushTlSave();
   clearTimeout(_saveTlTimer);
-  _saveTlTimer = setTimeout(() => {
-    api.patch(`/api/jobs/${jobId}/params`, {
-      manual_timeline: _timeline,
-      manual_overrides: _overrides,
-    });
-  }, 1500);
+  _pendingTlSave = {
+    jobId,
+    payload: {
+      manual_timeline: JSON.parse(JSON.stringify(_timeline)),
+      manual_overrides: { ..._overrides },
+    },
+  };
+  _saveTlTimer = setTimeout(_flushTlSave, 1500);
 }
 function _loadTimeline(job) {
   const tl = job?.params?.manual_timeline;
@@ -125,6 +153,7 @@ async function refreshProjectList() {
 
 async function openProject(id) {
   if (_jobId === id) return;
+  _flushTlSave();  // send any pending timeline save for the previous project
   _jobId = id;
   _frames = [];
   _timeline = [];
@@ -145,6 +174,14 @@ async function openProject(id) {
   _workDir = job.params?.work_dir || '';
   _loadTimeline(job);  // restore from backend params before loadMusicList runs
   const name = trimPath(job.params?.work_dir) || id;
+
+  // Sync timeline method dropdown from config.ini (not stored in job.params)
+  if (_workDir) {
+    const _cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(_workDir)}`);
+    const _tm = _cfg?.ui_timeline_method || 'music-driven';
+    const _tmEl = document.getElementById('m-settings-timeline-method');
+    if (_tmEl) { _tmEl.value = _tm; if (typeof _applyTimelineMethod === 'function') _applyTimelineMethod(_tm); }
+  }
 
   // Pattern input
   const cameras = job.params?.cameras || [];
@@ -271,6 +308,47 @@ function toggleBan(scene) {
   renderPool();
 }
 
+function _fmtPos(sec) {
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function _makeThumb(scene, frameUrl, score, isBanned, isBannedNew, isRemoved, isInTl, posBadge) {
+  const div = document.createElement('div');
+  const banCls = isBannedNew ? ' banned banned-new' : (isBanned ? ' banned' : '');
+  const tlCls  = isInTl && !isBanned ? ' in-timeline' : '';
+  div.className = `m-thumb ${scoreClass(score)}${banCls}${isRemoved ? ' removed' : ''}${tlCls}`;
+  div.dataset.scene = scene;
+  div.draggable = true;
+  const scoreLabel = score >= 0.85 ? 'High score (≥0.85) — green border'
+                   : score >= 0.70 ? 'Good score (≥0.70) — light green border'
+                   : score >= 0.50 ? 'Low score (≥0.50) — yellow border'
+                   : 'Very low score (<0.50)';
+  div.title = isBanned ? `Banned — click to unban\n${scoreLabel}`
+            : isRemoved ? `Removed from timeline — click to ban\n${scoreLabel}`
+            : isInTl ? `In timeline — click to ban and remove\n${scoreLabel}`
+            : `Click to ban\n${scoreLabel}`;
+  const posHtml = posBadge != null
+    ? `<span class="m-thumb-pos">${posBadge}</span>`
+    : '';
+  div.innerHTML = `
+    <div class="m-thumb-img">
+      <img src="/api/file?path=${encodeURIComponent(frameUrl)}" loading="lazy" draggable="false">
+      <span class="m-thumb-score">${score.toFixed(3)}</span>
+      ${posHtml}
+    </div>
+    <div class="m-thumb-label"></div>`;
+  div.querySelector('.m-thumb-label').textContent = scene;
+  return div;
+}
+
+function _poolSectionHdr(label) {
+  const h = document.createElement('div');
+  h.className = 'm-pool-section-hdr';
+  h.textContent = label;
+  return h;
+}
+
 function renderPool() {
   const grid  = document.getElementById('m-pool-grid');
   const count = document.getElementById('m-pool-count');
@@ -289,14 +367,38 @@ function renderPool() {
     : _frames
   ).filter(f => !_sq || f.scene.toLowerCase().includes(_sq));
   const available  = camFiltered.filter(f => !banned.has(f.scene)).length;
-  // Counter sums what each active filter shows
   const photosCount = _photos.length;
   const shown = (_filterVids ? available : 0) + (_filterPhotos ? photosCount : 0);
   const total = (_filterVids ? camFiltered.length : 0) + (_filterPhotos ? photosCount : 0);
   if (count) count.textContent = `${shown} / ${total}`;
   grid.innerHTML = '';
 
-  // Photos row at top — only when photos filter active
+  // ── Timeline section: selected clips in chronological order with position ──
+  if (_timeline.length > 0) {
+    const tlTotal = _timeline.reduce((s, c) => s + (c.duration || 0), 0);
+    grid.appendChild(_poolSectionHdr(`▶ In timeline · ${_timeline.length} clips · ${_fmtPos(tlTotal)}`));
+    let cumSec = 0;
+    for (const slot of _timeline) {
+      const isBan    = banned.has(slot.scene);
+      const isBanNew = bannedNew.has(slot.scene) || _overrides[slot.scene] === 'ban-new';
+      const isRem    = _removedScenes.has(slot.scene);
+      const score    = slot.clip_score ?? 0;
+      const frameUrl = slot.frame_url || '';
+      const div = _makeThumb(slot.scene, frameUrl, score, isBan, isBanNew, isRem, true, _fmtPos(cumSec));
+      div.addEventListener('click', () => toggleBan(slot.scene));
+      div.addEventListener('contextmenu', e => { e.preventDefault(); _showPoolCtx(e, slot.scene); });
+      div.addEventListener('dragstart', onPoolDragStart);
+      if (frameUrl) {
+        div.addEventListener('mouseenter', () => _showInlinePreview(div, frameUrl));
+        div.addEventListener('mouseleave', () => _hideInlinePreview(div));
+      }
+      grid.appendChild(div);
+      cumSec += slot.duration || 0;
+    }
+    grid.appendChild(_poolSectionHdr('Pool'));
+  }
+
+  // ── Photos — only when photos filter active ───────────────────────────────
   const _photosFiltered = _sq ? _photos.filter(ph => (ph.filename||'').toLowerCase().includes(_sq)) : _photos;
   if (_filterPhotos && _photosFiltered.length) {
     for (const ph of _photosFiltered) {
@@ -304,7 +406,6 @@ function renderPool() {
       div.className = 'm-thumb m-thumb-photo';
       div.title = ph.filename || 'photo';
       div.draggable = true;
-      // thumb_url already includes /api/file?path=... — use directly
       div.innerHTML = `
         <div class="m-thumb-img">
           <img src="${ph.thumb_url || ''}" loading="lazy" draggable="false">
@@ -328,27 +429,7 @@ function renderPool() {
     const isBannedNew = bannedNew.has(f.scene);
     const isRemoved   = _removedScenes.has(f.scene);
     const isInTl      = inTimeline.has(f.scene);
-    const div = document.createElement('div');
-    const banCls = isBannedNew ? ' banned banned-new' : (isBanned ? ' banned' : '');
-    const tlCls  = isInTl && !isBanned ? ' in-timeline' : '';
-    div.className = `m-thumb ${scoreClass(f.score)}${banCls}${isRemoved ? ' removed' : ''}${tlCls}`;
-    div.dataset.scene = f.scene;
-    div.draggable = true;
-    const scoreLabel = f.score >= 0.85 ? 'High score (≥0.85) — green border'
-                     : f.score >= 0.70 ? 'Good score (≥0.70) — light green border'
-                     : f.score >= 0.50 ? 'Low score (≥0.50) — yellow border'
-                     : 'Very low score (<0.50)';
-    div.title = isBanned ? `Banned — click to unban\n${scoreLabel}`
-              : isRemoved ? `Removed from timeline — click to ban\n${scoreLabel}`
-              : isInTl ? `In timeline — click to ban and remove\n${scoreLabel}`
-              : `Click to ban\n${scoreLabel}`;
-    div.innerHTML = `
-      <div class="m-thumb-img">
-        <img src="/api/file?path=${encodeURIComponent(f.frame_url)}" loading="lazy" draggable="false">
-        <span class="m-thumb-score">${f.score.toFixed(3)}</span>
-      </div>
-      <div class="m-thumb-label"></div>`;
-    div.querySelector('.m-thumb-label').textContent = f.scene;
+    const div = _makeThumb(f.scene, f.frame_url, f.score, isBanned, isBannedNew, isRemoved, isInTl, null);
     div.addEventListener('click', () => toggleBan(f.scene));
     div.addEventListener('contextmenu', e => { e.preventDefault(); _showPoolCtx(e, f.scene); });
     div.addEventListener('dragstart', onPoolDragStart);
@@ -420,6 +501,9 @@ async function rebuildTimeline() {
   const _camPattern = _panelPat || _settingsPat;
   // Clear manual timeline so dry-run rebuilds fresh from pattern.
   // Keep _overrides — backend hard-excludes banned scenes from the dry-run pool.
+  // Drop any pending debounced save and wait out an in-flight one — either
+  // would restore the old timeline after this PATCH clears it.
+  await _cancelTlSave();
   _timeline = [];
   await api.patch(`/api/jobs/${_jobId}/params`, {
     selected_track: _pinnedTrack,
@@ -552,8 +636,7 @@ function drawTimeline() {
     return z;
   };
 
-  // Reserve space for N+1 insert zones (6px each) so clips + inserts = trackW exactly.
-  const INSERT_PX = 6;
+  const INSERT_PX = 3;
   const clipAreaW = Math.max(1, trackW - (_timeline.length + 1) * INSERT_PX);
 
   clipTrack.appendChild(makeInsert(0));
@@ -579,6 +662,10 @@ function drawTimeline() {
         </div>
         <div class="m-clip-ts">${fmtSec(slot.music_start ?? 0)}</div>
         <div class="m-clip-dur">${slot.duration.toFixed(1)}s</div>`;
+      if (imgSrc) {
+        div.addEventListener('mouseenter', () => _showTlPhotoPreview(div, imgSrc));
+        div.addEventListener('mouseleave', _hideTlPreview);
+      }
     } else {
       const scoreColor = slot.clip_score >= 0.85 ? '#22c55e'
                        : slot.clip_score >= 0.70 ? '#4ade80'
@@ -619,7 +706,10 @@ function _showTlPreview(clipEl, frameUrl) {
     const clipPath = _clipPath(frameUrl);
     if (!clipPath) return;
     const src = clipPath.startsWith('/data/') ? clipPath : `/api/file?path=${encodeURIComponent(clipPath)}`;
+    const pi = document.getElementById('m-tl-preview-img');
+    if (pi) { pi.style.display = 'none'; pi.src = ''; }
     const v = pv.querySelector('video');
+    if (v) v.style.display = '';
     if (v && v.src !== src) { v.src = src; v.load(); }
     if (v) v.play().catch(() => {});
     const rect = clipEl.getBoundingClientRect();
@@ -638,6 +728,30 @@ function _hideTlPreview() {
   pv.style.display = 'none';
   const v = pv.querySelector('video');
   if (v) { v.pause(); v.src = ''; v.load(); }
+  const pi = document.getElementById('m-tl-preview-img');
+  if (pi) { pi.style.display = 'none'; pi.src = ''; }
+}
+
+function _showTlPhotoPreview(clipEl, imgSrc) {
+  clearTimeout(_tlPvTimer);
+  if (!imgSrc) return;
+  _tlPvTimer = setTimeout(() => {
+    if (_drag) return;
+    const pv = document.getElementById('m-tl-preview');
+    if (!pv) return;
+    const v  = pv.querySelector('video');
+    const pi = document.getElementById('m-tl-preview-img');
+    if (!pi) return;
+    if (v) { v.pause(); v.src = ''; v.style.display = 'none'; }
+    pi.src = imgSrc;
+    pi.style.display = 'block';
+    const rect = clipEl.getBoundingClientRect();
+    const wrap  = document.getElementById('m-timeline-wrap');
+    const wRect = wrap?.getBoundingClientRect();
+    pv.style.left    = Math.max(4, Math.min(rect.left, window.innerWidth - 484)) + 'px';
+    pv.style.top     = wRect ? (wRect.top - 278) + 'px' : (rect.top - 278) + 'px';
+    pv.style.display = 'block';
+  }, 400);
 }
 
 function removeClip(idx) {
@@ -679,7 +793,8 @@ function handleInsert(insertIdx) {
     _timeline.splice(insertIdx, 0, {
       type: 'photo',
       scene: 'photo_' + ph.filename,
-      frame_url: ph.path,
+      path: ph.path,                       // renderer requires entry["path"]
+      frame_url: ph.thumb_url || ph.path,
       duration: dur,
       clip_score: 0,
       energy: 0.5,
@@ -942,22 +1057,29 @@ function _updateLogBadge() {
 }
 
 function _appendLog(line) {
-  _logLines.push(line);
-  if (_logLines.length > 200) _logLines.shift();
+  const isReplace = line.startsWith('\r') || /\[[█░]+[█░ ]*\]\s+\d+%/.test(line);
+  const cleanLine = line.startsWith('\r') ? line.slice(1) : line;
+  if (isReplace && _logLines.length > 0) {
+    _logLines[_logLines.length - 1] = cleanLine;
+  } else {
+    _logLines.push(cleanLine);
+    if (_logLines.length > 200) _logLines.shift();
+  }
   const meta = document.getElementById('m-log-meta');
   if (meta) meta.textContent = `${_logLines.length} lines`;
-  if (_logLines.length === 1) {
-    openLogModal();
-    return;
-  }
   if (_logModalOpen) {
     const el = document.getElementById('m-log-lines');
     if (el) {
-      const div = document.createElement('div');
-      div.className = 'll' + (/error|fail|Error|Fail/i.test(line) ? ' err' : '');
-      div.textContent = line;
-      el.appendChild(div);
-      el.scrollTop = el.scrollHeight;
+      if (isReplace && el.lastChild) {
+        el.lastChild.textContent = cleanLine;
+      } else {
+        const div = document.createElement('div');
+        div.className = 'll' + (/error|fail|Error|Fail/i.test(cleanLine) ? ' err' : '');
+        div.textContent = cleanLine;
+        el.appendChild(div);
+      }
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (nearBottom) el.scrollTop = el.scrollHeight;
     }
   }
   _updateLogBadge();
@@ -969,7 +1091,9 @@ function clearLog() {
   if (el) el.innerHTML = '';
   const meta = document.getElementById('m-log-meta');
   if (meta) meta.textContent = '';
-  closeLogModal();
+  if (_jobId) {
+    fetch(`/api/jobs/${_jobId}/log`, { method: 'DELETE' }).catch(() => {});
+  }
 }
 window.clearLog      = clearLog;
 window.openLogModal  = openLogModal;
@@ -1046,19 +1170,27 @@ window.closePreviewModal = closePreviewModal;
 // ── Render ────────────────────────────────────────────────────────────────────
 async function renderTimeline() {
   if (!_jobId || !_pinnedTrack) { alert('Pin a music track first.'); return; }
+  // Await pending timeline save so the render uses the just-edited timeline.
+  await _flushTlSave();
   _setRenderBusy(true);
   _showStatus('queuing…', '', null, 'running');
-
-  const overridesPayload = {};
-  Object.keys(_overrides).filter(s => _isBanned(s))
-    .forEach(s => { overridesPayload[s] = false; });
-
   _connectJobProgress(_jobId);
 
-  const resp = await api.post(`/api/jobs/${_jobId}/render-music-driven`, {
-    selected_track: _pinnedTrack,
-    overrides: overridesPayload,
-  });
+  const timelineMethod = document.getElementById('m-settings-timeline-method')?.value || 'music-driven';
+  let resp;
+  if (timelineMethod === 'traditional') {
+    resp = await api.post(`/api/jobs/${_jobId}/render`, {
+      selected_track: _pinnedTrack,
+    });
+  } else {
+    const overridesPayload = {};
+    Object.keys(_overrides).filter(s => _isBanned(s))
+      .forEach(s => { overridesPayload[s] = false; });
+    resp = await api.post(`/api/jobs/${_jobId}/render-music-driven`, {
+      selected_track: _pinnedTrack,
+      overrides: overridesPayload,
+    });
+  }
 
   if (!resp) {
     _showStatus('error', '✗ failed to start', 100, 'error');

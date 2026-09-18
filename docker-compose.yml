@@ -11,7 +11,7 @@ services:
       - "${DATA_DIR}:/data:ro"
     depends_on:
       - autoframe
-    restart: unless-stopped
+    restart: always
     entrypoint:
       - /bin/sh
       - -c
@@ -44,6 +44,7 @@ services:
     environment:
       TZ: Europe/Warsaw
       NUMBA_CACHE_DIR: /tmp/numba_cache
+      MPLCONFIGDIR: /tmp/matplotlib_cache
       BROWSE_ROOT: /data
       ENABLE_AUTH: ${ENABLE_AUTH:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -67,7 +68,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu, video, compute, utility]
-    restart: unless-stopped
+    restart: always
 
 volumes:
   nginx_certs:

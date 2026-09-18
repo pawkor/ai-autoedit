@@ -103,19 +103,24 @@ async function mYtOpen(filePath, fileName, existingUrl, jobId, workDir) {
   document.getElementById('m-yt-gen-status').textContent = '';
   document.getElementById('m-yt-status').textContent = '';
 
-  let savedTitle = '', savedDesc = '', savedNotes = '';
+  let savedTitle = '', savedDesc = '', savedNotes = '', projectTitle = '', projectDesc = '';
   if (jobId && workDir) {
     try {
-      const cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(workDir)}`);
-      savedTitle = cfg?.yt_title || '';
-      savedDesc  = cfg?.yt_desc  || '';
-      savedNotes = cfg?.yt_notes || '';
+      const [cfg, jobData] = await Promise.all([
+        api.get(`/api/job-config?dir=${encodeURIComponent(workDir)}`),
+        api.get(`/api/jobs/${jobId}`),
+      ]);
+      savedTitle   = cfg?.yt_title || '';
+      savedDesc    = cfg?.yt_desc  || '';
+      savedNotes   = cfg?.yt_notes || '';
+      projectTitle = cfg?.title    || '';
+      projectDesc  = jobData?.params?.description || '';
     } catch (_) {}
   }
 
-  document.getElementById('m-yt-title').value = savedTitle || projectName;
+  document.getElementById('m-yt-title').value = savedTitle || projectTitle || projectName;
   document.getElementById('m-yt-desc').value  = savedDesc  || _YT_DEFAULT_FOOTER;
-  document.getElementById('m-yt-notes').value = savedNotes;
+  document.getElementById('m-yt-notes').value = projectDesc || savedNotes;
   const _savedPrivacy = localStorage.getItem('yt_privacy') || 'unlisted';
   const _privEl = document.querySelector(`input[name="m-yt-privacy"][value="${_savedPrivacy}"]`);
   if (_privEl) _privEl.checked = true;

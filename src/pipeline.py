@@ -16,6 +16,7 @@ import os
 import pandas as pd
 import random
 import re
+import signal
 import sys
 import time
 from datetime import datetime
@@ -94,6 +95,47 @@ async def _probe_video_duration(path: Path, ffprobe: str) -> float | None:
         return await _probe_duration(path, ffprobe)
 
 
+async def _reap(proc) -> None:
+    """Terminate a subprocess — and its whole process group when it leads one
+    (start_new_session=True) — that outlived its awaiting coroutine."""
+    if proc.returncode is not None:
+        return
+    try:
+        _pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    # killpg only when the child leads its own group; otherwise it shares the
+    # webapp's group and killpg would take down the server itself.
+    _own_group = _pgid == proc.pid
+    try:
+        if _own_group:
+            os.killpg(_pgid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except BaseException:
+        try:
+            if _own_group:
+                os.killpg(_pgid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except Exception:
+            pass
+
+
+async def _stream(proc):
+    """Yield raw stdout lines; kill the subprocess if the consumer is cancelled."""
+    try:
+        async for raw in proc.stdout:
+            yield raw
+        await proc.wait()
+    finally:
+        await _reap(proc)
+
+
 async def _run(cmd: list, cwd=None, env=None) -> tuple[int, str]:
     """Run command, return (returncode, combined output)."""
     proc = await asyncio.create_subprocess_exec(
@@ -102,8 +144,13 @@ async def _run(cmd: list, cwd=None, env=None) -> tuple[int, str]:
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(cwd) if cwd else None,
         env=env,
+        start_new_session=True,
     )
-    out, _ = await proc.communicate()
+    try:
+        out, _ = await proc.communicate()
+    except BaseException:
+        await _reap(proc)
+        raise
     return proc.returncode, out.decode("utf-8", errors="replace")
 
 
@@ -176,7 +223,11 @@ async def apply_postprocess(
         ffmpeg, "-encoders",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    enc_out, _ = await enc_proc.communicate()
+    try:
+        enc_out, _ = await enc_proc.communicate()
+    except BaseException:
+        await _reap(enc_proc)
+        raise
     if b"h264_nvenc" in enc_out:
         vid_codec   = "h264_nvenc"
         vid_quality = ["-rc", "vbr", "-cq", nvenc_cq, "-b:v", "0", "-preset", nvenc_preset]
@@ -373,10 +424,32 @@ async def apply_postprocess(
                     _mout      = src.with_name(src.stem + "_withmusic.mp4")
 
                     # amix filter: inputs are [0:a] (camera) and [1:a] (music)
-                    # We apply volume to each before mixing.
-                    _af_mix = (
-                        f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d={_fade_dur:.1f}[aout]"
-                    )
+                    # We apply volume to each before mixing. Camera audio is
+                    # included only when original_volume > 0 AND the video
+                    # actually has an audio stream (photos-only renders may not).
+                    _has_cam_audio = False
+                    try:
+                        _pa = await asyncio.create_subprocess_exec(
+                            ffprobe, "-v", "quiet", "-select_streams", "a",
+                            "-show_entries", "stream=index", "-of", "csv=p=0",
+                            str(src),
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.DEVNULL,
+                        )
+                        _pa_out, _ = await _pa.communicate()
+                        _has_cam_audio = bool(_pa_out.decode().strip())
+                    except Exception:
+                        pass
+                    if _orig_vol > 0 and _has_cam_audio:
+                        _af_mix = (
+                            f"[0:a]volume={_orig_vol}[cam];"
+                            f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d={_fade_dur:.1f}[mus];"
+                            f"[cam][mus]amix=inputs=2:duration=first:normalize=0[aout]"
+                        )
+                    else:
+                        _af_mix = (
+                            f"[1:a]volume={_mvol},afade=t=out:st={_fst:.2f}:d={_fade_dur:.1f}[aout]"
+                        )
 
                     _mix_ret, _mix_err = await _run([
                         ffmpeg, "-y",
@@ -522,12 +595,12 @@ async def _run_mood_score_if_needed(
         sys.executable, str(SCRIPT_DIR / "mood_score.py"),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         cwd=str(work_dir), env=mood_env,
+        start_new_session=True,
     )
-    async for _raw in proc.stdout:
+    async for _raw in _stream(proc):
         _l = _raw.decode("utf-8", errors="replace").rstrip()
         if _l:
             lines.append(f"  {_l}")
-    await proc.wait()
     return lines
 
 
@@ -702,6 +775,9 @@ async def run(params: dict, work_dir: Path,
         _raw_cams = [c for c in [_ca, _cb] if c]
     cameras = _raw_cams
     cam_a   = cameras[0] if cameras else ""  # first cam = audio source
+    _cam_no_trim_raw = params.get("cam_no_trim") or {}
+    no_trim_cams = {c for c, v in _cam_no_trim_raw.items() if v}
+    cameras_scan = [c for c in cameras if c not in no_trim_cams]
     music_genre  = str(params.get("music_genre")  or "")
     music_artist = str(params.get("music_artist") or "")
     music_files_filter = params.get("music_files") or []
@@ -768,7 +844,11 @@ async def run(params: dict, work_dir: Path,
         ffmpeg, "-encoders",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    enc_out, _ = await enc_proc.communicate()
+    try:
+        enc_out, _ = await enc_proc.communicate()
+    except BaseException:
+        await _reap(enc_proc)
+        raise
     if b"h264_nvenc" in enc_out:
         vid_codec   = "h264_nvenc"
         vid_quality = ["-rc", "vbr", "-cq", nvenc_cq, "-b:v", "0", "-preset", nvenc_preset]
@@ -833,17 +913,30 @@ async def run(params: dict, work_dir: Path,
         _h_gap_cur      = _hashlib.sha256(f"{_p_interval}:{_p_gap}".encode()).hexdigest()
         _h_params_cur   = _hashlib.sha256(f"{_p_interval}:{_p_gap}:{_p_dur}".encode()).hexdigest()
 
+        # Raw frame scores and embeddings are model-specific.  Include the
+        # requested CLIP-first backbone in the cache identity so changing it
+        # cannot reuse scores produced by another embedding space.
+        _scan_model = cp.get("clip_scan", "model",
+                             fallback="ViT-SO400M-16-SigLIP2-384")
+        _scan_pretrained = cp.get("clip_scan", "pretrained", fallback="webli")
+        _h_model_cur = _hashlib.sha256(
+            f"{_scan_model}|{_scan_pretrained}".encode()
+        ).hexdigest()
+
         _f_interval = auto_dir / "clip_interval.hash"
         _f_gap      = auto_dir / "clip_gap.hash"
         _f_params   = auto_dir / "clip_scan_params.hash"
+        _f_model    = auto_dir / "clip_scan_model.hash"
 
         _h_interval_prev = _f_interval.read_text().strip() if _f_interval.exists() else ""
         _h_gap_prev      = _f_gap.read_text().strip()      if _f_gap.exists()      else ""
         _h_params_prev   = _f_params.read_text().strip()   if _f_params.exists()   else ""
+        _h_model_prev    = _f_model.read_text().strip()    if _f_model.exists()    else ""
 
         _clip_files       = list((auto_dir / "autocut").glob("*-clip-*.mp4"))
+        _frame_files      = list((auto_dir / "frames").glob("*.jpg"))
         _clips_exist      = bool(_clip_files)
-        _frames_exist     = bool(list((auto_dir / "frames").glob("*.jpg")))
+        _frames_exist     = bool(_frame_files)
         # Detect incomplete extraction: if scores CSV exists but clip count is far below CSV rows
         if _clips_exist:
             _scores_csv_path = auto_dir / "scene_scores.csv"
@@ -856,16 +949,64 @@ async def run(params: dict, work_dir: Path,
                         yield f"  Warning: {len(_clip_files)} clips vs {_csv_rows} in CSV — forcing full rescan"
                 except Exception:
                     pass
+        # Detect incomplete frame extraction: frames should be ~= clip count
+        if _clips_exist and _frames_exist and len(_frame_files) < len(_clip_files) * 0.5:
+            _frames_exist = False
+            yield f"  Warning: {len(_frame_files)} frames vs {len(_clip_files)} clips — forcing frame re-extraction"
         _raw_scores_exist = bool(list((auto_dir / "frame_raw_scores").glob("*.json"))) \
                             if (auto_dir / "frame_raw_scores").exists() else False
         _peaks_exist      = bool(list((auto_dir / "selected_peaks").glob("*.json"))) \
                             if (auto_dir / "selected_peaks").exists() else False
 
-        if _h_interval_cur != _h_interval_prev or not _clips_exist or not _frames_exist:
+        # Cache coverage: reextract/reselect skip files without cached peaks /
+        # raw scores entirely, so those phases are only safe when the cache
+        # covers EVERY source file. Partial cache → phase "all" (clip_scan's
+        # per-file cache still skips GPU for the already-scanned files).
+        _src_stems   = {f.stem for f in source_files
+                        if not cameras or f.parent.name in cameras_scan}
+        _peaks_stems = {p.stem for p in (auto_dir / "selected_peaks").glob("*.json")} \
+                       if (auto_dir / "selected_peaks").exists() else set()
+        _raw_stems   = {p.stem for p in (auto_dir / "frame_raw_scores").glob("*.json")} \
+                       if (auto_dir / "frame_raw_scores").exists() else set()
+        _peaks_cover = bool(_src_stems) and _src_stems <= _peaks_stems
+        _raw_cover   = bool(_src_stems) and _src_stems <= _raw_stems
+
+        if _h_model_prev != _h_model_cur:
+            # A full scan must really rescore frames: clip_scan's resume logic
+            # intentionally reuses per-file raw/peak JSON, so remove those
+            # model-bound caches before launching it.
+            for _cache_dir in (auto_dir / "frame_raw_scores", auto_dir / "selected_peaks"):
+                if _cache_dir.exists():
+                    for _cache_file in _cache_dir.glob("*.json"):
+                        _cache_file.unlink(missing_ok=True)
+            yield "  CLIP model changed (or model hash missing) — invalidating frame scores"
             _scan_phase = "all"
-        elif _h_gap_cur != _h_gap_prev and _raw_scores_exist:
+        elif _h_interval_prev and _h_interval_cur != _h_interval_prev:
+            # Interval actually changed — raw scores no longer valid
+            _scan_phase = "all"
+        elif not _h_interval_prev:
+            # Hash files missing (first run or scan was interrupted before completing).
+            # Prefer recovery from cache over wiping everything.
+            if _peaks_cover:
+                yield "  Hash missing — recovering from cached peaks (reextract, no GPU)"
+                _scan_phase = "reextract"
+            elif _raw_cover:
+                yield "  Hash missing — recovering from cached raw scores (reselect)"
+                _scan_phase = "reselect"
+            else:
+                if _peaks_exist or _raw_scores_exist:
+                    yield "  Hash missing — cache incomplete, full scan (cached files skip GPU)"
+                _scan_phase = "all"
+        elif not _clips_exist or not _frames_exist:
+            # Clips/frames cleared — recover from cache without re-scanning source videos
+            if _raw_cover:
+                yield "  Clips/frames missing — recovering from cached raw scores (reselect)"
+                _scan_phase = "reselect"
+            else:
+                _scan_phase = "all"
+        elif _h_gap_cur != _h_gap_prev and _raw_cover:
             _scan_phase = "reselect"
-        elif _h_params_cur != _h_params_prev and _peaks_exist:
+        elif _h_params_cur != _h_params_prev and _peaks_cover:
             _scan_phase = "reextract"
         elif _h_params_cur == _h_params_prev and _clips_exist and _frames_exist:
             _scan_phase = None   # fully cached
@@ -905,7 +1046,7 @@ async def run(params: dict, work_dir: Path,
                 **_safe_env_cs,
                 "WORK_DIR":              str(work_dir),
                 "AUTO_DIR":              str(auto_dir),
-                "CAMERAS":               ",".join(cameras),
+                "CAMERAS":               ",".join(cameras_scan),
                 "FFMPEG":                ffmpeg,
                 "FFPROBE":               ffprobe,
                 "OUTPUT_CSV":            str(auto_dir / "scene_scores.csv"),
@@ -919,20 +1060,26 @@ async def run(params: dict, work_dir: Path,
                 **({"CLIP_BATCH_SIZE":  str(params["batch_size"])}  if params.get("batch_size")  else {}),
                 **({"CLIP_NUM_WORKERS": str(params["clip_workers"])} if params.get("clip_workers") else {}),
             }
-            scan_proc = await asyncio.create_subprocess_exec(
-                sys.executable, str(SCRIPT_DIR / "clip_scan.py"),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(work_dir),
-                env=scan_env,
-            )
-            async for raw in scan_proc.stdout:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    yield f"  {line}"
-            await scan_proc.wait()
+            # No camera subdirs configured (footage in project root) still needs
+            # scanning — only skip when cameras exist and all are no-trim.
+            _scan_enabled = bool(cameras_scan) or not cameras
+            if _scan_enabled:
+                scan_proc = await asyncio.create_subprocess_exec(
+                    sys.executable, str(SCRIPT_DIR / "clip_scan.py"),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    cwd=str(work_dir),
+                    env=scan_env,
+                    start_new_session=True,
+                )
+                async for raw in _stream(scan_proc):
+                    line = raw.decode("utf-8", errors="replace").rstrip()
+                    if line:
+                        yield f"  {line}"
+            else:
+                yield f"  All cameras are no-trim — skipping CLIP scan"
             scores_csv = auto_dir / "scene_scores.csv"
-            if _scan_phase != "reextract" and not scores_csv.exists():
+            if _scan_enabled and _scan_phase != "reextract" and not scores_csv.exists():
                 raise RuntimeError("CLIP scan failed — no scene_scores.csv produced.")
             scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
             yield f"  [3/6]–[5/6] skipped (CLIP-first mode)"
@@ -941,6 +1088,7 @@ async def run(params: dict, work_dir: Path,
             _f_interval.write_text(_h_interval_cur)
             _f_gap.write_text(_h_gap_cur)
             _f_params.write_text(_h_params_cur)
+            _f_model.write_text(_h_model_cur)
             if _scan_phase in ("all", "reselect"):
                 # Write prompts hash — clip_scan.py scored with current prompts
                 (auto_dir / "scores_prompts.hash").write_text(_hashlib.sha256(
@@ -1002,6 +1150,9 @@ async def run(params: dict, work_dir: Path,
     to_detect = []
     if not clip_first:
         for sf in source_files:
+            if any(f"/{c}/" in str(sf) for c in no_trim_cams):
+                yield f"  ✓ {sf.name} (no-trim)"
+                continue
             csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
             if csv.exists():
                 count = _count_csv_scenes(csv)
@@ -1046,12 +1197,13 @@ async def run(params: dict, work_dir: Path,
             else:
                 break
         _cal_str = str(_cal_threshold)
+        _cal_median = f"median={sorted(_cal_durs)[len(_cal_durs)//2]:.1f}s" if _cal_durs else "no scenes detected"
         if _cal_str != sd_threshold:
-            yield f"  ✓ Calibrated: {sd_threshold} → {_cal_str}  (median={sorted(_cal_durs)[len(_cal_durs)//2]:.1f}s)"
+            yield f"  ✓ Calibrated: {sd_threshold} → {_cal_str}  ({_cal_median})"
             sd_threshold = _cal_str
             _detect_params_sig = f"{sd_threshold}|{sd_min_scene}"
         else:
-            yield f"  ✓ Threshold {sd_threshold} OK  (median={sorted(_cal_durs)[len(_cal_durs)//2]:.1f}s, {len(_cal_durs)} scenes)"
+            yield f"  ✓ Threshold {sd_threshold} OK  ({_cal_median}, {len(_cal_durs)} scenes)"
 
         workers = min(len(to_detect), int(params.get("max_detect_workers") or os.cpu_count() or 4))
         yield f"  Running {len(to_detect)} files in parallel (workers={workers})..."
@@ -1067,17 +1219,30 @@ async def run(params: dict, work_dir: Path,
                     "list-scenes", "-o", str(auto_dir / "csv"),
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    start_new_session=True,
                 )
-                await proc.wait()
+                try:
+                    await proc.wait()
+                except BaseException:
+                    await _reap(proc)
+                    raise
             csv = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
             count = max(0, sum(1 for _ in open(csv)) - 2) if csv.exists() else 0
             status = "✓" if csv.exists() else "✗"
             await completed.put(f"  {status} {sf.name}: {count} scenes")
 
         tasks = [asyncio.create_task(_detect_one(sf)) for sf in to_detect]
-        for _ in range(len(to_detect)):
-            yield await completed.get()
-        await asyncio.gather(*tasks)
+        try:
+            for _ in range(len(to_detect)):
+                yield await completed.get()
+            await asyncio.gather(*tasks)
+        except BaseException:
+            # Cancellation lands on completed.get(), not on the child tasks —
+            # cancel them explicitly and wait so their subprocesses get reaped.
+            for _t in tasks:
+                _t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     if not clip_first:
         _detect_params_file.write_text(_detect_params_sig)
@@ -1147,23 +1312,34 @@ async def run(params: dict, work_dir: Path,
                 "--filename", f"{sf.stem}-scene-$SCENE_NUMBER",
                 "--copy",
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                start_new_session=True,
             )
-            await proc.wait()
+            try:
+                await proc.wait()
+            except BaseException:
+                await _reap(proc)
+                raise
         done = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
         split_finished += 1
         await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({done} scenes)"})
 
     if not clip_first:
         split_tasks = [asyncio.create_task(_split_one(sf)) for sf in source_files]
-        for _ in range(total_split):
-            msg = await split_queue.get()
-            yield f"  [{split_finished}/{total_split}] {msg['msg']}"
-        await asyncio.gather(*split_tasks)
+        try:
+            for _ in range(total_split):
+                msg = await split_queue.get()
+                yield f"  [{split_finished}/{total_split}] {msg['msg']}"
+            await asyncio.gather(*split_tasks)
+        except BaseException:
+            for _t in split_tasks:
+                _t.cancel()
+            await asyncio.gather(*split_tasks, return_exceptions=True)
+            raise
 
     if not clip_first:
         scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
     yield f"  Total: {len(scene_files)} scenes"
-    if not scene_files:
+    if not scene_files and not no_trim_cams:
         raise RuntimeError("No scenes produced. Check source files and scenedetect output.")
 
     # ── [3b] Validate autocut clips, re-encode corrupt ones ──────────────────
@@ -1190,10 +1366,16 @@ async def run(params: dict, work_dir: Path,
         return proc.returncode == 0 and b"video" in stdout
 
     async def _reencode_from_source(mp4: Path) -> str:
+        # CLIP-first clips (-clip-NNN): no scene CSV available — just remove and
+        # let the next analyze re-extract from peaks.
+        if re.search(r'-clip-\d+$', mp4.stem):
+            mp4.unlink(missing_ok=True)
+            for _fsuf in ("_f0.jpg", "_f1.jpg", "_f2.jpg", ".jpg"):
+                (auto_dir / "frames" / (mp4.stem + _fsuf)).unlink(missing_ok=True)
+            return f"  ⚠ Corrupt CLIP-first clip removed (will re-extract): {mp4.name}"
         m = re.match(r'^(.+)-scene-(\d+)$', mp4.stem)
         if not m:
             mp4.unlink(missing_ok=True)
-            # Also remove corresponding frame files so next CLIP-first run regenerates them
             for _fsuf in ("_f0.jpg", "_f1.jpg", "_f2.jpg", ".jpg"):
                 (auto_dir / "frames" / (mp4.stem + _fsuf)).unlink(missing_ok=True)
             return f"  ⚠ Cannot parse name, removed: {mp4.name}"
@@ -1232,7 +1414,11 @@ async def run(params: dict, work_dir: Path,
             str(tmp), "-loglevel", "quiet",
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        try:
+            await proc.wait()
+        except BaseException:
+            await _reap(proc)
+            raise
         if tmp.exists() and tmp.stat().st_size > 100_000:
             mp4.unlink(missing_ok=True)
             tmp.rename(mp4)
@@ -1324,7 +1510,7 @@ async def run(params: dict, work_dir: Path,
     _all_jpg = list((auto_dir / "frames").glob("*.jpg"))
     frame_count = len({re.sub(r'_f\d+$', '', p.stem) for p in _all_jpg})
     yield f"  Frames: {frame_count} scenes ({len(_all_jpg)} files)"
-    if frame_count == 0:
+    if frame_count == 0 and not no_trim_cams:
         raise RuntimeError("No frames extracted. All scenes may be < 5MB or unreadable.")
 
     # ── [5/6] CLIP scoring ────────────────────────────────────────────────────
@@ -1383,12 +1569,12 @@ async def run(params: dict, work_dir: Path,
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=str(work_dir),
                         env=rescore_env,
+                        start_new_session=True,
                     )
-                    async for raw in rescore_proc.stdout:
+                    async for raw in _stream(rescore_proc):
                         line = raw.decode("utf-8", errors="replace").rstrip()
                         if line:
                             yield f"  {line}"
-                    await rescore_proc.wait()
                 finally:
                     fcntl.flock(_gpu_lock_fd, fcntl.LOCK_UN)
                     _gpu_lock_fd.close()
@@ -1435,7 +1621,7 @@ async def run(params: dict, work_dir: Path,
         except Exception:
             scores_csv.unlink()
             yield "  Corrupt scores CSV — rescoring..."
-    if not clip_first and not scores_csv.exists():
+    if not clip_first and not scores_csv.exists() and scene_files:
         _is_dual = bool(cameras and len(cameras) > 1)
         _score_all = _is_dual or bool(params.get("score_all_cams"))
         clip_env = {
@@ -1461,20 +1647,20 @@ async def run(params: dict, work_dir: Path,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(work_dir),
                 env=clip_env,
+                start_new_session=True,
             )
-            async for raw in clip_proc.stdout:
+            async for raw in _stream(clip_proc):
                 line = raw.decode("utf-8", errors="replace").rstrip()
                 if line:
                     yield f"  {line}"
-            await clip_proc.wait()
         finally:
             fcntl.flock(_gpu_lock_fd, fcntl.LOCK_UN)
             _gpu_lock_fd.close()
-        if not scores_csv.exists():
+        if not scores_csv.exists() and scene_files:
             raise RuntimeError("CLIP scoring failed — no scene_scores.csv produced.")
         try:
-            _new_df = pd.read_csv(scores_csv)
-            if _new_df["score"].isna().all():
+            _new_df = pd.read_csv(scores_csv) if scores_csv.exists() else pd.DataFrame()
+            if not _new_df.empty and "score" in _new_df.columns and _new_df["score"].isna().all():
                 raise RuntimeError(
                     "CLIP scoring produced all-NaN scores. "
                     "Check [clip_prompts] positive/negative in config.ini — both must be non-empty."
@@ -1485,6 +1671,163 @@ async def run(params: dict, work_dir: Path,
             pass
         if not clip_first:
             prompts_hash_file.write_text(_cur_hash)
+
+    # ── No-trim camera injection ──────────────────────────────────────────────
+    if no_trim_cams:
+        _nt_files = [sf for sf in source_files if any(f"/{c}/" in str(sf) for c in no_trim_cams)]
+        if _nt_files:
+            yield ""
+            yield f"  No-trim: {', '.join(sorted(no_trim_cams))} ({len(_nt_files)} files)"
+            _autocut_dir = auto_dir / "autocut"
+            _frames_dir  = auto_dir / "frames"
+            _nt_rows = []
+            for _sf in _nt_files:
+                _clip_name = f"{_sf.stem}-clip-001"
+                _clip_out  = _autocut_dir / f"{_clip_name}.mp4"
+                _frame_out = _frames_dir  / f"{_clip_name}_f0.jpg"
+                if not _clip_out.exists():
+                    # Re-encode to normalize VFR→CFR; -c copy causes freeze frames
+                    # when phone VFR is later concatenated with -vsync cfr.
+                    _cp = await asyncio.create_subprocess_exec(
+                        ffmpeg, "-y", *hwaccel, "-i", str(_sf),
+                        "-c:v", vid_codec, *vid_quality,
+                        "-r", framerate, "-vsync", "cfr",
+                        "-video_track_timescale", "15360",
+                        "-c:a", "aac", "-b:a", audio_bitrate,
+                        "-pix_fmt", "yuv420p",
+                        str(_clip_out),
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await _cp.wait()
+                # Invalidate stale trimmed files so select_scenes recreates from fresh autocut
+                _trimmed_dir = _autocut_dir.parent / "trimmed"
+                if _trimmed_dir.exists() and _clip_out.exists():
+                    _clip_mtime = _clip_out.stat().st_mtime
+                    for _stale in _trimmed_dir.glob(f"{_clip_name}*.mp4"):
+                        if _stale.stat().st_mtime < _clip_mtime:
+                            _stale.unlink(missing_ok=True)
+                if not _frame_out.exists():
+                    _dur_p = await asyncio.create_subprocess_exec(
+                        ffprobe, "-v", "quiet", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", str(_sf),
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    _dur_raw, _ = await _dur_p.communicate()
+                    _dur_sec = float(_dur_raw.decode().strip() or "0")
+                    _fp = await asyncio.create_subprocess_exec(
+                        ffmpeg, "-y", "-ss", str(_dur_sec / 2), "-i", str(_sf),
+                        "-frames:v", "1", "-q:v", "2", str(_frame_out),
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await _fp.wait()
+                _nt_rows.append({
+                    "scene": _clip_name, "score": 1.0,
+                    "pos_score": 1.0, "neg_score": 0.0,
+                    "aesthetic_score": float("nan"), "offset_sec": 0.0, "avg_brightness": 128.0,
+                })
+                yield f"    {_sf.name} → {_clip_name}"
+            if _nt_rows:
+                _nt_df = pd.DataFrame(_nt_rows)
+                _nt_names = set(_nt_df["scene"])
+                for _csv_path in [scores_csv, auto_dir / "scene_scores_allcam.csv"]:
+                    if not _csv_path.exists():
+                        if _csv_path == scores_csv:
+                            _nt_df.to_csv(_csv_path, index=False)
+                        continue
+                    _ex = pd.read_csv(_csv_path)
+                    _ex = _ex[~_ex["scene"].isin(_nt_names)]
+                    pd.concat([_ex, _nt_df], ignore_index=True).to_csv(_csv_path, index=False)
+                scene_files = sorted(_autocut_dir.glob("*.mp4"))
+                yield f"  No-trim clips: {len(_nt_rows)}, total pool: {len(scene_files)}"
+
+    # ── Photo injection ───────────────────────────────────────────────────────
+    _photos_dir_str = cp.get("photos", "dir", fallback="") if cp.has_section("photos") else ""
+    if not _photos_dir_str:
+        _photos_dir_str = str(Path(work_dir) / "photos")
+    _photos_dir = Path(_photos_dir_str)
+    _photo_dur_cfg = float(cp.get("photos", "clip_dur", fallback="0") if cp.has_section("photos") else "0")
+    _min_take_sec = float(cp.get("scene_selection", "min_take_sec", fallback="3"))
+    _photo_dur = _photo_dur_cfg if _photo_dur_cfg >= _min_take_sec else max(3.5, _min_take_sec)
+    _sel_photos_json = auto_dir / "selected_photos.json"
+    _photo_paths: list[Path] = []
+    if _sel_photos_json.exists():
+        import json as _json_ph
+        _sel_raw = _json_ph.loads(_sel_photos_json.read_text())
+        _sel_list = _sel_raw if isinstance(_sel_raw, list) else (_sel_raw.get("photos") or [])
+        if _sel_list:
+            _photo_paths = [Path(p) for p in _sel_list if Path(p).exists()]
+    if not _photo_paths and _photos_dir.is_dir():
+        _photo_paths = sorted(
+            p for p in _photos_dir.iterdir()
+            if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+        )
+    if _photo_paths:
+        yield ""
+        yield f"  Photos: {len(_photo_paths)} images → {_photo_dur}s clips"
+        _autocut_dir_ph = auto_dir / "autocut"
+        _frames_dir_ph  = auto_dir / "frames"
+        _frames_dir_ph.mkdir(parents=True, exist_ok=True)
+        _res_w, _res_h = resolution.split(":")
+        _ph_rows = []
+        _ph_sem = asyncio.Semaphore(4)
+
+        async def _encode_photo(ph: Path):
+            _clip_name = f"{ph.stem}-photo-001"
+            _clip_out  = _autocut_dir_ph / f"{_clip_name}.mp4"
+            _frame_out = _frames_dir_ph / f"{_clip_name}_f0.jpg"
+            if not _frame_out.exists():
+                import shutil as _sh
+                _sh.copy2(str(ph), str(_frame_out))
+            if not _clip_out.exists():
+                _vf = (
+                    f"scale={_res_w}:{_res_h}:flags=bilinear"
+                    f":force_original_aspect_ratio=decrease,"
+                    f"pad={_res_w}:{_res_h}:(ow-iw)/2:(oh-ih)/2:color=black"
+                )
+                async with _ph_sem:
+                    _ph_proc = await asyncio.create_subprocess_exec(
+                        ffmpeg, "-y",
+                        "-loop", "1", "-t", str(_photo_dur), "-i", str(ph),
+                        "-f", "lavfi", "-t", str(_photo_dur), "-i",
+                        "anullsrc=r=48000:cl=stereo",
+                        "-vf", _vf,
+                        "-c:v", vid_codec, *vid_quality,
+                        "-r", framerate, "-vsync", "cfr",
+                        "-video_track_timescale", "15360",
+                        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                        "-pix_fmt", "yuv420p",
+                        str(_clip_out),
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await _ph_proc.wait()
+            return ph.stem, _clip_out.exists()
+
+        _ph_results = await asyncio.gather(*[_encode_photo(ph) for ph in _photo_paths])
+        _ph_ok = 0
+        for _ph_stem, _ok in _ph_results:
+            if _ok:
+                _ph_ok += 1
+                _clip_name = f"{_ph_stem}-photo-001"
+                _ph_rows.append({
+                    "scene": _clip_name, "score": 1.0,
+                    "pos_score": 1.0, "neg_score": 0.0,
+                    "aesthetic_score": float("nan"), "offset_sec": 0.0, "avg_brightness": 128.0,
+                })
+        if _ph_rows:
+            _ph_df = pd.DataFrame(_ph_rows)
+            _ph_names = set(_ph_df["scene"])
+            for _csv_path in [scores_csv, auto_dir / "scene_scores_allcam.csv"]:
+                if not _csv_path.exists():
+                    if _csv_path == scores_csv:
+                        _ph_df.to_csv(_csv_path, index=False)
+                    continue
+                _ex = pd.read_csv(_csv_path)
+                _ex = _ex[~_ex["scene"].isin(_ph_names)]
+                pd.concat([_ex, _ph_df], ignore_index=True).to_csv(_csv_path, index=False)
+            scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
+            yield f"  Photo clips: {_ph_ok}/{len(_photo_paths)} encoded, total pool: {len(scene_files)}"
+        else:
+            yield f"  Photos: 0 clips encoded — check {_photos_dir}"
 
     # ── GPS annotation (optional, additive — skipped silently if no GPS data) ──
     _gps_detected = False
@@ -1568,8 +1911,13 @@ async def run(params: dict, work_dir: Path,
             sys.executable, str(SCRIPT_DIR / "select_scenes.py"), *_dry_args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             cwd=str(work_dir), env=_dry_env,
+            start_new_session=True,
         )
-        _dry_out, _ = await _dry_proc.communicate()
+        try:
+            _dry_out, _ = await _dry_proc.communicate()
+        except BaseException:
+            await _reap(_dry_proc)
+            raise
         _dry_lines = _dry_out.decode("utf-8", errors="replace").splitlines()
 
         _est_scenes, _est_dur, _est_main = None, None, None
@@ -1640,12 +1988,12 @@ async def run(params: dict, work_dir: Path,
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(work_dir),
         env=sel_env,
+        start_new_session=True,
     )
-    async for raw in sel_proc.stdout:
+    async for raw in _stream(sel_proc):
         line = raw.decode("utf-8", errors="replace").rstrip()
         if line:
             yield f"  {line}"
-    await sel_proc.wait()
 
     selected_txt = auto_dir / "selected_scenes.txt"
     if not selected_txt.exists() or selected_txt.stat().st_size == 0:
@@ -1666,16 +2014,14 @@ async def run(params: dict, work_dir: Path,
                     concat_dur += d
 
     yield f"  Encoding highlight ({concat_dur:.1f}s)..."
-    yield f"[DBG] enc: {vid_codec}  {resolution}@{framerate}fps  audio: {audio_bitrate}  hwaccel: {'cuda' if hwaccel else 'none'}"
+    yield f"[DBG] enc: copy (select_scenes already normalised to {resolution}@{framerate}fps)"
 
+    # Clips are already normalised to target resolution/fps by select_scenes.py prepare_clip().
+    # Re-encoding here with hwaccel+scale causes PTS drift → freeze frames.  Use stream copy.
     enc_cmd = [
-        ffmpeg, *hwaccel, "-f", "concat", "-safe", "0",
+        ffmpeg, "-f", "concat", "-safe", "0",
         "-i", str(selected_txt),
-        "-vf", (f"scale={resolution}:flags=lanczos:force_original_aspect_ratio=decrease,"
-                f"pad={resolution}:(ow-iw)/2:(oh-ih)/2:color=black"),
-        "-c:v", vid_codec, *vid_quality,
-        "-c:a", "aac", "-b:a", audio_bitrate,
-        "-pix_fmt", "yuv420p", "-r", framerate, "-vsync", "cfr",
+        "-c", "copy",
         "-movflags", "+faststart",
         "-progress", "pipe:1", "-loglevel", "error",
         str(highlight), "-y",
@@ -1687,7 +2033,7 @@ async def run(params: dict, work_dir: Path,
         cwd=str(work_dir),
     )
     total_s = concat_dur or 1.0
-    async for raw in enc_proc2.stdout:
+    async for raw in _stream(enc_proc2):
         k, _, v = raw.decode("utf-8", errors="replace").strip().partition("=")
         if k == "out_time_ms":
             try:
@@ -1744,7 +2090,11 @@ async def run(params: dict, work_dir: Path,
             str(highlight),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
-        dim_out, _ = await dim_proc.communicate()
+        try:
+            dim_out, _ = await dim_proc.communicate()
+        except BaseException:
+            await _reap(dim_proc)
+            raise
         dim_parts = dim_out.decode().strip().split(",")
         width  = dim_parts[0].strip() if len(dim_parts) >= 2 else resolution.split(":")[0]
         height = dim_parts[1].strip() if len(dim_parts) >= 2 else resolution.split(":")[1]

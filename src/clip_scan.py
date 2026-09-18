@@ -121,9 +121,12 @@ if DEVICE == "cuda":
 print(f"Phase: {CLIP_SCAN_PHASE}  Interval: {INTERVAL_SEC}s  Clip dur: {CLIP_DUR_SEC}s  Min gap: {MIN_GAP_SEC}s")
 
 _model = _preprocess = _tokenizer = _pos_feat = _neg_feat = None
+_active_scan_model = _SCAN_MODEL
+_active_scan_pretrained = _SCAN_PRETRAINED
 
 def _ensure_model():
     global _model, _preprocess, _tokenizer, _pos_feat, _neg_feat
+    global _active_scan_model, _active_scan_pretrained
     if _model is not None:
         return
     _model_name = _SCAN_MODEL
@@ -142,6 +145,7 @@ def _ensure_model():
         print(f"  Falling back to {_fallback_name}/{_fallback_pt}")
         _model, _, _preprocess = open_clip.create_model_and_transforms(_fallback_name, pretrained=_fallback_pt)
         _tokenizer = open_clip.get_tokenizer(_fallback_name)
+        _active_scan_model, _active_scan_pretrained = _fallback_name, _fallback_pt
     _model = _model.to(DEVICE).eval()
     with torch.no_grad():
         pos_tok = _tokenizer(POSITIVE_PROMPTS).to(DEVICE)
@@ -295,7 +299,7 @@ def _extract_clip(src: Path, start: float, duration: float, out: Path):
         "-ss", f"{start:.3f}", "-i", str(src),
         "-t", f"{duration:.3f}",
         "-c:v", "h264_nvenc", "-cq:v", _NVENC_CQ, "-preset", _NVENC_PRESET,
-        "-bf", "0",
+        "-bf", "0", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
         "-avoid_negative_ts", "make_zero",
         str(out), "-loglevel", "error",
@@ -356,20 +360,29 @@ if CLIP_SCAN_PHASE == "reextract":
         is_main = (cam == AUDIO_CAM or not CAMERAS)
         for old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
             old.unlink()
+        frames_missing = 0
         for i, peak in enumerate(pd["peaks"], 1):
             clip_start = max(0.0, peak["ts"] - CLIP_DUR_SEC / 2)
             scene_name = f"{sf.stem}-clip-{i:03d}"
             _extract_clip(sf, clip_start, CLIP_DUR_SEC, autocut_dir / f"{scene_name}.mp4")
+            frame_path = frames_dir / f"{scene_name}_f0.jpg"
+            if not frame_path.exists():
+                _extract_single_frame(sf, peak["ts"], frame_path)
+                frames_missing += 1
             all_clips.append({"scene": scene_name, "score": peak["score"],
                                "pos_score": 0.0, "neg_score": 0.0,
                                "is_main": is_main, "offset_sec": clip_start})
         pd["clip_dur"] = CLIP_DUR_SEC
+        # reextract only runs when the interval is unchanged — backfill it for
+        # peaks files written before interval was part of the cache key.
+        pd.setdefault("interval", INTERVAL_SEC)
         (_peaks_dir / f"{sf.stem}.json").write_text(_json.dumps(pd))
-        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: {len(pd['peaks'])} clips re-extracted")
+        extra = f" +{frames_missing} frames" if frames_missing else ""
+        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: {len(pd['peaks'])} clips re-extracted{extra}")
 
     _dur_cache = {f"{c['scene']}.mp4": CLIP_DUR_SEC for c in all_clips}
     (AUTO_DIR / "duration_cache.json").write_text(_json.dumps(_dur_cache))
-    print(f"\nRe-extracted: {len(all_clips)} clips with dur={CLIP_DUR_SEC}s  (frames+CSVs unchanged)")
+    print(f"\nRe-extracted: {len(all_clips)} clips with dur={CLIP_DUR_SEC}s")
     sys.exit(0)
 
 
@@ -409,7 +422,8 @@ if CLIP_SCAN_PHASE == "reselect":
             _peaks_list.append({"ts": peak_ts, "score": smoothed[peak_i], "clip_name": scene_name})
         _peaks_dir.mkdir(parents=True, exist_ok=True)
         (_peaks_dir / f"{sf.stem}.json").write_text(
-            _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC, "peaks": _peaks_list}))
+            _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC,
+                         "interval": INTERVAL_SEC, "peaks": _peaks_list}))
         print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: {len(peak_idxs)} peaks")
 
 
@@ -430,7 +444,8 @@ if CLIP_SCAN_PHASE == "all":
         if _cached_peaks_path.exists():
             try:
                 _cp = _json.loads(_cached_peaks_path.read_text())
-                if _cp.get("min_gap") == MIN_GAP_SEC and _cp.get("clip_dur") == CLIP_DUR_SEC:
+                if (_cp.get("min_gap") == MIN_GAP_SEC and _cp.get("clip_dur") == CLIP_DUR_SEC
+                        and _cp.get("interval") == INTERVAL_SEC):
                     _pk = _cp.get("peaks", [])
                     _frames_ok = _pk and any(
                         (AUTO_DIR / "frames" / (_p["clip_name"] + "_f0.jpg")).exists()
@@ -448,8 +463,82 @@ if CLIP_SCAN_PHASE == "all":
                                 "offset_sec": max(0.0, _p["ts"] - CLIP_DUR_SEC / 2),
                             })
                         continue
+                    elif _pk:
+                        # Peaks cached but clips/frames missing — re-extract without GPU
+                        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: re-extracting {len(_pk)} clips from cached peaks")
+                        for _old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
+                            _old.unlink()
+                        for _p in _pk:
+                            _clip_start = max(0.0, _p["ts"] - CLIP_DUR_SEC / 2)
+                            _sname = _p["clip_name"]
+                            _extract_clip(sf, _clip_start, CLIP_DUR_SEC, autocut_dir / f"{_sname}.mp4")
+                            _extract_single_frame(sf, _p["ts"], frames_dir / f"{_sname}_f0.jpg")
+                            all_clips.append({
+                                "scene":      _sname,
+                                "score":      _p["score"],
+                                "pos_score":  0.0,
+                                "neg_score":  0.0,
+                                "is_main":    is_main,
+                                "offset_sec": _clip_start,
+                            })
+                        print(f"    → {len(_pk)} clips extracted")
+                        continue
                     else:
-                        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: peaks cached but frames missing — reprocessing")
+                        print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: peaks empty — reprocessing")
+            except Exception:
+                pass
+
+        # Raw scores cached at matching interval? Skip GPU, re-pick peaks directly.
+        _raw_path = _raw_scores_dir / f"{sf.stem}.json"
+        if _raw_path.exists():
+            try:
+                _rd = _json.loads(_raw_path.read_text())
+                if _rd.get("interval") == INTERVAL_SEC and _rd.get("scores"):
+                    _rs = _rd["scores"]
+                    _ts = _rd.get("timestamps", [i * INTERVAL_SEC for i in range(len(_rs))])
+                    print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: scores cached — re-picking peaks")
+                    _score_for_peaks = _rs
+                    if GPS_PEAK_WEIGHT > 0:
+                        try:
+                            from gps_index import build_gps_index, gps_excitement_series
+                            _gps_idx = build_gps_index(WORK_DIR, rebuild=False)
+                            _gps_track = _gps_idx.get(sf.stem)
+                            if _gps_track:
+                                _ct = _clip_start_ts_from_source(sf)
+                                if _ct is None:
+                                    _ct = _gps_track[0]["ts"]
+                                if _ct is not None:
+                                    _gps_exc = gps_excitement_series(
+                                        _gps_track, _ct, _ts, GPS_ALT_THRESH_M)
+                                    _score_for_peaks = [c + GPS_PEAK_WEIGHT * g
+                                                        for c, g in zip(_rs, _gps_exc)]
+                        except Exception:
+                            pass
+                    _smoothed = _smooth(_score_for_peaks, SMOOTH_WIN)
+                    _peak_idxs = _find_peaks(_smoothed, min_gap_frames, SCORE_FLOOR)
+                    if not _peak_idxs:
+                        print(f"    No peaks found")
+                        continue
+                    cam_clip_n = sum(1 for c in all_clips if c["scene"].startswith(sf.stem + "-clip-"))
+                    _peaks_list = []
+                    for _old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
+                        _old.unlink()
+                    for _pi in _peak_idxs:
+                        _peak_ts = _ts[_pi] if _pi < len(_ts) else _pi * INTERVAL_SEC
+                        _clip_start = max(0.0, _peak_ts - CLIP_DUR_SEC / 2)
+                        cam_clip_n += 1
+                        _sname = f"{sf.stem}-clip-{cam_clip_n:03d}"
+                        _extract_clip(sf, _clip_start, CLIP_DUR_SEC, autocut_dir / f"{_sname}.mp4")
+                        _extract_single_frame(sf, _peak_ts, frames_dir / f"{_sname}_f0.jpg")
+                        all_clips.append({"scene": _sname, "score": _rs[_pi],
+                                          "pos_score": 0.0, "neg_score": 0.0,
+                                          "is_main": is_main, "offset_sec": _clip_start})
+                        _peaks_list.append({"ts": _peak_ts, "score": _smoothed[_pi], "clip_name": _sname})
+                    (_peaks_dir / f"{sf.stem}.json").write_text(
+                        _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC,
+                                     "interval": INTERVAL_SEC, "peaks": _peaks_list}))
+                    print(f"    → {len(_peak_idxs)} peaks (no GPU)")
+                    continue
             except Exception:
                 pass
 
@@ -509,8 +598,10 @@ if CLIP_SCAN_PHASE == "all":
             smoothed   = _smooth(_score_for_peaks, SMOOTH_WIN)
             peak_idxs  = _find_peaks(smoothed, min_gap_frames, SCORE_FLOOR)
             if not peak_idxs:
-                print(f"    No peaks found")
-                continue
+                # Fallback: all-negative scores or very short file — use best frame
+                best_i = int(max(range(len(smoothed)), key=lambda i: smoothed[i]))
+                print(f"    No peaks above floor — fallback to best frame (score={smoothed[best_i]:.3f})")
+                peak_idxs = [best_i]
 
             print(f"    Peaks: {len(peak_idxs)}  (scores: {[round(smoothed[i],3) for i in peak_idxs[:8]]})")
 
@@ -546,7 +637,8 @@ if CLIP_SCAN_PHASE == "all":
 
             # Save selected peaks for future reextract
             (_peaks_dir / f"{sf.stem}.json").write_text(
-                _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC, "peaks": _peaks_list})
+                _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC,
+                             "interval": INTERVAL_SEC, "peaks": _peaks_list})
             )
 
 
@@ -590,8 +682,12 @@ if all_clips:
         if sc:
             clip["score"], clip["pos_score"], clip["neg_score"] = sc
 
-    # Aesthetic scoring
+    # The LAION predictor is trained specifically on ViT-L/14 768-dim
+    # embeddings.  CLIP-first normally uses SigLIP2, so encode only the
+    # already-selected peak frames with a small ViT-L pass instead of feeding
+    # the predictor vectors from an incompatible embedding space.
     try:
+        _scan_emb_dim = next((int(v.shape[0]) for v in path_to_emb.values()), 0)
         import torch.nn as nn
         class _MLP(nn.Module):
             def __init__(self):
@@ -616,11 +712,40 @@ if all_clips:
         if any(k.startswith("model.") for k in state): state = {k[6:]: v for k, v in state.items()}
         aes.load_state_dict(state); aes = aes.eval().to(DEVICE)
         stems = [c["scene"] for c in all_clips]
-        emb_t = torch.tensor(
-            np.array([path_to_emb.get(str(frames_dir / f"{s}_f0.jpg"),
-                      np.zeros(768, dtype=np.float32)) for s in stems]),
-            dtype=torch.float32,
-        ).to(DEVICE)
+        _use_native_aesthetic = (
+            _active_scan_model == "ViT-L-14" and
+            _active_scan_pretrained == "openai"
+        )
+        if _use_native_aesthetic:
+            emb_t = torch.tensor(
+                np.array([path_to_emb.get(str(frames_dir / f"{s}_f0.jpg"),
+                          np.zeros(768, dtype=np.float32)) for s in stems]),
+                dtype=torch.float32,
+            ).to(DEVICE)
+        else:
+            print(f"  Aesthetic: loading ViT-L-14 for {len(stems)} peak frames "
+                  f"({_scan_emb_dim}-dim scan embeddings)")
+            _aes_clip, _, _aes_prep = open_clip.create_model_and_transforms(
+                "ViT-L-14", pretrained="openai"
+            )
+            _aes_clip = _aes_clip.to(DEVICE).eval()
+            _aes_imgs = []
+            for stem in stems:
+                try:
+                    _aes_imgs.append(_aes_prep(
+                        Image.open(frames_dir / f"{stem}_f0.jpg").convert("RGB")
+                    ))
+                except Exception:
+                    _aes_imgs.append(torch.zeros(3, 224, 224))
+            _aes_parts = []
+            for _i in range(0, len(_aes_imgs), BATCH_SIZE):
+                _batch = torch.stack(_aes_imgs[_i:_i + BATCH_SIZE]).to(DEVICE)
+                with torch.no_grad():
+                    _aes_parts.append(_aes_clip.encode_image(_batch).float().cpu())
+            del _aes_clip
+            if DEVICE == "cuda":
+                torch.cuda.empty_cache()
+            emb_t = torch.cat(_aes_parts).to(DEVICE)
         emb_t = emb_t / emb_t.norm(dim=-1, keepdim=True)
         with torch.no_grad():
             aes_vals = aes(emb_t).squeeze(-1).cpu().tolist()
@@ -630,6 +755,22 @@ if all_clips:
     except Exception as e:
         print(f"Aesthetic scoring skipped: {e}")
         for clip in all_clips: clip.setdefault("aesthetic_score", float("nan"))
+
+    # Persist embeddings for mood_score.py (same npz format as clip_score.py)
+    try:
+        _emb_names = [c["scene"] for c in all_clips]
+        _emb_dim = next((v.shape[0] for v in path_to_emb.values()), 768)
+        _emb_mat = np.array(
+            [path_to_emb.get(str(frames_dir / f"{s}_f0.jpg"),
+                             np.zeros(_emb_dim, dtype=np.float32))
+             for s in _emb_names], dtype=np.float32)
+        np.savez(str(AUTO_DIR / "scene_embeddings.npz"),
+                 names=np.array(_emb_names), embeddings=_emb_mat,
+                 model=np.array(_active_scan_model),
+                 pretrained=np.array(_active_scan_pretrained))
+        print(f"Embeddings saved: {len(_emb_names)} × {_emb_dim} → scene_embeddings.npz")
+    except Exception as e:
+        print(f"Embeddings save skipped: {e}")
 
     # Brightness (median Y-channel)
     try:

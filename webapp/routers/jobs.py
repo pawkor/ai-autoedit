@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import webapp.state as _state
 from webapp.state import (
     APP_DIR,
     USER_DATA_DIR,
@@ -27,7 +28,6 @@ from webapp.state import (
     BROWSE_ROOT,
     in_browse_root,
     jobs,
-    job_semaphore,
     shorts_semaphore,
     _threshold_searches,
     _threshold_tasks,
@@ -86,6 +86,7 @@ _JOB_CONFIG_MAP = {
     "clip_scan_interval":  ("clip_scan", "interval_sec"),
     "clip_scan_clip_dur":  ("clip_scan", "clip_dur_sec"),
     "clip_scan_min_gap":   ("clip_scan", "min_gap_sec"),
+    "ui_timeline_method":  ("music_driven", "ui_timeline_method"),
     "beats_auto":          ("music_driven", "beats_auto"),
     "beats_method":        ("music_driven", "beats_method"),
     "beats_fast":          ("music_driven", "beats_fast"),
@@ -211,6 +212,12 @@ def read_job_config(work_dir: Path) -> dict:
             if crops:
                 result["cam_crop_16x9"] = crops
             break
+    for cp in (local_cp, global_cp):
+        if cp.has_section("cam_no_trim"):
+            no_trims = {k: v.strip() in ("1", "true", "yes") for k, v in cp.items("cam_no_trim") if v.strip()}
+            if no_trims:
+                result["cam_no_trim"] = no_trims
+            break
     return _expand_data_dir(result)
 
 
@@ -298,6 +305,11 @@ def save_job_config(work_dir: Path, params: dict):
     if cam_crop is not None and isinstance(cam_crop, dict):
         crop_update = {"cam_crop_16x9": {k: ("1" if v else "0") for k, v in cam_crop.items()}}
         update_config_ini(work_dir / "config.ini", crop_update)
+
+    cam_no_trim = params.get("cam_no_trim")
+    if cam_no_trim is not None and isinstance(cam_no_trim, dict):
+        no_trim_update = {"cam_no_trim": {k: ("1" if v else "0") for k, v in cam_no_trim.items()}}
+        update_config_ini(work_dir / "config.ini", no_trim_update)
 
 
 def save_prompts_to_config(cfg_path: Path, positive: str, negative: str):
@@ -509,6 +521,7 @@ async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> b
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(SCRIPT_DIR),
+            start_new_session=True,
         )
         if total == 1:
             job.process = proc
@@ -803,6 +816,7 @@ async def rerun_job(job_id: str, params: JobParams):
         "music_dir", "selected_track", "music_file", "music_files",
         "shorts_music_dir", "shorts_music_dirs",
         "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature",
+        "description", "cam_no_trim",
     )
     for _k in _preserve_rerun:
         if not d.get(_k) and job.params.get(_k):
@@ -1132,7 +1146,15 @@ async def _preview_sequence_inner(job_id: str):
     # Manual timeline takes priority — skip dry-run
     manual_tl = job.params.get("manual_timeline")
     if manual_tl and isinstance(manual_tl, list) and len(manual_tl) > 0:
-        seq_data = {"sequence": manual_tl, "music": music_path_str}
+        # Preserve beat-aligned music offset from the last dry-run.
+        _music_ss_saved = 0.0
+        try:
+            _old_seq = json.loads(seq_path.read_text())
+            _music_ss_saved = float(_old_seq.get("music_ss") or 0.0)
+        except Exception:
+            pass
+        seq_data = {"sequence": manual_tl, "music": music_path_str,
+                    "music_ss": _music_ss_saved}
         seq_path.write_text(json.dumps(seq_data))
         for slot in manual_tl:
             fp = slot.get("frame_path")
@@ -1571,8 +1593,7 @@ async def preview_stream(job_id: str):
                 ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
                 "-hwaccel", "cuda",
                 "-ss", f"{ss:.4f}", "-i", cp, "-t", f"{dur:.4f}",
-                "-vf", dec_vf,
-                "-pix_fmt", "yuv420p", "-r", "30",
+                "-vf", dec_vf, "-pix_fmt", "yuv420p", "-r", "30",
                 "-f", "rawvideo", "pipe:1",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -1676,7 +1697,9 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
     job.save()
 
     async def _run():
-        async with job_semaphore:
+        # Attribute access (not a from-import) so startup's rebind of
+        # state.job_semaphore is seen here — one shared limit for all jobs.
+        async with _state.job_semaphore:
             job.status     = "running"
             job.started_at = time.time()
             job.progress = 0
@@ -1708,9 +1731,18 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                 if _use_saved:
                     _seq_path = job.auto_dir() / "preview_sequence.json"
                     _seq_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Preserve beat-aligned music offset from the last dry-run —
+                    # slot reordering in the UI must not reset it to 0.
+                    _music_ss_saved = 0.0
+                    try:
+                        _old_seq = json.loads(_seq_path.read_text())
+                        _music_ss_saved = float(_old_seq.get("music_ss") or 0.0)
+                    except Exception:
+                        pass
                     _seq_path.write_text(json.dumps({
                         "sequence": _manual_tl,
                         "music":    music_path_str,
+                        "music_ss": _music_ss_saved,
                     }))
 
                 cmd = [sys.executable, str(SCRIPT_DIR / "music_driven.py"),
@@ -1730,6 +1762,7 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     cwd=str(SCRIPT_DIR),
+                    start_new_session=True,
                 )
                 job.process = proc
                 async for raw in proc.stdout:
@@ -1785,6 +1818,19 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
                         await job.broadcast({"type": "log", "line": "⚠ highlight_music_driven.mp4 not found"})
 
             except asyncio.CancelledError:
+                # Terminate and reap the render subprocess before propagating.
+                if job.process and job.process.returncode is None:
+                    try:
+                        os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
+                    except Exception:
+                        try:
+                            job.process.terminate()
+                        except Exception:
+                            pass
+                    try:
+                        await asyncio.wait_for(job.process.wait(), timeout=5)
+                    except Exception:
+                        pass
                 raise
             except Exception as exc:
                 job.log.append(f"ERROR: {exc}")
@@ -1907,11 +1953,16 @@ async def kill_job(job_id: str):
     if job.status in ("running", "queued"):
         if job._task and not job._task.done():
             job._task.cancel()
-        elif job.process:
+        # Cancelling the task does not stop an already-spawned subprocess —
+        # terminate its process group too (spawned with start_new_session=True).
+        if job.process and job.process.returncode is None:
             try:
                 os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
             except Exception:
-                job.process.terminate()
+                try:
+                    job.process.terminate()
+                except Exception:
+                    pass
         if job._shorts_task and not job._shorts_task.done():
             job._shorts_task.cancel()
         job.status = "killed"
@@ -1926,7 +1977,7 @@ async def patch_job_params(job_id: str, data: dict = Body(...)):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "beats_auto", "beats_method", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_duration", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cam_crop_16x9", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
+    allowed = {"threshold", "max_scene", "per_file", "music_dir", "min_gap_sec", "music_files", "selected_track", "manual_timeline", "manual_overrides", "cam_pattern", "beats_auto", "beats_method", "shorts_text", "shorts_multicam", "shorts_beat_sync", "shorts_best", "shorts_duration", "shorts_music_dir", "shorts_music_dirs", "selected_photos", "cameras", "cam_offsets", "cam_crop_16x9", "cam_no_trim", "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature"}
     for k, v in data.items():
         if k in allowed:
             job.params[k] = v
@@ -2797,3 +2848,14 @@ async def delete_result_file(job_id: str, filename: str = Query(...)):
                         _sidecar.unlink()
                 return {"ok": True}
     raise HTTPException(404, f"File not found: {filename}")
+
+
+@router.delete("/api/jobs/{job_id}/log")
+async def clear_job_log(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status == "running":
+        raise HTTPException(409, "Cannot clear log while job is running")
+    job.log.clear_file()
+    return {"ok": True}

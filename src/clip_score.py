@@ -368,7 +368,8 @@ embs_main = {k: v for k, v in scene_embs.items() if k in main_cam_stems}
 if embs_main:
     names = list(embs_main.keys())
     embs  = np.array([embs_main[n] for n in names], dtype=np.float32)
-    np.savez_compressed(EMBEDDINGS_FILE, names=np.array(names), embeddings=embs)
+    np.savez_compressed(EMBEDDINGS_FILE, names=np.array(names), embeddings=embs,
+                        model=np.array(CLIP_MODEL), pretrained=np.array(CLIP_PRETRAINED))
     print(f"Embeddings: {len(names)} scenes → {Path(EMBEDDINGS_FILE).name}")
 
 print(f"\nScored: {len(df_main)} scenes")

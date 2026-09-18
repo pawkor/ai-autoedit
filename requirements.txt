@@ -35,6 +35,10 @@ easyocr>=1.7.1
 
 # Beat detection (optional — better tempo tracking for music-driven; active after container rebuild)
 BeatNet>=1.1.1
+beat-this==1.1.0
+einops>=0.8.0
+soxr>=0.5.0
+rotary-embedding-torch>=0.8.0
 
 # Vocal separation (optional — replaces HPSS harmonic for harm_energy onset accuracy)
 demucs>=4.0.1

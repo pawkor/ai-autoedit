@@ -213,6 +213,7 @@ def analyze_music(music_path: Path) -> dict:
     ffmpeg = "ffmpeg"
     _tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     _tmp.close()
+    _beatthis_beats: list[float] | None = None
     _beatnet_beats: list[float] | None = None
     try:
         subprocess.run(
@@ -221,6 +222,31 @@ def analyze_music(music_path: Path) -> dict:
             check=True,
         )
         y, sr = librosa.load(_tmp.name, sr=None, mono=True)
+        # Beat This! (ISMIR 2024) is the preferred detector when installed.
+        # It predicts beat times directly, without the librosa DBN/grid
+        # approximation.  Keep this optional so existing images can still
+        # analyze music while dependencies are being rebuilt.
+        try:
+            import torch as _torch
+            from beat_this.inference import File2Beats as _File2Beats
+            _bt_device = "cuda" if _torch.cuda.is_available() else "cpu"
+            _bt = _File2Beats(checkpoint_path="final0", device=_bt_device, dbn=False)
+            _bt_out = _bt(_tmp.name)
+            _bt_raw = _bt_out[0] if isinstance(_bt_out, tuple) else _bt_out
+            if hasattr(_bt_raw, "detach"):
+                _bt_raw = _bt_raw.detach().cpu().numpy()
+            _bt_arr = np.asarray(_bt_raw, dtype=float)
+            if _bt_arr.ndim > 1:
+                _bt_arr = _bt_arr[:, 0]
+            _beatthis_beats = sorted({float(t) for t in _bt_arr.ravel()
+                                      if np.isfinite(t) and 0.0 <= t < len(y) / sr})
+            del _bt
+            if _bt_device == "cuda":
+                _torch.cuda.empty_cache()
+            if len(_beatthis_beats) < 4:
+                _beatthis_beats = None
+        except Exception as _bt_err:
+            print(f"  [Beat This!] unavailable — falling back ({_bt_err})")
         try:
             from beatnet import BeatNet as _BeatNet
             _bn_out = np.array(
@@ -242,7 +268,12 @@ def analyze_music(music_path: Path) -> dict:
     tempo = float(np.squeeze(tempo))  # librosa ≥0.10 returns 0-dim array
     beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=hop).tolist()
 
-    if _beatnet_beats:
+    if _beatthis_beats:
+        beat_times = _beatthis_beats
+        _ivals = np.diff(beat_times)
+        tempo = 60.0 / float(np.median(_ivals)) if len(_ivals) > 0 else tempo
+        print(f"  [Beat This!] {len(beat_times)} beats  {tempo:.0f} BPM")
+    elif _beatnet_beats:
         beat_times = _beatnet_beats
         _ivals = np.diff(beat_times)
         tempo = 60.0 / float(np.median(_ivals)) if len(_ivals) > 0 else tempo
@@ -1299,13 +1330,25 @@ def assemble(
         if not edit:
             raise RuntimeError("--use-saved-sequence: empty sequence")
 
+        # Drop photo slots the UI saved without a source path — the renderer
+        # cannot encode them and would KeyError mid-render.
+        _valid = [s for s in edit
+                  if not (s.get("type") == "photo" and not s.get("path"))]
+        if len(_valid) < len(edit):
+            print(f"  WARN: dropped {len(edit) - len(_valid)} photo slot(s) "
+                  f"without 'path'", flush=True)
+            edit = _valid
+        if not edit:
+            raise RuntimeError("--use-saved-sequence: no renderable slots")
+
         # Drag-drop in the UI does not refresh per-slot music_start. Reset them
         # cumulatively from 0 so audio aligns with the rendered video.
+        # The beat-aligned track offset is kept separately in music_ss.
         _t_run = 0.0
         for slot in edit:
             slot["music_start"] = round(_t_run, 3)
             _t_run += float(slot.get("duration", 0))
-        music_ss = 0.0
+        music_ss = float(seq_data.get("music_ss") or 0.0)
 
         # Cap sequence so that clips + intro + outro <= music length.
         # pipeline.py adds intro_dur + outro_dur (default 3s each) after render,
@@ -1967,7 +2010,9 @@ def assemble(
                 "frame_path": frame_path,
             })
         out_json = auto_dir / "preview_sequence.json"
-        out_json.write_text(_json.dumps({"sequence": seq, "music": str(music_path)}, indent=2))
+        out_json.write_text(_json.dumps(
+            {"sequence": seq, "music": str(music_path),
+             "music_ss": round(music_ss, 3)}, indent=2))
         print(f"Dry-run complete → {len(seq)} slots → {out_json}")
         return out_json
 

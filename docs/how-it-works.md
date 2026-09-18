@@ -12,7 +12,7 @@ Pipeline zamienia surowy materiał z całego dnia w highlight reel bez ręcznego
 | 2 | Detekcja cięć — PySceneDetect `detect-content` **lub** CLIP-first (skanowanie klatek co N s, peaki CLIP) |
 | 3 | Podział — każda scena jako osobny plik w `_autoframe/autocut/` (stream copy) |
 | 4 | Ekstrakcja 3 klatek per klip (_f0/_f1/_f2 = 25/50/75%) → `_autoframe/frames/` |
-| 5 | Scoring CLIP — `ViT-L-14` na GPU → `scene_scores.csv` / `scene_scores_allcam.csv` |
+| 5 | Scoring CLIP na GPU — CLIP-first: model z `[clip_scan]` (domyślnie SigLIP2 SO400M); Traditional: model z `[clip_scoring]` → `scene_scores.csv` / `scene_scores_allcam.csv` |
 | 5b | GPS annotation (opcjonalne) — exiftool extraktuje ścieżkę GPS z plików Insta360; prędkość i kąt obrotu per scena dodawane do CSV jako `gps_speed_max`, `gps_turn_max`; blendowane ze score CLIP gdy `gps_weight > 0` |
 
 Wyniki kroków 1–5 są cache'owane — ponowne uruchomienie pomija już przetworzone etapy.
@@ -47,12 +47,15 @@ Wyniki: pliki `-clip-NNN` w `autocut/`. Wymagane dla music-driven multicam — `
 
 | Zmiana | Faza | Koszt |
 |--------|------|-------|
+| model / pretrained (`[clip_scan]`) | `all` — pełny rescan, inwalidacja raw scores i peaków | minuty (GPU) |
 | `interval` | `all` — pełny rescan | minuty (GPU) |
 | `min_gap` | `reselect` — nowy wybór peaków z zapisanych raw scores | minuty (GPU re-score) |
 | `clip_dur` | `reextract` — tylko re-cut clipów | sekundy (ffmpeg, bez GPU) |
 | brak zmian | skip | natychmiastowe |
 
-Pliki pośrednie w `_autoframe/`: `frame_raw_scores/{stem}.json`, `selected_peaks/{stem}.json`.
+Pliki pośrednie w `_autoframe/`: `frame_raw_scores/{stem}.json`, `selected_peaks/{stem}.json` (klucz cache zawiera `interval`, `min_gap`, `clip_dur`), hashe `clip_interval.hash`, `clip_gap.hash`, `clip_scan_params.hash`, `clip_scan_model.hash`.
+
+Recovery po przerwanym skanie (brak hashy) jest per-plik: faza `reextract`/`reselect` wybierana tylko gdy cache pokrywa **każdy** plik źródłowy skanowanych kamer; niepełny cache → faza `all` (pliki już zeskanowane i tak pomijają GPU dzięki cache per-plik w clip_scan).
 
 ### Detekcja scen — PySceneDetect (opcjonalna)
 
@@ -64,7 +67,14 @@ Wyniki detekcji są cache'owane per plik — zmiana parametrów i Re-analyze prz
 
 ### Scoring CLIP
 
-Model `ViT-L-14` OpenCLIP (wagi OpenAI) na GPU. Klatki przetwarzane w paczkach (domyślnie 64). Dla każdej klatki:
+Każdy tryb ma swój backbone, konfigurowany w `config.ini`:
+
+| Tryb | Sekcja | Domyślny model |
+|------|--------|----------------|
+| CLIP-first (`clip_scan.py`) | `[clip_scan]` | `ViT-SO400M-16-SigLIP2-384` / `webli` (fallback kodu: `ViT-H-14` / `dfn5b`) |
+| Traditional (`clip_score.py`) | `[clip_scoring]` | wg `config.ini` (`ViT-L-14` / `openai`) |
+
+Klatki przetwarzane w paczkach (domyślnie 64). Dla każdej klatki:
 
 ```
 pos_score   = średnie podobieństwo cosinusowe do wszystkich promptów pozytywnych
@@ -73,6 +83,11 @@ final_score = pos_score - neg_score × neg_weight
 ```
 
 Wyniki trafiają do `_autoframe/scene_scores.csv` (główna kamera) lub `scene_scores_allcam.csv` (wszystkie kamery).
+
+**Spójność przestrzeni embeddingów.** Embeddingi klatek peaków zapisywane są do `_autoframe/scene_embeddings.npz` wraz z metadanymi `model`/`pretrained` — zapisywany jest model **faktycznie załadowany** (także po fallbacku). Konsumenci:
+
+- `mood_score.py` — ładuje model tekstowy wg metadanych z npz; heurystyka po wymiarze (768→ViT-L-14, 1024→ViT-H-14, 1152→SigLIP2-SO400M…) tylko dla starych plików bez metadanych. Modele o tym samym wymiarze, ale innej przestrzeni (np. SigLIP2 B-16 vs ViT-L-14, oba 768-dim) nie zostaną pomylone.
+- **LAION Aesthetic Predictor** — MLP trenowany na embeddingach ViT-L-14/openai (768-dim). Szybka ścieżka (embeddingi ze skanu wprost do MLP) tylko przy dokładnie tym backbone; każdy inny model (w tym SigLIP2) → dedykowany mały pass ViT-L-14 wyłącznie na klatkach peaków (setki obrazów, sekundy), model zwalniany z GPU po użyciu.
 
 ### Selekcja scen (Traditional mode)
 
@@ -178,6 +193,7 @@ projekt/
     ├── selected_scenes.txt                 ← lista do ffmpeg concat
     ├── manual_overrides.json               ← ręczne oznaczenia z Select scenes
     ├── analyze_result.json                 ← cache wyników analizy (threshold, cam_ratio…)
+    ├── scene_embeddings.npz                ← embeddingi peaków + metadane model/pretrained (dla mood_score)
     └── gps_index.json                      ← cache GPS (speed/turn per scena, gdy gps_weight > 0)
 ```
 
@@ -195,7 +211,7 @@ The pipeline turns a full day of raw footage into a highlight reel without manua
 | 2 | Scene cut detection — PySceneDetect `detect-content` **or** CLIP-first (frame scan every N s, CLIP peaks) |
 | 3 | Split — each scene as a separate file in `_autoframe/autocut/` (stream copy) |
 | 4 | Key frame extraction — 3 frames per clip (_f0/_f1/_f2 = 25/50/75%) → `_autoframe/frames/` |
-| 5 | CLIP scoring — `ViT-L-14` on GPU → `scene_scores.csv` / `scene_scores_allcam.csv` |
+| 5 | CLIP scoring on GPU — CLIP-first: `[clip_scan]` model (default SigLIP2 SO400M); Traditional: `[clip_scoring]` model → `scene_scores.csv` / `scene_scores_allcam.csv` |
 | 5b | GPS annotation (optional) — exiftool extracts GPS track from Insta360 MP4s; per-scene speed + turn rate added to CSV; blended into CLIP score when `gps_weight > 0` |
 
 Steps 1–5 results are cached — rerunning skips already-processed stages.

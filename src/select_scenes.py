@@ -605,6 +605,23 @@ def _probe_video_format(path: str) -> tuple[int, int, float] | None:
     return None
 
 
+def _cached_matches_target(out: str) -> bool:
+    """Cached clip must match requested resolution/framerate — final concat
+    uses stream copy, so a stale-settings clip cannot be corrected later."""
+    if not (TARGET_RESOLUTION and TARGET_FRAMERATE):
+        return True
+    try:
+        tgt_w, tgt_h = (int(x) for x in TARGET_RESOLUTION.split(":"))
+        tgt_fps = float(TARGET_FRAMERATE)
+    except Exception:
+        return True
+    fmt = _probe_video_format(out)
+    if fmt is None:
+        return False
+    w, h, fps = fmt
+    return w == tgt_w and h == tgt_h and abs(fps - tgt_fps) <= 0.1
+
+
 def prepare_clip(scene, scene_file, duration, take, camera):
     needs_trim = duration > take
 
@@ -612,20 +629,25 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     out = f"{TRIMMED_DIR}{scene}{suffix}.mp4"
 
     if os.path.exists(out):
-        # Strict validity check: ffprobe must report no errors AND return a duration.
-        # get_duration() with -v quiet can return a value for corrupt files (no moov atom).
-        _chk = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", out],
-            capture_output=True, text=True,
-        )
-        if _chk.returncode == 0 and not _chk.stderr.strip():
-            try:
-                float(_chk.stdout.strip())
-                return out
-            except (ValueError, TypeError):
-                pass
-        os.remove(out)  # corrupt (e.g. killed mid-encode or missing moov atom) — re-encode
+        # If source is newer than cached output, re-encode (handles stale cache after VFR→CFR fix)
+        if os.path.getmtime(scene_file) > os.path.getmtime(out):
+            os.remove(out)
+        else:
+            # Strict validity check: ffprobe must report no errors AND return a duration.
+            # get_duration() with -v quiet can return a value for corrupt files (no moov atom).
+            _chk = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", out],
+                capture_output=True, text=True,
+            )
+            if _chk.returncode == 0 and not _chk.stderr.strip():
+                try:
+                    float(_chk.stdout.strip())
+                    if _cached_matches_target(out):
+                        return out
+                except (ValueError, TypeError):
+                    pass
+            os.remove(out)  # corrupt or encoded with obsolete settings — re-encode
 
     global _prep_counter
     with _prep_lock:
@@ -668,6 +690,7 @@ def prepare_clip(scene, scene_file, duration, take, camera):
     if use_nvenc_here:
         cmd += ["-c:v", "h264_nvenc", "-rc", "constqp", "-qp", X264_CRF,
                 "-preset", "p4", "-bf", "0", "-pix_fmt", "yuv420p",
+                "-video_track_timescale", "15360",
                 "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
                 "-vsync", "cfr"]
     else:

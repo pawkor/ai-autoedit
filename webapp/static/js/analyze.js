@@ -45,10 +45,11 @@ async function openProjectModal() {
       const cams = job.params.cameras
         || [job.params.cam_a, job.params.cam_b].filter(Boolean);
       const toLoad = cams.length ? cams : [];
-      const offsets = job.params.cam_offsets || {};
-      const crops   = job.params.cam_crop_16x9 || {};
+      const offsets  = job.params.cam_offsets  || {};
+      const crops    = job.params.cam_crop_16x9 || {};
+      const noTrims  = job.params.cam_no_trim   || {};
       for (const cam of toLoad)
-        _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs, offsets[cam] ?? 0, crops[cam] ?? false);
+        _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs, offsets[cam] ?? 0, crops[cam] ?? false, !!noTrims[cam]);
 
       // Load settings fields
       const _titleParts = (job.params.title ?? cfg?.title ?? '').split('\n');
@@ -224,7 +225,7 @@ async function _fetchAnalyzeSubdirs(dir) {
 }
 
 // ── Camera rows ───────────────────────────────────────────────────────────────
-function _appendAnalyzeCamRow(container, selected, subdirs, offset = 0, crop = false) {
+function _appendAnalyzeCamRow(container, selected, subdirs, offset = 0, crop = false, noTrim = false) {
   const row = document.createElement('div');
   row.className = 'm-analyze-cam-row';
 
@@ -271,12 +272,23 @@ function _appendAnalyzeCamRow(container, selected, subdirs, offset = 0, crop = f
   cropLabel.style.cssText = 'font-size:11px;color:var(--muted);flex-shrink:0';
   cropLabel.textContent = '4:3→16:9';
 
+  const noTrimCb = document.createElement('input');
+  noTrimCb.type = 'checkbox';
+  noTrimCb.className = 'm-cam-no-trim';
+  noTrimCb.checked = !!noTrim;
+  noTrimCb.title = 'No trim — use original source files as-is (no cutting)';
+  noTrimCb.style.cssText = 'margin-left:8px;cursor:pointer';
+
+  const noTrimLabel = document.createElement('span');
+  noTrimLabel.style.cssText = 'font-size:11px;color:var(--muted);flex-shrink:0';
+  noTrimLabel.textContent = 'No trim';
+
   const rm = document.createElement('button');
   rm.className = 'm-btn m-btn-ghost m-btn-sm';
   rm.textContent = '−'; rm.title = 'Remove camera';
   rm.onclick = () => { row.remove(); _relabelAnalyzeCams(container); _onCamListChange(); };
 
-  row.append(label, sel, offLabel, offInput, offSuffix, cropCb, cropLabel, rm);
+  row.append(label, sel, offLabel, offInput, offSuffix, cropCb, cropLabel, noTrimCb, noTrimLabel, rm);
   container.appendChild(row);
 }
 
@@ -390,11 +402,13 @@ async function runAnalyze() {
   const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
   const camOffsets = {};
   const camCrops   = {};
+  const camNoTrim  = {};
   camRows.forEach(r => {
-    const name = r.querySelector('select')?.value.trim();
-    const off  = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
-    const crop = r.querySelector('.m-cam-crop')?.checked ?? false;
-    if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; }
+    const name   = r.querySelector('select')?.value.trim();
+    const off    = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
+    const crop   = r.querySelector('.m-cam-crop')?.checked    ?? false;
+    const noTrim = r.querySelector('.m-cam-no-trim')?.checked ?? false;
+    if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; if (noTrim) camNoTrim[name] = 1; }
   });
   const clipFirst  = document.getElementById('m-analyze-detect-method')?.value !== 'traditional';
   const clipDur    = parseFloat(document.getElementById('m-analyze-clip-dur').value)     || 6;
@@ -416,6 +430,7 @@ async function runAnalyze() {
     cameras:               cameras.length ? cameras : null,
     cam_offsets:           Object.keys(camOffsets).length ? camOffsets : null,
     cam_crop_16x9:         Object.keys(camCrops).length  ? camCrops  : null,
+    cam_no_trim:           Object.keys(camNoTrim).length  ? camNoTrim : null,
     clip_first:            clipFirst,
     clip_scan_clip_dur:    clipDur,
     clip_scan_interval:    interval,
@@ -491,17 +506,19 @@ async function saveAnalyzeSettings() {
     const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
     const camOffsets = {};
     const camCrops  = {};
+    const camNoTrim = {};
     camRows.forEach(r => {
-      const name = r.querySelector('select')?.value.trim();
-      const off  = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
-      const crop = r.querySelector('.m-cam-crop')?.checked ?? false;
-      if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; }
+      const name   = r.querySelector('select')?.value.trim();
+      const off    = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
+      const crop   = r.querySelector('.m-cam-crop')?.checked    ?? false;
+      const noTrim = r.querySelector('.m-cam-no-trim')?.checked ?? false;
+      if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; if (noTrim) camNoTrim[name] = 1; }
     });
     if (cameras.length) {
       saves.push(fetch(`/api/jobs/${jobId}/params`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cameras, cam_offsets: camOffsets, cam_crop_16x9: camCrops }),
+        body: JSON.stringify({ cameras, cam_offsets: camOffsets, cam_crop_16x9: camCrops, cam_no_trim: Object.keys(camNoTrim).length ? camNoTrim : null }),
       }).catch(() => {}));
     }
 

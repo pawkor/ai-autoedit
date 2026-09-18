@@ -171,15 +171,23 @@ if _boto3_ok and S3_BUCKET and os.environ.get("S3_ACCESS_KEY_ID"):
 class _LogList(list):
     """list[str] that also appends to a .log file immediately on each append()."""
     def __init__(self, path: Path, items: list[str] | None = None):
-        super().__init__(items or [])
         self._path = path
-        if items:
+        if items is not None:
+            super().__init__(items)
             try:
                 with open(self._path, "a", encoding="utf-8") as fh:
                     for line in items:
                         fh.write(line + "\n")
             except Exception:
                 pass
+        elif path.exists():
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                super().__init__(lines)
+            except Exception:
+                super().__init__()
+        else:
+            super().__init__()
 
     def append(self, line: str):       # type: ignore[override]
         super().append(line)

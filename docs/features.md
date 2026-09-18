@@ -8,11 +8,11 @@ Status legend: ✅ Done · 🔄 In progress · 💡 Planned · ❌ Not planned
 |---|---|---|
 | PySceneDetect scene splitting | ✅ | configurable threshold + min_scene_len |
 | CLIP-first mode | ✅ | skips scenedetect; frame scanning + CLIP peak extraction; `-clip-NNN` clips |
-| CLIP-first 3-phase incremental cache | ✅ | interval→full rescan; min_gap→reselect peaks (GPU); clip_dur→reextract ffmpeg only (no GPU); no change→skip |
+| CLIP-first 3-phase incremental cache | ✅ | model/interval→full rescan; min_gap→reselect peaks (GPU); clip_dur→reextract ffmpeg only (no GPU); no change→skip; per-file coverage check on recovery |
 | Auto-suggest clip params | ✅ | ffprobe total duration → formula for interval/clip_dur/min_gap; auto-fills on new project dir select; ↻ Auto button |
-| CLIP scoring (ViT-L-14, GPU) | ✅ | positive/negative prompts, neg_weight; multi-frame (_f0/_f1/_f2) |
+| CLIP scoring (GPU) | ✅ | CLIP-first: `[clip_scan]` model (default SigLIP2 SO400M/webli); Traditional: `[clip_scoring]` model (ViT-L-14/openai); positive/negative prompts, neg_weight; multi-frame (_f0/_f1/_f2) |
 | Score all cameras (allcam CSV) | ✅ | `scene_scores_allcam.csv`; auto-enabled with CLIP-first |
-| LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14 embeddings; `aesthetic_score` column in CSV |
+| LAION Aesthetic Predictor | ✅ | MLP on ViT-L-14/openai embeddings; direct path only for that exact backbone, otherwise dedicated ViT-L-14 pass on peak frames; `aesthetic_score` column in CSV |
 | Threshold-based scene selection | ✅ | per-file cap, camera balance; Traditional mode only; instant client-side binary search |
 | GPS speed/turn scoring | ✅ | exiftool GPS extraction, Haversine speed+bearing, `gps_weight` blends into CLIP score |
 | Music-driven render | ✅ | beat/segment sync (cuts land on downbeats via `_bar_ceil()` rounding to nearest bar; frame-snapped durations + concat `duration` directive eliminate drift over long renders), source diversity, per-shot camera alternation, chronological arc (morning→evening), full-res intro, configurable beats-per-tier (▼▲), camera cut pattern, hard-excludes `ban` scenes (propagated to sync-cam via time overlap), back-cam mirror filter, fallback pool fills to music duration |

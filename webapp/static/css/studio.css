@@ -148,6 +148,13 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-thumb.removed .m-thumb-img { border: 2px dashed var(--red); }
 .m-thumb.in-timeline .m-thumb-img { opacity: .55; }
 .m-thumb.in-timeline::after { content: '▶'; position: absolute; top: 3px; right: 5px; font-size: 9px; color: #60a5fa; pointer-events: none; }
+.m-thumb-pos { position: absolute; top: 3px; right: 3px; background: rgba(59,130,246,.85);
+               color: #fff; font-size: 8px; font-weight: 700; padding: 1px 4px;
+               border-radius: 2px; letter-spacing: .02em; pointer-events: none; }
+.m-pool-section-hdr { grid-column: 1 / -1; font-size: 9px; font-weight: 700;
+                       letter-spacing: .07em; text-transform: uppercase; color: var(--sub);
+                       padding: 4px 2px 2px; border-bottom: 1px solid var(--border);
+                       margin-bottom: 2px; }
 .m-clip { flex-shrink: 0; background: var(--bg2); border: 1px solid var(--border);
           border-radius: 4px; cursor: grab; position: relative; display: flex;
           flex-direction: column; min-width: 24px;
@@ -171,8 +178,8 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
                 box-shadow: 0 8px 24px rgba(0,0,0,.6); z-index: 500; pointer-events: none; }
 #m-tl-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .m-clip.drag-over { border-color: var(--green-hi); box-shadow: 0 0 0 2px var(--green-hi); }
-.m-clip-insert { flex-shrink: 0; width: 6px; min-height: 44px; border-radius: 2px;
-                 transition: width .12s, background .12s; }
+.m-clip-insert { flex-shrink: 0; width: 3px; min-height: 44px; border-radius: 2px;
+                 transition: width .12s, background .12s; background: transparent; }
 .m-clip-insert.active { width: 36px; background: rgba(59,130,246,.25);
                         outline: 2px dashed var(--blue); outline-offset: -2px; }
 .m-track-music { flex: 1; min-width: 0; height: 28px; background: var(--bg2);
@@ -351,7 +358,8 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 /* ── Analyze modal ─────────────────────────────────────────────────────────── */
 .m-analyze-modal-inner { max-width: 540px; width: 100%; }
 
-.m-analyze-cams { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.m-analyze-cams { display: flex; flex-direction: column; gap: 4px; margin-top: 8px;
+                  max-height: 130px; overflow-y: auto; }
 
 .m-analyze-cam-row { display: flex; align-items: center; gap: 6px; }
 .m-analyze-cam-row select {

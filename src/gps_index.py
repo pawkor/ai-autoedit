@@ -302,6 +302,8 @@ def build_gps_index(
 
     if found == 0:
         print("  GPS index: no GPS data found — skipping annotation")
+        auto_dir.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("{}")
         return {}
 
     auto_dir.mkdir(parents=True, exist_ok=True)
