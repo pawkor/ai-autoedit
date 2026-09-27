@@ -527,8 +527,9 @@ def main():
     try:
         import configparser as _cp
         _cfg = _cp.ConfigParser()
-        _cfg.read([str(Path(args.work_dir) / "config.ini"),
-                   str(Path(__file__).parent.parent / "config.ini")])
+        # Global config first, project config overrides it (configparser: later wins).
+        _cfg.read([str(Path(__file__).parent.parent / "config.ini"),
+                   str(Path(args.work_dir) / "config.ini")])
         raw_offsets = _cfg.get("shorts", "crop_x_offsets", fallback="")
         for part in raw_offsets.split(","):
             part = part.strip()
@@ -608,7 +609,7 @@ def main():
         # Group scenes by camera
         by_cam: dict[str, list[int]] = {}
         for i, (_, scene) in enumerate(raw):
-            src = re.sub(r"-scene-\d+$", "", scene)
+            src = re.sub(r"-(?:scene|clip)-\d+$", "",scene)
             cam = cam_map.get(src, "default")
             by_cam.setdefault(cam, []).append(i)
 
@@ -853,7 +854,7 @@ def main():
             word      = word_pool[i]
             angle     = random.choice(angles)
             direction = random.choice(directions)
-            src_base  = re.sub(r"-scene-\d+$", "", scene)
+            src_base  = re.sub(r"-(?:scene|clip)-\d+$", "",scene)
             cam_name  = cam_map.get(src_base, "") if cam_csv.exists() else ""
             x_shift   = _crop_x_offsets.get(cam_name, 0)
 

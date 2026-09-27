@@ -723,6 +723,8 @@ async def scan_root():
 @router.post("/api/jobs")
 async def create_job(params: JobParams, analyze_only: bool = Query(default=True), draft: bool = Query(default=False)):
     work_dir = Path(params.work_dir).resolve()
+    if not in_browse_root(work_dir):
+        raise HTTPException(400, f"Directory outside browse root: {work_dir}")
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
     _validate_cameras(params.cameras, work_dir)
@@ -801,6 +803,8 @@ async def rerun_job(job_id: str, params: JobParams):
     if not job:
         raise HTTPException(404)
     work_dir = Path(params.work_dir).resolve()
+    if not in_browse_root(work_dir):
+        raise HTTPException(400, f"Directory outside browse root: {work_dir}")
     if not work_dir.is_dir():
         raise HTTPException(400, f"Directory not found: {work_dir}")
     _validate_cameras(params.cameras, work_dir)
@@ -930,6 +934,8 @@ async def clear_job_log(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
+    if job.status == "running":
+        raise HTTPException(409, "Cannot clear log while job is running")
     job.log.clear_file()
     return {"ok": True}
 
@@ -1207,6 +1213,9 @@ async def _preview_sequence_inner(job_id: str):
         await asyncio.wait_for(_read_build_output(), timeout=180)
         if proc.returncode != 0:
             _out = "\n".join(_build_lines)
+            # Terminal status must always reach the follow-socket — otherwise
+            # the UI stays in "running" forever after a failed build.
+            await job.broadcast({"type": "status", "status": "failed", "phase": "timeline"})
             raise HTTPException(500, f"Dry-run failed:\n{_out[-2000:]}")
     except asyncio.TimeoutError:
         try:
@@ -1216,9 +1225,11 @@ async def _preview_sequence_inner(job_id: str):
             pass
         job.log.append("ERROR: Build Timeline timed out (>180s)")
         await job.broadcast({"type": "log", "line": "ERROR: Build Timeline timed out (>180s)"})
+        await job.broadcast({"type": "status", "status": "failed", "phase": "timeline"})
         raise HTTPException(504, "Dry-run timed out (>180s)")
 
     if not seq_path.exists():
+        await job.broadcast({"type": "status", "status": "failed", "phase": "timeline"})
         raise HTTPException(500, "preview_sequence.json not written")
 
     await job.broadcast({"type": "status", "status": "done", "phase": "timeline"})
@@ -1443,7 +1454,8 @@ async def start_preview_hls(job_id: str):
         MAX_PREVIEW_CLIPS = 40
         p = _build_preview_inputs(job, max_clips=MAX_PREVIEW_CLIPS)
 
-        hls_vcodec = ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "3M", "-g", "30", "-pix_fmt", "yuv420p"]
+        # Platform codec comes from _build_preview_inputs (videotoolbox on macOS).
+        hls_vcodec = p["vcodec"]
         hls_tail = ["-avoid_negative_ts", "make_zero",
                     "-f", "hls", "-hls_time", "3", "-hls_playlist_type", "event",
                     "-hls_flags", "append_list",
@@ -2025,11 +2037,21 @@ async def remove_job(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.process and job.status == "running":
+    # Cancel live tasks FIRST and wait for them — a still-running task's
+    # job.save() would recreate the JSON we are about to delete.
+    _tasks = [t for t in (job._task, job._shorts_task) if t and not t.done()]
+    for _t in _tasks:
+        _t.cancel()
+    if _tasks:
+        await asyncio.gather(*_tasks, return_exceptions=True)
+    if job.process and job.process.returncode is None:
         try:
             os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
         except Exception:
-            job.process.terminate()
+            try:
+                job.process.terminate()
+            except Exception:
+                pass
     jobs.pop(job_id, None)
     p = JOBS_DIR / f"{job_id}.json"
     if p.exists():
@@ -2336,10 +2358,11 @@ async def purge_camera_files(job_id: str, data: dict = Body(default={})):
     deleted = 0
 
     for stem in stems:
-        for f in (auto_dir / "frames").glob(f"{stem}-scene-*"):
-            f.unlink(missing_ok=True); deleted += 1
-        for f in (auto_dir / "autocut").glob(f"{stem}-scene-*.mp4"):
-            f.unlink(missing_ok=True); deleted += 1
+        for _pat in (f"{stem}-scene-*", f"{stem}-clip-*"):
+            for f in (auto_dir / "frames").glob(_pat):
+                f.unlink(missing_ok=True); deleted += 1
+            for f in (auto_dir / "autocut").glob(f"{_pat}.mp4"):
+                f.unlink(missing_ok=True); deleted += 1
         for f in (auto_dir / "csv").glob(f"{stem}-Scenes.csv"):
             f.unlink(missing_ok=True); deleted += 1
         for f in (auto_dir / "trimmed").glob(f"{stem}-*"):
@@ -2439,7 +2462,7 @@ async def job_frames(job_id: str):
             back_takes = [
                 min(dur, max_scene_val)
                 for name, dur in durations.items()
-                if re.sub(r"-scene-\d+$", "", name) in back_sources
+                if re.sub(r"-(?:scene|clip)-\d+$", "", name) in back_sources
             ]
             if back_takes:
                 avg_back_cam_take_sec = round(sum(back_takes) / len(back_takes), 2)
@@ -2807,7 +2830,9 @@ async def suggest_clip_params(job_id: str):
 
 @router.get("/api/suggest-clip-params")
 async def suggest_clip_params_by_dir(work_dir: str = Query(...)):
-    wd = Path(work_dir)
+    wd = Path(work_dir).resolve()
+    if not in_browse_root(wd):
+        raise HTTPException(400, f"Directory outside browse root: {wd}")
     if not wd.is_dir():
         raise HTTPException(404, "Directory not found")
 
@@ -2874,14 +2899,3 @@ async def delete_result_file(job_id: str, filename: str = Query(...)):
                         _sidecar.unlink()
                 return {"ok": True}
     raise HTTPException(404, f"File not found: {filename}")
-
-
-@router.delete("/api/jobs/{job_id}/log")
-async def clear_job_log(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404)
-    if job.status == "running":
-        raise HTTPException(409, "Cannot clear log while job is running")
-    job.log.clear_file()
-    return {"ok": True}

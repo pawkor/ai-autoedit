@@ -1461,7 +1461,7 @@ async def run(params: dict, work_dir: Path,
     _back_srcs_fe = _back_cam_sources(_cam_src_csv, cam_a)
     if _back_srcs_fe:
         scene_files_main = [sf for sf in scene_files
-                            if re.sub(r'-scene-\d+$', '', sf.stem) not in _back_srcs_fe]
+                            if re.sub(r'-(?:scene|clip)-\d+$', '',sf.stem) not in _back_srcs_fe]
         if len(scene_files_main) < len(scene_files):
             yield f"  Skipping {len(scene_files) - len(scene_files_main)} back-cam scenes"
     else:
@@ -1599,7 +1599,7 @@ async def run(params: dict, work_dir: Path,
             if _back_srcs:
                 _frame_count = len({
                     re.sub(r'_f\d+$', '', f.stem) for f in _all_frames
-                    if re.sub(r'-scene-\d+$', '', re.sub(r'_f\d+$', '', f.stem)) not in _back_srcs
+                    if re.sub(r'-(?:scene|clip)-\d+$', '',re.sub(r'_f\d+$', '', f.stem)) not in _back_srcs
                 })
             else:
                 _frame_count = len({re.sub(r'_f\d+$', '', f.stem) for f in _all_frames})

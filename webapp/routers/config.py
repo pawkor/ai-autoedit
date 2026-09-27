@@ -17,7 +17,6 @@ from webapp.state import (
     STATIC_DIR,
     BROWSE_ROOT,
     in_browse_root,
-    DATA_ROOT,
     wcfg,
     save_wcfg,
     jobs,
@@ -43,8 +42,8 @@ async def favicon():
 async def get_config():
     return {
         "browse_root":          str(BROWSE_ROOT),
-        "data_root":            str(DATA_ROOT) if DATA_ROOT else None,
-        "data_root_configured": DATA_ROOT is not None,
+        "data_root":            str(_st.DATA_ROOT) if _st.DATA_ROOT else None,
+        "data_root_configured": _st.DATA_ROOT is not None,
     }
 
 

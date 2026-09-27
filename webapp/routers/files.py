@@ -11,10 +11,10 @@ import aiofiles
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, Form
 from fastapi.responses import StreamingResponse, Response
 
+import webapp.state as _st
 from webapp.state import (
     BROWSE_ROOT,
     in_browse_root,
-    DATA_ROOT,
 )
 
 router = APIRouter()
@@ -152,7 +152,7 @@ async def list_files(path: str = Query(...)):
 def _remove_upload_url(file_path: Path) -> None:
     import json
     auto_dir = file_path.parent / "_autoframe"
-    for name in ("ig_urls.json", "yt_urls.json"):
+    for name in ("ig_urls.json", "youtube_urls.json"):
         p = auto_dir / name
         if not p.exists():
             continue
@@ -180,7 +180,7 @@ async def delete_file_endpoint(path: str = Query(...)):
 @router.get("/api/browse")
 async def browse(path: str = Query(default=None)):
     from webapp.routers.jobs import _expand_path
-    root = Path(_expand_path(path)).resolve() if path else (DATA_ROOT or BROWSE_ROOT)
+    root = Path(_expand_path(path)).resolve() if path else (_st.DATA_ROOT or BROWSE_ROOT)
     if not in_browse_root(root):
         raise HTTPException(403, "Outside allowed root")
     try:

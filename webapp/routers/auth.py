@@ -18,6 +18,26 @@ from webapp.state import (
 router = APIRouter()
 
 
+def _revoke_user_sessions(username: str) -> None:
+    """Drop every live session of a user (after delete or password change)."""
+    for tok, u in list(_sessions.items()):
+        if u == username:
+            _sessions.pop(tok, None)
+
+
+@router.get("/api/auth/check")
+async def auth_check(request: Request):
+    """Lightweight session probe for nginx auth_request (direct-file locations).
+
+    204 = allowed (auth disabled, or a valid session cookie), 401 otherwise.
+    nginx keeps serving the media itself; only this cookie check hits FastAPI.
+    """
+    if not ENABLE_AUTH or _get_session_user(request) is not None:
+        from fastapi.responses import Response
+        return Response(status_code=204)
+    raise HTTPException(401)
+
+
 @router.get("/api/auth/status")
 async def auth_status(request: Request):
     users = _load_users()
@@ -97,6 +117,7 @@ async def delete_auth_user(request: Request, username: str):
     if not new_users:
         raise HTTPException(400, "Cannot delete last user")
     _save_users(new_users)
+    _revoke_user_sessions(username)
     return {"ok": True}
 
 
@@ -113,4 +134,5 @@ async def update_auth_user(request: Request, username: str, data: dict = Body(..
         raise HTTPException(404, "User not found")
     user["password_hash"] = _hash_pw(password)
     _save_users(users)
+    _revoke_user_sessions(username)
     return {"ok": True}

@@ -141,8 +141,22 @@ async def startup():
 
 # ── WebSockets ─────────────────────────────────────────────────────────────────
 
+def _ws_session_ok(websocket: WebSocket) -> bool:
+    """WS endpoints bypass the HTTP auth middleware — check the cookie here."""
+    if not ENABLE_AUTH:
+        return True
+    import webapp.state as _st
+    token = websocket.cookies.get("ae_session")
+    user = _st._sessions.get(token) if token else None
+    return user is not None and any(
+        u.get("username") == user for u in _st._load_users())
+
+
 @app.websocket("/ws/stats")   # must be declared before /ws/{job_id}
 async def stats_ws(websocket: WebSocket):
+    if not _ws_session_ok(websocket):
+        await websocket.close(code=4401)
+        return
     await websocket.accept()
     _stats_subscribers.add(websocket)
     try:
@@ -155,6 +169,9 @@ async def stats_ws(websocket: WebSocket):
 
 @app.websocket("/ws/{job_id}")
 async def job_ws(websocket: WebSocket, job_id: str):
+    if not _ws_session_ok(websocket):
+        await websocket.close(code=4401)
+        return
     job = jobs.get(job_id)
     if not job:
         await websocket.close(code=4004)

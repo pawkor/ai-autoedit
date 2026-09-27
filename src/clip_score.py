@@ -120,7 +120,7 @@ def _is_main_cam(path: Path) -> bool:
     if not _back_sources:
         return True
     stem = _re.sub(r'_f\d+$', '', path.stem)          # strip _f0/_f1/_f2
-    src  = _re.sub(r'-scene-\d+$', '', stem)
+    src  = _re.sub(r'-(?:scene|clip)-\d+$', '', stem)
     return src not in _back_sources
 
 def _scene_stem(path: Path) -> str:
@@ -278,7 +278,15 @@ try:
     # Check for "muddy" or "blown out" frames to further refine aesthetic score.
     _quality_boosts = []
     _brightness_map: dict[str, float] = {}
+    try:
+        import cv2
+    except ImportError:
+        cv2 = None
+        print("  Quality pass skipped: cv2 not available")
     for stem in _stems:
+        if cv2 is None:
+            _quality_boosts.append(1.0)
+            continue
         img_path = Path(FRAMES_DIR) / f"{scene_best[stem]['frame']}.jpg"
         try:
             # Use OpenCV to check luminance (Y channel in YUV)

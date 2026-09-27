@@ -70,13 +70,6 @@ def _yt_creds():
 
 
 
-@router.post("/api/youtube/analytics/refresh")
-async def yt_analytics_refresh_now():
-    """Trigger an immediate analytics refresh."""
-    asyncio.create_task(_yt_analytics_refresh_once())
-    return {"ok": True}
-
-
 @router.get("/api/youtube/status")
 async def yt_status():
     return {"authenticated": _yt_creds() is not None, "has_secrets": YT_SECRETS.exists()}
@@ -244,7 +237,7 @@ async def save_yt_url(job_id: str, payload: dict):
     if url:
         _write_yt_url(auto_dir, filename, url)
     else:
-        # Clear: remove key from yt_urls.json
+        # Clear: remove key from youtube_urls.json
         urls = _read_yt_urls(auto_dir)
         urls.pop(filename, None)
         _yt_urls_path(auto_dir).write_text(json.dumps(urls, indent=2))

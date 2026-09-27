@@ -10,7 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _cfg = configparser.ConfigParser()
 _script_dir = Path(__file__).resolve().parent
-_cfg.read([_script_dir / "config.ini", Path.cwd() / "config.ini"])
+# Global config first, project config (cwd = work_dir) overrides it.
+_cfg.read([_script_dir.parent / "config.ini", Path.cwd() / "config.ini"])
 
 THRESHOLD        = float(sys.argv[1]) if len(sys.argv) > 1 else _cfg.getfloat("scene_selection", "threshold",        fallback=0.148)
 MAX_SCENE_SEC    = float(sys.argv[2]) if len(sys.argv) > 2 else _cfg.getfloat("scene_selection", "max_scene_sec",    fallback=10)
@@ -143,8 +144,8 @@ if emb_dict:
     for _source, _group in df.groupby('source'):
         _scenes = sorted(
             [s for s in _group['scene'].tolist() if s in emb_dict],
-            key=lambda s: int(_re.search(r'-scene-(\d+)$', s).group(1))
-                          if _re.search(r'-scene-(\d+)$', s) else 0,
+            key=lambda s: int(_re.search(r'-(?:scene|clip)-(\d+)$', s).group(1))
+                          if _re.search(r'-(?:scene|clip)-(\d+)$', s) else 0,
         )
         for _i in range(len(_scenes)):
             for _j in range(_i + 1, min(_i + DEDUP_WINDOW + 1, len(_scenes))):
@@ -299,7 +300,7 @@ if force_include:
 def _scene_timestamp(scene_tuple):
     """Sortable key: (file_prefix, scene_number) from scene name."""
     name = scene_tuple[0]
-    m = _re.search(r'(\d{8}_\d{6}[^-]*)-scene-(\d+)', name)
+    m = _re.search(r'(\d{8}_\d{6}[^-]*)-(?:scene|clip)-(\d+)', name)
     if m:
         return (m.group(1), int(m.group(2)))
     return (name, 0)
@@ -363,7 +364,7 @@ if CSV_DIR and os.path.isdir(CSV_DIR):
 
     if _CAM_OFFSETS and ts_map:
         for _key in ts_map:
-            _src = _re.sub(r'-scene-\d+$', '', _key)
+            _src = _re.sub(r'-(?:scene|clip)-\d+$', '',_key)
             _cam = cam_map.get(_src, 'default')
             if _cam in _CAM_OFFSETS:
                 ts_map[_key] += _CAM_OFFSETS[_cam]
@@ -428,7 +429,7 @@ if dual_cam:
     back_rows = []
     for sc_file in sorted(Path(SCENES_DIR).glob("*.mp4")):
         stem = sc_file.stem
-        src  = _re.sub(r'-scene-\d+$', '', stem)
+        src  = _re.sub(r'-(?:scene|clip)-\d+$', '',stem)
         if src in back_sources:
             back_rows.append({'scene': stem, 'source': src,
                               'camera': cam_map[src], 'score': 0.0})
@@ -553,13 +554,13 @@ if dual_cam:
     _back_src_idx: dict[str, list[int]] = defaultdict(list)
     for _i, (_ms, _bs) in enumerate(paired):
         if _bs is not None:
-            _src = _re.sub(r'-scene-\d+$', '', _bs[0])
+            _src = _re.sub(r'-(?:scene|clip)-\d+$', '',_bs[0])
             _back_src_idx[_src].append(_i)
     for _src, _idxs in _back_src_idx.items():
         if len(_idxs) < 2:
             continue
         _back_tups = [paired[_i][1] for _i in _idxs]
-        _back_tups.sort(key=lambda t: int(_re.search(r'-scene-(\d+)$', t[0]).group(1)))
+        _back_tups.sort(key=lambda t: int(_re.search(r'-(?:scene|clip)-(\d+)$', t[0]).group(1)))
         for _k, _i in enumerate(_idxs):
             paired[_i] = (paired[_i][0], _back_tups[_k])
 

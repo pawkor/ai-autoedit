@@ -654,15 +654,24 @@ def _apply_high_energy_beat_lock(schedule: list[dict], beat_times: list[float],
         if end_i <= start_i or end_i - start_i <= max_beats:
             out.append(slot)
             continue
+        subs: list[dict] = []
         i = start_i
         while i < end_i:
             j = min(i + max_beats, end_i)
             start = float(beat_times[i])
             end = float(beat_times[j]) if j < end_i else float(slot["end"])
-            if end - start >= 0.4:
-                out.append({**slot, "start": start, "end": end,
-                            "duration": end - start, "n_beats": max(1, j - i)})
+            subs.append({**slot, "start": start, "end": end,
+                         "duration": end - start, "n_beats": max(1, j - i)})
             i = j
+        # A too-short tail must be merged into the previous sub-slot, never
+        # dropped — a gap in the schedule desyncs every later cut from the
+        # music once the clips are concatenated.
+        if len(subs) >= 2 and subs[-1]["duration"] < 0.4:
+            tail = subs.pop()
+            subs[-1]["end"] = tail["end"]
+            subs[-1]["duration"] = subs[-1]["end"] - subs[-1]["start"]
+            subs[-1]["n_beats"] += tail["n_beats"]
+        out.extend(subs if subs else [slot])
     if len(out) > len(schedule):
         print(f"  Beat lock: {len(schedule)} → {len(out)} slots in high-energy sections")
     return out
@@ -1939,7 +1948,7 @@ def assemble(
             })
         print(f"  Dry-run: {len(clips)} clips from duration cache (motion skipped)")
     else:
-        clips = analyse_clips(autocut_dir, scene_scores, 1.0, ffprobe,
+        clips = analyse_clips(autocut_dir, scene_scores, top_percent, ffprobe,
                               stem_to_camera=stem_to_camera or None,
                               stem_to_time=stem_to_time or None)
     if not clips:

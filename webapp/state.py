@@ -106,7 +106,15 @@ def _save_users(users: list[dict]):
 
 def _get_session_user(request) -> Optional[str]:
     token = request.cookies.get("ae_session")
-    return _sessions.get(token) if token else None
+    user = _sessions.get(token) if token else None
+    if user is None:
+        return None
+    # A session is only valid while its account still exists — deleting a
+    # user must revoke access immediately, not at the next restart.
+    if not any(u.get("username") == user for u in _load_users()):
+        _sessions.pop(token, None)
+        return None
+    return user
 
 
 # ── Webapp config ─────────────────────────────────────────────────────────────
@@ -272,7 +280,9 @@ class Job:
 
     async def broadcast(self, msg: dict):
         dead = set()
-        for ws in self.subscribers:
+        # Iterate over a copy — a subscriber disconnecting during an await
+        # mutates the set and would raise RuntimeError mid-job.
+        for ws in list(self.subscribers):
             try:
                 await ws.send_text(json.dumps(msg))
             except Exception:
