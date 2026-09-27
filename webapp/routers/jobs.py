@@ -1177,6 +1177,7 @@ async def _preview_sequence_inner(job_id: str):
     top_pct = float(job.params.get("md_top_percent", 0.40))
     cmd += ["--top-percent", str(top_pct)]
 
+    _build_lines: list[str] = []
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -1184,18 +1185,43 @@ async def _preview_sequence_inner(job_id: str):
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(SCRIPT_DIR),
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
-        _out = stdout.decode(errors='replace')
-        print(f"[preview-sequence] {job_id}:\n{_out}", flush=True)
+        await job.broadcast({"type": "status", "status": "running", "phase": "timeline"})
+        job.log.append("── Build Timeline ───────────────────────")
+        await job.broadcast({"type": "log", "line": "── Build Timeline ───────────────────────"})
+
+        async def _read_build_output():
+            assert proc.stdout is not None
+            while True:
+                raw = await proc.stdout.readline()
+                if not raw:
+                    break
+                line = raw.decode(errors="replace").rstrip()
+                if not line:
+                    continue
+                _build_lines.append(line)
+                job.log.append(line)
+                await job.broadcast({"type": "log", "line": line})
+                print(f"[preview-sequence] {job_id}: {line}", flush=True)
+            await proc.wait()
+
+        await asyncio.wait_for(_read_build_output(), timeout=180)
         if proc.returncode != 0:
+            _out = "\n".join(_build_lines)
             raise HTTPException(500, f"Dry-run failed:\n{_out[-2000:]}")
     except asyncio.TimeoutError:
-        try: proc.kill()
-        except Exception: pass
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        job.log.append("ERROR: Build Timeline timed out (>180s)")
+        await job.broadcast({"type": "log", "line": "ERROR: Build Timeline timed out (>180s)"})
         raise HTTPException(504, "Dry-run timed out (>180s)")
 
     if not seq_path.exists():
         raise HTTPException(500, "preview_sequence.json not written")
+
+    await job.broadcast({"type": "status", "status": "done", "phase": "timeline"})
 
     data = json.loads(seq_path.read_text())
 

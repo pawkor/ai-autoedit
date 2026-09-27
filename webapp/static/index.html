@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI-autoedit Studio</title>
   <link rel="stylesheet" href="/css/studio.css">
+  <link rel="stylesheet" href="/css/studio-alternative.css">
   <link rel="stylesheet" href="/css/music_modal.css">
 </head>
 <body data-theme="dark">
@@ -848,6 +849,15 @@
                   title="Suggest based on detected HW">Auto</button>
         </div>
 
+        <div class="m-settings-row" style="margin-top:8px">
+          <span class="m-settings-label">Interface</span>
+          <select id="m-app-ui-mode" class="m-input" style="width:150px">
+            <option value="modern">Classic</option>
+            <option value="alternative">Alternative</option>
+          </select>
+          <span class="m-section-meta">applies after reload</span>
+        </div>
+
         <!-- Volume sliders -->
         <div class="m-settings-row" style="margin-top:8px">
           <span class="m-settings-label" data-i18n="m.lbl_music_vol">Music</span>
@@ -951,8 +961,6 @@
       <div class="m-modal-ft">
         <span id="m-photos-count" class="m-section-meta"
               data-i18n="m.no_photos">No photos selected</span>
-        <button class="m-btn m-btn-primary" onclick="savePhotoSelection()"
-                data-i18n="m.btn_save_photos">✓ Save selection</button>
       </div>
     </div>
   </div>
@@ -1031,5 +1039,6 @@
   <script src="/js/appsettings.js"></script>
   <script src="/js/photos.js"></script>
   <script src="/js/mobile.js"></script>
+  <script src="/js/studio-alternative.js"></script>
 </body>
 </html>

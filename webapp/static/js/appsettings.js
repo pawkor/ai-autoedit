@@ -37,6 +37,8 @@ async function openAppSettingsModal() {
     clipCtxEl.value = settings.global_clip_context ||
       'helmet-cam and handlebar/chest action cameras, KTM adventure motorcycle, road always visible in frame, both rider-POV and face-cam perspectives';
   }
+  const uiModeEl = document.getElementById('m-app-ui-mode');
+  if (uiModeEl && settings) uiModeEl.value = settings.ui_mode || 'modern';
 
   await _appQueueRefresh();
   await _appYtCheckStatus();
@@ -77,12 +79,14 @@ async function saveAppSettings() {
   const status     = document.getElementById('m-app-settings-status');
 
   const clipCtx = document.getElementById('m-app-clip-context')?.value ?? '';
+  const uiMode  = document.getElementById('m-app-ui-mode')?.value || 'modern';
   const r = await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_concurrent_jobs: concurrent, music_vol_pct: musicVol, global_clip_context: clipCtx }),
+    body: JSON.stringify({ max_concurrent_jobs: concurrent, music_vol_pct: musicVol, global_clip_context: clipCtx, ui_mode: uiMode }),
   });
   if (!r.ok) { if (status) status.textContent = '✗ Save failed'; return; }
+  if (typeof window.applyUiMode === 'function') window.applyUiMode(uiMode);
 
   if (dataRoot) {
     await fetch('/api/config/data-root', {

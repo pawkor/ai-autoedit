@@ -99,6 +99,7 @@ async def get_settings():
         "theme":                wcfg("theme", ""),
         "lang":                 wcfg("lang", ""),
         "sort_newest":          wcfg("sort_newest", ""),
+        "ui_mode":              wcfg("ui_mode", "modern"),
         "orig_vol_pct":         orig_pct,
         "music_vol_pct":        music_pct,
         "global_clip_context":  wcfg("global_clip_context", ""),
@@ -112,6 +113,8 @@ async def put_settings(data: dict):
         data["original_volume"] = str(round(int(data.pop("orig_vol_pct")) / 100, 4))
     if "music_vol_pct" in data:
         data["music_volume"] = str(round(int(data.pop("music_vol_pct")) / 100, 4))
+    if "ui_mode" in data:
+        data["ui_mode"] = "alternative" if str(data["ui_mode"]).lower() == "alternative" else "modern"
     save_wcfg(data)
     if "max_concurrent_jobs" in data:
         new_val = max(1, int(data["max_concurrent_jobs"]))

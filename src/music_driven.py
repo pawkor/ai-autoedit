@@ -632,6 +632,42 @@ def build_schedule(
     return schedule
 
 
+def _apply_high_energy_beat_lock(schedule: list[dict], beat_times: list[float],
+                                 max_beats: int = 2,
+                                 energy_threshold: float = 0.65) -> list[dict]:
+    """Split high-energy slots on the beat grid so strong sections cut densely.
+
+    The normal schedule deliberately groups 3–6 beats for calmer sections. In
+    a chorus with obvious claps/kicks that makes the edit feel late even when
+    beat detection is accurate. Keep the existing grouping for quieter slots,
+    but split energetic slots into at most ``max_beats`` beats.
+    """
+    if max_beats < 1 or len(beat_times) < 2:
+        return schedule
+    out: list[dict] = []
+    for slot in schedule:
+        if slot.get("energy", 0.0) < energy_threshold:
+            out.append(slot)
+            continue
+        start_i = min(range(len(beat_times)), key=lambda i: abs(beat_times[i] - slot["start"]))
+        end_i = min(range(len(beat_times)), key=lambda i: abs(beat_times[i] - slot["end"]))
+        if end_i <= start_i or end_i - start_i <= max_beats:
+            out.append(slot)
+            continue
+        i = start_i
+        while i < end_i:
+            j = min(i + max_beats, end_i)
+            start = float(beat_times[i])
+            end = float(beat_times[j]) if j < end_i else float(slot["end"])
+            if end - start >= 0.4:
+                out.append({**slot, "start": start, "end": end,
+                            "duration": end - start, "n_beats": max(1, j - i)})
+            i = j
+    if len(out) > len(schedule):
+        print(f"  Beat lock: {len(schedule)} → {len(out)} slots in high-energy sections")
+    return out
+
+
 # ── Motion analysis ───────────────────────────────────────────────────────────
 
 def motion_profile(clip_path: Path, duration: float, ffmpeg_bin: str = "ffmpeg",
@@ -802,7 +838,9 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 cam_order: list[str] | None = None,
                 max_consecutive_cam: int = 3,
                 gps_weight: float = 0.0,
-                mood_weight: float = 0.0) -> list[dict]:
+                mood_weight: float = 0.0,
+                temporal_exclusion_sec: float = 15.0,
+                repeat_penalty: float = 0.08) -> list[dict]:
     """
     Assign best clip to each slot.
     Scoring per candidate (when chron_weight=0):
@@ -812,7 +850,10 @@ def match_clips(schedule: list[dict], clips: list[dict],
     Camera diversity:
         cam_pattern set → cyclic pattern (e.g. "aabaab" → back/back/helmet repeating)
         cam_pattern empty → group-based (2-3 shots per camera, then switch)
-    Source diversity: avoid repeating same source file within rolling window.
+    Source diversity: avoid repeating same source file within rolling window and
+    avoid selecting clips from the same capture window twice.  For synchronized
+    multicam sources, absolute creation timestamps also suppress the same event
+    from two cameras.
     """
     import collections
     used: set[str] = set()
@@ -840,6 +881,8 @@ def match_clips(schedule: list[dict], clips: list[dict],
     # Rolling window: at least 2 sources worth of slots, minimum 4
     _src_window = max(4, num_sources * 2)
     recent_sources: collections.deque = collections.deque(maxlen=_src_window)
+    selected_windows: list[dict] = []
+    source_uses: collections.Counter = collections.Counter()
 
     # Camera selection: explicit pattern (user override) or diversity-cap (default).
     _resolved_pattern = _parse_cam_pattern(cam_pattern, cameras)
@@ -858,6 +901,9 @@ def match_clips(schedule: list[dict], clips: list[dict],
     _slot_idx = 0   # counts placed slots (for pattern indexing)
     _last_cam: str | None = None
     _consecutive_cam: int = 0
+    if temporal_exclusion_sec > 0:
+        print(f"  Temporal diversity: exclusion={temporal_exclusion_sec:.1f}s  "
+              f"repeat penalty={repeat_penalty:.2f}")
 
     for slot in schedule:
         dur    = slot["duration"]
@@ -872,13 +918,41 @@ def match_clips(schedule: list[dict], clips: list[dict],
 
         def _pool(relax_dur: bool = False,
                   camera_filter: bool = True,
-                  source_filter: bool = True) -> list[dict]:
+                  source_filter: bool = True,
+                  temporal_filter: bool = True) -> list[dict]:
             min_dur = dur if relax_dur else dur + 0.2
+
+            def _temporal_ok(c: dict) -> bool:
+                if not temporal_filter or temporal_exclusion_sec <= 0:
+                    return True
+                c_src = _clip_source(c["scene"])
+                c_t = c.get("source_start")
+                for prev in selected_windows:
+                    same_source = c_src == prev["source"]
+                    same_event = (
+                        c_t is not None and prev.get("source_start") is not None
+                        and abs(float(c_t) - float(prev["source_start"]))
+                        < temporal_exclusion_sec
+                    )
+                    if same_source and c_t is None:
+                        # Without timestamps we cannot distinguish nearby clips;
+                        # the source rolling window remains the safe fallback.
+                        continue
+                    if (same_source and c_t is not None
+                            and prev.get("source_start") is not None
+                            and abs(float(c_t) - float(prev["source_start"]))
+                            < temporal_exclusion_sec):
+                        return False
+                    if same_event:
+                        return False
+                return True
+
             return [
                 c for c in clips
                 if c["duration"] >= min_dur
                 and c["scene"] not in used
                 and (not source_filter or _clip_source(c["scene"]) not in recent_sources)
+                and _temporal_ok(c)
                 and (not camera_filter or _desired_cam is None
                      or c.get("camera", "unknown") == _desired_cam)
                 and (not camera_filter or _cap_cam is None
@@ -891,6 +965,12 @@ def match_clips(schedule: list[dict], clips: list[dict],
         if not pool: pool = _pool(relax_dur=True, source_filter=False)
         if not pool: pool = _pool(camera_filter=False)
         if not pool: pool = _pool(relax_dur=True, camera_filter=False)
+        # Temporal diversity is relaxed last.  A full timeline is preferable
+        # to an empty slot, but only after camera/source constraints failed.
+        if not pool: pool = _pool(source_filter=False, temporal_filter=False)
+        if not pool: pool = _pool(relax_dur=True, source_filter=False, temporal_filter=False)
+        if not pool: pool = _pool(camera_filter=False, temporal_filter=False)
+        if not pool: pool = _pool(relax_dur=True, camera_filter=False, temporal_filter=False)
         if not pool:
             pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in used]
         # Pool exhausted — allow reuse rather than leaving slots empty,
@@ -942,11 +1022,14 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 return (c["score"] * 0.50 + motion_match * 0.30 + chron_match * _chron_w + _gps)
             if _has_mood:
                 _mood = energy * _act + (1.0 - energy) * _sce
-                return _mood * 0.45 + motion_match * 0.30 + c["score"] * 0.25 + _gps
+                base = _mood * 0.45 + motion_match * 0.30 + c["score"] * 0.25 + _gps
+                return base - repeat_penalty * min(2, source_uses[_clip_source(c["scene"])])
             # Fallback (no mood scores): original formula
             if energy > 0.65:
-                return c["score"] * 0.45 + motion_match * 0.55 + _gps
-            return c["score"] * 0.60 + motion_match * 0.40 + _gps
+                base = c["score"] * 0.45 + motion_match * 0.55 + _gps
+            else:
+                base = c["score"] * 0.60 + motion_match * 0.40 + _gps
+            return base - repeat_penalty * min(2, source_uses[_clip_source(c["scene"])])
 
         best = max(pool, key=rank)
         if not _reusing:
@@ -954,6 +1037,11 @@ def match_clips(schedule: list[dict], clips: list[dict],
         else:
             reuse_used.add(best["scene"])
         recent_sources.append(_clip_source(best["scene"]))
+        source_uses[_clip_source(best["scene"])] += 1
+        selected_windows.append({
+            "source": _clip_source(best["scene"]),
+            "source_start": best.get("source_start"),
+        })
         _best_cam = best.get("camera", "unknown")
         if _best_cam == _last_cam:
             _consecutive_cam += 1
@@ -1654,6 +1742,11 @@ def assemble(
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
 
+    # Keep calm sections grouped, but make energetic sections cut on the beat
+    # grid more often.  Applied after intro sync below because that step may
+    # rebuild the schedule.
+    _beat_lock = _cp.getboolean("music_driven", "beat_lock", fallback=True)
+
     # Align music_ss so the first clip cut (after intro card) lands on a beat.
     # In the final video: [intro card: card_dur] [clip1] [clip2] ...
     # At the intro→clip1 cut, music is at (music_ss + card_dur) — must be a beat.
@@ -1676,6 +1769,12 @@ def assemble(
                   f"card={_card_dur:.1f}s  drift={abs(_sync_beat-_target)*1000:.0f}ms")
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music after intro sync")
+    if _beat_lock and not (_beats_auto and _onset_env_perc):
+        _beat_lock_beats = _cpint("music_driven", "beat_lock_beats", "2")
+        _beat_lock_energy = _cpfloat("music_driven", "beat_lock_energy", "0.65")
+        schedule = _apply_high_energy_beat_lock(
+            schedule, beat_times, _beat_lock_beats, _beat_lock_energy
+        )
 
     # Reserve intro + outro card time; trim slots that exceed available window.
     _reserve    = _card_dur * 2
@@ -1846,6 +1945,13 @@ def assemble(
     if not clips:
         raise RuntimeError("No clips available for motion analysis")
 
+    # Carry absolute source timestamps into matching.  This allows temporal
+    # deduplication across synchronized cameras as well as within one source.
+    for _clip in clips:
+        _rng = _clip_range(_clip["scene"])
+        if _rng:
+            _clip["source_start"], _clip["source_end"] = _rng
+
     # Filter out static clips: configurable via [music_driven] min_motion_score (0.0 = off)
     # Smart-detect: ≤1.0 = relative (motion_norm); >1.0 = absolute pixel diff (motion_level).
     # Absolute is more robust — relative gives 1.0 to least-static clip even if absolutely static.
@@ -1958,11 +2064,15 @@ def assemble(
 
     # 4. Match clips to schedule
     _chron_weight = 0.20 if stem_to_time else 0.0
+    _temporal_exclusion = _cpfloat("music_driven", "temporal_exclusion_sec", "15")
+    _repeat_penalty = _cpfloat("music_driven", "repeat_penalty", "0.08")
     edit = match_clips(schedule, clips, chron_weight=_chron_weight,
                        cam_pattern=_cam_pattern, cam_order=_cam_order,
                        max_consecutive_cam=_max_consecutive_cam,
                        gps_weight=_gps_weight,
-                       mood_weight=1.0 if _mood_raw else 0.0)
+                       mood_weight=1.0 if _mood_raw else 0.0,
+                       temporal_exclusion_sec=_temporal_exclusion,
+                       repeat_penalty=_repeat_penalty)
     if not edit:
         raise RuntimeError("Clip matching produced no edit")
 

@@ -490,9 +490,16 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') _hidePoolCtx
 // ── Timeline ──────────────────────────────────────────────────────────────────
 async function rebuildTimeline() {
   if (!_jobId || !_pinnedTrack) { alert('Pin a music track first.'); return; }
+  if (window._timelineBuildBusy) return;
+  window._timelineBuildBusy = true;
 
   const overlay = document.getElementById('m-build-overlay');
+  const buildBtn = document.getElementById('m-btn-rebuild');
+  if (buildBtn) buildBtn.disabled = true;
   if (overlay) overlay.style.display = 'flex';
+  // A completed job normally closes its progress socket. Build Timeline is
+  // a foreground preview operation, so follow its subprocess output too.
+  _connectJobProgress(_jobId, true);
 
   const _md = (typeof _musicDir !== 'undefined') ? _musicDir : '';
   clearTimeout(_savePatternTimer);
@@ -512,9 +519,26 @@ async function rebuildTimeline() {
     ...(_camPattern ? { cam_pattern: _camPattern } : {}),
     ...(_md ? { music_dir: _md } : {}),
   });
-  const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
+  let data;
+  try {
+    data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
+  } catch (err) {
+    if (overlay) overlay.style.display = 'none';
+    window._timelineBuildBusy = false;
+    if (buildBtn) buildBtn.disabled = false;
+    throw err;
+  }
 
   if (overlay) overlay.style.display = 'none';
+  window._timelineBuildBusy = false;
+  if (buildBtn) buildBtn.disabled = false;
+  fetch(`/api/jobs/${_jobId}/log`).then(r => r.ok ? r.json() : null).then(d => {
+    if (d?.lines && Array.isArray(d.lines)) {
+      _logLines = d.lines.slice(-200);
+      _logRenderLines();
+      _updateLogBadge();
+    }
+  }).catch(() => {});
 
   if (!data?.sequence) {
     const meta = document.getElementById('m-timeline-meta');
@@ -927,15 +951,16 @@ function _fmtEta(sec) {
   return s > 0 ? `~${m}m ${s}s` : `~${m}m`;
 }
 
-function _connectJobProgress(jobId) {
+function _connectJobProgress(jobId, followDone = false) {
   if (_jobWs) { _jobWs.close(); _jobWs = null; }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+  const ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}${followDone ? '?follow=1' : ''}`);
   _jobWs = ws;
   let total = 0;
   let current = 0;
   let startTime = null;
   let currentPhase = 'rendering';
+  let followWaiting = followDone;
 
   ws.onmessage = e => {
     let msg;
@@ -944,11 +969,15 @@ function _connectJobProgress(jobId) {
     if (msg.type === 'status') {
       const st = msg.status;
       if (st === 'running') {
+        followWaiting = false;
         currentPhase = msg.phase || 'rendering';
         _showStatus(_phaseLabel(currentPhase), '', null, 'running');
         _clearWorkerBars();
         _setRenderBusy(true);
       } else if (st === 'done') {
+        // Follow-mode sockets initially receive the job's old "done" state
+        // before Build Timeline changes it to a live timeline operation.
+        if (followWaiting && window._timelineBuildBusy) return;
         _showStatus('done', '✓ complete', 100, 'done');
         _setRenderBusy(false);
         ws.close();

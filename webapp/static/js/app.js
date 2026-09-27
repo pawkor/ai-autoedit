@@ -300,7 +300,6 @@ const TRANS = {
       // photo browser modal
       'm.photos_title':'Photo Browser',
       'm.no_photos':'No photos selected',
-      'm.btn_save_photos':'✓ Save selection',
       'm.title_close_preview':'Close preview',
     },
     placeholders: {
@@ -604,7 +603,6 @@ const TRANS = {
       // photo browser modal
       'm.photos_title':'Przeglądarka zdjęć',
       'm.no_photos':'Nie wybrano zdjęć',
-      'm.btn_save_photos':'✓ Zapisz wybór',
       'm.title_close_preview':'Zamknij podgląd',
     },
     placeholders: {

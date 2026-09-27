@@ -167,7 +167,8 @@ async def job_ws(websocket: WebSocket, job_id: str):
     if job.shorts_running:
         await websocket.send_text(json.dumps({"type": "shorts_status", "running": True}))
 
-    if job.status not in ("running", "queued") and not job.shorts_running:
+    _follow = websocket.query_params.get("follow") == "1"
+    if job.status not in ("running", "queued") and not job.shorts_running and not _follow:
         await websocket.close()
         return
 

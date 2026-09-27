@@ -158,6 +158,32 @@ function _photoToggle(path) {
     }
   }
   _updatePhotoCount();
+  _schedulePhotoSave();
+}
+
+// Auto-save: each toggle schedules a debounced PATCH; closing the modal flushes.
+let _photoSaveTimer = null;
+let _photoSaveDirty = false;
+
+function _schedulePhotoSave() {
+  _photoSaveDirty = true;
+  clearTimeout(_photoSaveTimer);
+  _photoSaveTimer = setTimeout(_flushPhotoSave, 600);
+}
+
+async function _flushPhotoSave() {
+  clearTimeout(_photoSaveTimer);
+  _photoSaveTimer = null;
+  if (!_photoSaveDirty) return;
+  _photoSaveDirty = false;
+  if (typeof _jobId === 'undefined' || !_jobId) return;
+  await fetch(`/api/jobs/${_jobId}/params`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selected_photos: [..._photoSelection] }),
+  }).catch(() => {});
+  // Refresh pool so newly selected photos appear at the top
+  if (typeof window.loadPhotos === 'function') await window.loadPhotos();
 }
 
 function _updatePhotoCount() {
@@ -219,22 +245,10 @@ document.addEventListener('keydown', e => {
   else if (e.key === ' ')          { e.preventDefault(); _previewToggleCurrent(); }
 });
 
-async function savePhotoSelection() {
-  if (typeof _jobId === 'undefined' || !_jobId) return;
-  await fetch(`/api/jobs/${_jobId}/params`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ selected_photos: [..._photoSelection] }),
-  }).catch(() => {});
-  // Refresh pool so newly selected photos appear at the top
-  if (typeof window.loadPhotos === 'function') await window.loadPhotos();
-  closePhotoBrowser();
-}
-window.savePhotoSelection = savePhotoSelection;
-
 function closePhotoBrowser() {
   const modal = document.getElementById('m-photos-modal');
   if (modal) modal.style.display = 'none';
   closePhotoPreview();
+  _flushPhotoSave();  // send any pending selection change immediately
 }
 window.closePhotoBrowser = closePhotoBrowser;

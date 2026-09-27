@@ -1,0 +1,82 @@
+/* Alternative Studio layout. Loaded alongside studio.css and activated by
+   body.ui-alternative. No selectors outside this namespace are changed. */
+body.ui-alternative {
+  --bg0: oklch(18% .018 250);
+  --bg1: oklch(23% .022 250);
+  --bg2: oklch(29% .026 250);
+  --border: oklch(100% 0 0 / .12);
+  --text: oklch(96% .012 250);
+  --sub: oklch(76% .025 250);
+  --muted: oklch(61% .028 250);
+  --blue: oklch(70% .15 230);
+  --green-hi: oklch(76% .16 150);
+  font-size: 14px;
+}
+
+body.ui-alternative #studio { gap: 0; }
+body.ui-alternative #m-sidebar {
+  width: 224px; min-width: 224px; max-width: 224px;
+  background: color-mix(in oklch, var(--bg1) 92%, var(--blue));
+}
+body.ui-alternative .m-sidebar-header { padding: 14px 14px 10px; font-size: 11px; }
+body.ui-alternative #m-project-list { padding: 4px 10px 14px; }
+body.ui-alternative .m-proj-item { padding: 10px 11px; border-left: 0; border-radius: 8px; }
+body.ui-alternative .m-proj-item.active { box-shadow: inset 3px 0 var(--green-hi); }
+body.ui-alternative #m-topbar {
+  height: 60px; padding: 0 20px; gap: 14px;
+  background: color-mix(in oklch, var(--bg1) 96%, var(--blue));
+}
+body.ui-alternative .m-project-name { font-size: 16px; letter-spacing: -.015em; }
+body.ui-alternative .m-topbar-actions { gap: 8px; }
+body.ui-alternative .m-btn { min-height: 34px; border-radius: 8px; padding: 7px 13px; }
+body.ui-alternative .m-btn-sm { min-height: 28px; padding: 5px 10px; }
+body.ui-alternative #m-pool { border-bottom: 1px solid var(--border); }
+body.ui-alternative .m-section-header { padding: 10px 18px; }
+body.ui-alternative .m-section-title { font-size: 11px; letter-spacing: .09em; }
+body.ui-alternative #m-pool-grid { gap: 12px; padding: 14px 18px; }
+body.ui-alternative .m-thumb-img { border-radius: 8px; }
+body.ui-alternative #m-timeline-wrap { height: 218px; }
+body.ui-alternative #m-timeline { padding: 12px 18px; gap: 8px; }
+body.ui-alternative #m-panel { width: 270px; background: var(--bg1); }
+body.ui-alternative .m-panel-section { padding: 13px; }
+body.ui-alternative .m-panel-divider { padding: 10px 13px 5px; }
+body.ui-alternative #m-build-overlay {
+  inset: auto 18px 18px auto; width: min(360px, calc(100vw - 36px));
+  height: auto; background: transparent; justify-content: flex-end;
+  align-items: stretch; pointer-events: none;
+}
+body.ui-alternative #m-build-overlay .m-build-modal {
+  pointer-events: auto; min-width: 0; padding: 16px 18px; border-radius: 12px;
+  box-shadow: 0 16px 42px oklch(0% 0 0 / .35);
+  align-items: stretch; gap: 10px;
+}
+body.ui-alternative #m-build-overlay .m-spinner { align-self: flex-start; }
+
+/* Phone: one scrollable work surface with an always reachable command bar. */
+@media (max-width: 800px) {
+  body.ui-alternative { overflow: auto; }
+  body.ui-alternative #studio { min-height: 100dvh; height: auto; display: block; padding-bottom: 58px; }
+  body.ui-alternative #m-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 1200; transform: translateX(-105%); transition: transform .22s ease-out; box-shadow: 16px 0 40px oklch(0% 0 0 / .3); }
+  body.ui-alternative #m-sidebar.open { transform: translateX(0); }
+  body.ui-alternative #m-sidebar-overlay { z-index: 1190; }
+  body.ui-alternative #m-main { width: 100%; min-height: calc(100dvh - 58px); overflow: visible; }
+  body.ui-alternative #m-topbar { height: 56px; padding: 0 10px; position: sticky; top: 0; z-index: 20; }
+  body.ui-alternative .m-project-name { font-size: 14px; }
+  body.ui-alternative .m-topbar-actions { gap: 4px; }
+  body.ui-alternative .m-topbar-actions > .m-btn { min-width: 34px; padding: 6px 8px; font-size: 0; }
+  body.ui-alternative .m-topbar-actions > .m-btn::first-letter { font-size: 16px; }
+  body.ui-alternative #m-btn-render { font-size: 11px; padding-inline: 10px; }
+  body.ui-alternative #m-hw-monitor { display: none !important; }
+  body.ui-alternative #m-pool { height: auto; min-height: 46dvh; max-height: none; overflow: visible; }
+  body.ui-alternative #m-pool-grid { max-height: none; min-height: 220px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; overflow: visible; }
+  body.ui-alternative #m-timeline-wrap { height: 180px; overflow: hidden; }
+  body.ui-alternative #m-timeline { overflow-x: auto; padding: 9px 10px; }
+  body.ui-alternative #m-panel { position: fixed; inset: auto 0 58px 0; z-index: 1100; width: 100%; max-height: 72dvh; overflow-y: auto; transform: translateY(110%); transition: transform .22s ease-out; border: 1px solid var(--border); border-radius: 14px 14px 0 0; box-shadow: 0 -18px 42px oklch(0% 0 0 / .35); }
+  body.ui-alternative #m-panel.mobile-open { transform: translateY(0); }
+  body.ui-alternative #m-bottom-nav { display: flex !important; position: fixed; inset: auto 0 0; z-index: 1150; height: 58px; background: var(--bg1); border-top: 1px solid var(--border); justify-content: space-around; padding-bottom: env(safe-area-inset-bottom); }
+  body.ui-alternative .m-bnav-tab { flex: 1; border: 0; background: transparent; color: var(--sub); min-height: 58px; }
+  body.ui-alternative .m-bnav-tab.active { color: var(--text); background: var(--bg2); }
+  body.ui-alternative #m-build-overlay { inset: auto 10px 70px 10px; width: auto; }
+  body.ui-alternative .m-modal { max-width: calc(100vw - 20px) !important; max-height: calc(100dvh - 20px); overflow-y: auto; }
+  body.ui-alternative .m-modal-body { padding: 12px; }
+}

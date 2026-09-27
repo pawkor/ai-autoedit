@@ -1,6 +1,9 @@
 services:
   nginx:
     image: nginx:alpine
+    # Docker inside LXC cannot load the docker-default AppArmor profile.
+    security_opt:
+      - apparmor:unconfined
     ports:
       - "443:443"
       - "80:80"
