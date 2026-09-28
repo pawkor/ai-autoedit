@@ -113,7 +113,9 @@ async function mYtOpen(filePath, fileName, existingUrl, jobId, workDir) {
       savedTitle   = cfg?.yt_title || '';
       savedDesc    = cfg?.yt_desc  || '';
       savedNotes   = cfg?.yt_notes || '';
-      projectTitle = cfg?.title    || '';
+      // cfg.title is "Title\nIntro card" — an <input> strips newlines, which
+      // would silently glue both lines together. Take the first line only.
+      projectTitle = (cfg?.title || '').split('\n')[0];
       projectDesc  = jobData?.params?.description || '';
     } catch (_) {}
   }

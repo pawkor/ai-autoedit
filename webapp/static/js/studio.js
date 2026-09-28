@@ -153,7 +153,9 @@ async function refreshProjectList() {
 
 async function openProject(id) {
   if (_jobId === id) return;
-  _flushTlSave();  // send any pending timeline save for the previous project
+  // Await the flush: a fast A→B→A hop could otherwise GET the old timeline
+  // before the PATCH lands and then persist it over the fresh edit.
+  await _flushTlSave();
   _jobId = id;
   _frames = [];
   _timeline = [];
@@ -232,7 +234,9 @@ async function loadPool(id) {
 // Refresh selected photos (called after Photos modal save)
 async function loadPhotos() {
   if (!_jobId) return;
-  const ph = await api.get(`/api/jobs/${_jobId}/photos`).catch(() => null);
+  const jobId = _jobId;
+  const ph = await api.get(`/api/jobs/${jobId}/photos`).catch(() => null);
+  if (_jobId !== jobId) return;   // project switched — stale response
   _photos = (ph?.photos || []).filter(p => p.selected);
   renderPool();
 }
@@ -492,6 +496,9 @@ async function rebuildTimeline() {
   if (!_jobId || !_pinnedTrack) { alert('Pin a music track first.'); return; }
   if (window._timelineBuildBusy) return;
   window._timelineBuildBusy = true;
+  // Snapshot the project — in the alternative UI the sidebar stays clickable
+  // during Build, and a stale result must never land in another project.
+  const jobId = _jobId;
 
   const overlay = document.getElementById('m-build-overlay');
   const buildBtn = document.getElementById('m-btn-rebuild');
@@ -512,7 +519,7 @@ async function rebuildTimeline() {
   // would restore the old timeline after this PATCH clears it.
   await _cancelTlSave();
   _timeline = [];
-  await api.patch(`/api/jobs/${_jobId}/params`, {
+  await api.patch(`/api/jobs/${jobId}/params`, {
     selected_track: _pinnedTrack,
     manual_timeline: null,
     manual_overrides: _overrides,
@@ -521,7 +528,7 @@ async function rebuildTimeline() {
   });
   let data;
   try {
-    data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
+    data = await api.post(`/api/jobs/${jobId}/preview-sequence`);
   } catch (err) {
     if (overlay) overlay.style.display = 'none';
     window._timelineBuildBusy = false;
@@ -532,7 +539,10 @@ async function rebuildTimeline() {
   if (overlay) overlay.style.display = 'none';
   window._timelineBuildBusy = false;
   if (buildBtn) buildBtn.disabled = false;
-  fetch(`/api/jobs/${_jobId}/log`).then(r => r.ok ? r.json() : null).then(d => {
+  // Project switched while the dry-run was running — discard the result;
+  // applying it would overwrite the other project's timeline on save.
+  if (_jobId !== jobId) return;
+  fetch(`/api/jobs/${jobId}/log`).then(r => r.ok ? r.json() : null).then(d => {
     if (d?.lines && Array.isArray(d.lines)) {
       _logLines = d.lines.slice(-200);
       _logRenderLines();
@@ -554,7 +564,7 @@ async function rebuildTimeline() {
     if (_overrides[k] === 'ban-new') _overrides[k] = 'ban';
   }
   _removedScenes.clear();
-  _saveTimeline(_jobId);
+  _saveTimeline(jobId);
   drawTimeline();
   renderPool();
   enableActions(true);
@@ -985,6 +995,9 @@ function _connectJobProgress(jobId, followDone = false) {
         loadResults();
         if (_jobId) loadPool(_jobId);
       } else if (st === 'failed' || st === 'killed') {
+        // Follow-mode: the socket first replays the job's OLD terminal status
+        // (a previously failed/killed render) — ignore it, keep following.
+        if (followWaiting && window._timelineBuildBusy) return;
         _showStatus('failed', '✗ ' + (st === 'killed' ? 'cancelled' : 'error'), 100, 'error');
         _clearWorkerBars();
         _setRenderBusy(false);
@@ -1199,31 +1212,49 @@ window.closePreviewModal = closePreviewModal;
 // ── Render ────────────────────────────────────────────────────────────────────
 async function renderTimeline() {
   if (!_jobId || !_pinnedTrack) { alert('Pin a music track first.'); return; }
-  // Await pending timeline save so the render uses the just-edited timeline.
-  await _flushTlSave();
+  // Guard + snapshot BEFORE the first await — a double-click during the
+  // timeline flush would start two renders, and a project switch mid-flush
+  // would target the wrong job.
+  if (window._renderStarting) return;
+  window._renderStarting = true;
+  const jobId = _jobId;
   _setRenderBusy(true);
-  _showStatus('queuing…', '', null, 'running');
-  _connectJobProgress(_jobId);
+  try {
+    // Await pending timeline save so the render uses the just-edited timeline.
+    // A failed save (api.patch resolves to null) means the backend would
+    // render a STALE timeline — abort instead of rendering silently wrong.
+    const _hadPending = !!_pendingTlSave || !!_tlSaveInflight;
+    const _flushRes = await _flushTlSave();
+    if (_hadPending && _flushRes === null) {
+      _showStatus('error', '✗ timeline save failed — try again', 100, 'error');
+      _setRenderBusy(false);
+      return;
+    }
+    _showStatus('queuing…', '', null, 'running');
+    _connectJobProgress(jobId);
 
-  const timelineMethod = document.getElementById('m-settings-timeline-method')?.value || 'music-driven';
-  let resp;
-  if (timelineMethod === 'traditional') {
-    resp = await api.post(`/api/jobs/${_jobId}/render`, {
-      selected_track: _pinnedTrack,
-    });
-  } else {
-    const overridesPayload = {};
-    Object.keys(_overrides).filter(s => _isBanned(s))
-      .forEach(s => { overridesPayload[s] = false; });
-    resp = await api.post(`/api/jobs/${_jobId}/render-music-driven`, {
-      selected_track: _pinnedTrack,
-      overrides: overridesPayload,
-    });
-  }
+    const timelineMethod = document.getElementById('m-settings-timeline-method')?.value || 'music-driven';
+    let resp;
+    if (timelineMethod === 'traditional') {
+      resp = await api.post(`/api/jobs/${jobId}/render`, {
+        selected_track: _pinnedTrack,
+      });
+    } else {
+      const overridesPayload = {};
+      Object.keys(_overrides).filter(s => _isBanned(s))
+        .forEach(s => { overridesPayload[s] = false; });
+      resp = await api.post(`/api/jobs/${jobId}/render-music-driven`, {
+        selected_track: _pinnedTrack,
+        overrides: overridesPayload,
+      });
+    }
 
-  if (!resp) {
-    _showStatus('error', '✗ failed to start', 100, 'error');
-    _setRenderBusy(false);
+    if (!resp || resp._error) {
+      _showStatus('error', '✗ ' + (resp?._error || 'failed to start'), 100, 'error');
+      _setRenderBusy(false);
+    }
+  } finally {
+    window._renderStarting = false;
   }
 }
 window.renderTimeline = renderTimeline;

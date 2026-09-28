@@ -462,12 +462,13 @@ async def apply_postprocess(
                         "-t", str(_vdur),
                         str(_mout),
                     ])
-                    if _mout.exists():
+                    if _mix_ret == 0 and _mout.exists():
                         src.unlink(missing_ok=True)
                         src = _mout
                         _music_info_path.unlink(missing_ok=True)
                         yield f"  Music mixed: {_vdur:.1f}s, fade at {_fst:.1f}s"
                     else:
+                        _mout.unlink(missing_ok=True)  # never leave a partial file
                         yield f"  ⚠ Music mix failed — continuing without music"
             except Exception as _me:
                 yield f"  ⚠ Music mix error: {_me}"
@@ -919,14 +920,25 @@ async def run(params: dict, work_dir: Path,
         _scan_model = cp.get("clip_scan", "model",
                              fallback="ViT-SO400M-16-SigLIP2-384")
         _scan_pretrained = cp.get("clip_scan", "pretrained", fallback="webli")
+        # The scanned-camera set is part of the identity too: toggling a
+        # camera's no-trim flag changes WHICH files were scanned, and the
+        # no-trim clip reuses the "-clip-001" name of a scan clip, so stale
+        # caches would silently keep the old behaviour.
         _h_model_cur = _hashlib.sha256(
-            f"{_scan_model}|{_scan_pretrained}".encode()
+            f"{_scan_model}|{_scan_pretrained}|{','.join(sorted(cameras_scan))}".encode()
         ).hexdigest()
 
         _f_interval = auto_dir / "clip_interval.hash"
         _f_gap      = auto_dir / "clip_gap.hash"
         _f_params   = auto_dir / "clip_scan_params.hash"
         _f_model    = auto_dir / "clip_scan_model.hash"
+
+        # Prompts are part of the raw-score identity (see decision chain).
+        _h_prompts_cur_cf = _hashlib.sha256(
+            (params.get("positive", "") + "\n---\n" + params.get("negative", "")).encode()
+        ).hexdigest()
+        _f_prompts_cf = auto_dir / "scores_prompts.hash"
+        _h_prompts_prev_cf = _f_prompts_cf.read_text().strip() if _f_prompts_cf.exists() else ""
 
         _h_interval_prev = _f_interval.read_text().strip() if _f_interval.exists() else ""
         _h_gap_prev      = _f_gap.read_text().strip()      if _f_gap.exists()      else ""
@@ -981,13 +993,27 @@ async def run(params: dict, work_dir: Path,
                         _cache_file.unlink(missing_ok=True)
             yield "  CLIP model changed (or model hash missing) — invalidating frame scores"
             _scan_phase = "all"
+        elif _h_prompts_prev_cf and _h_prompts_cur_cf != _h_prompts_prev_cf:
+            # Prompt text is baked into raw frame scores. Rescoring via
+            # clip_score.py would mix embedding spaces (wrong backbone) and
+            # drop offset_sec — a fresh scan with the scan backbone is the
+            # only correct path.
+            for _cache_dir in (auto_dir / "frame_raw_scores", auto_dir / "selected_peaks"):
+                if _cache_dir.exists():
+                    for _cache_file in _cache_dir.glob("*.json"):
+                        _cache_file.unlink(missing_ok=True)
+            yield "  Prompts changed — full rescan with the scan backbone"
+            _scan_phase = "all"
         elif _h_interval_prev and _h_interval_cur != _h_interval_prev:
             # Interval actually changed — raw scores no longer valid
             _scan_phase = "all"
         elif not _h_interval_prev:
             # Hash files missing (first run or scan was interrupted before completing).
             # Prefer recovery from cache over wiping everything.
-            if _peaks_cover:
+            # reextract never produces scene_scores.csv, so it is only a valid
+            # recovery when the CSV survived — otherwise the project would be
+            # left permanently CSV-less with hashes marked valid.
+            if _peaks_cover and (auto_dir / "scene_scores.csv").exists():
                 yield "  Hash missing — recovering from cached peaks (reextract, no GPU)"
                 _scan_phase = "reextract"
             elif _raw_cover:
@@ -1008,7 +1034,8 @@ async def run(params: dict, work_dir: Path,
             _scan_phase = "reselect"
         elif _h_params_cur != _h_params_prev and _peaks_cover:
             _scan_phase = "reextract"
-        elif _h_params_cur == _h_params_prev and _clips_exist and _frames_exist:
+        elif (_h_params_cur == _h_params_prev and _clips_exist and _frames_exist
+              and (auto_dir / "scene_scores.csv").exists()):
             _scan_phase = None   # fully cached
         else:
             _scan_phase = "all"  # fallback
@@ -1047,12 +1074,17 @@ async def run(params: dict, work_dir: Path,
                 "WORK_DIR":              str(work_dir),
                 "AUTO_DIR":              str(auto_dir),
                 "CAMERAS":               ",".join(cameras_scan),
+                # cam_a may itself be no-trim (excluded from the scan) — then
+                # no scanned clip would ever count as "main" and the main CSV
+                # would hold only injected rows. Fall back to the first
+                # scanned camera as the is_main reference.
                 "FFMPEG":                ffmpeg,
                 "FFPROBE":               ffprobe,
                 "OUTPUT_CSV":            str(auto_dir / "scene_scores.csv"),
                 "OUTPUT_CSV_ALLCAM":     str(auto_dir / "scene_scores_allcam.csv"),
                 "CAM_SOURCES":           str(_cam_src_csv),
-                "AUDIO_CAM":             cam_a,
+                "AUDIO_CAM":             (cam_a if (not cameras or cam_a in cameras_scan)
+                                          else (cameras_scan[0] if cameras_scan else cam_a)),
                 "CLIP_SCAN_INTERVAL_SEC":_p_interval,
                 "CLIP_SCAN_CLIP_DUR_SEC":_p_dur,
                 "CLIP_SCAN_MIN_GAP_SEC": _p_gap,
@@ -1088,7 +1120,16 @@ async def run(params: dict, work_dir: Path,
             _f_interval.write_text(_h_interval_cur)
             _f_gap.write_text(_h_gap_cur)
             _f_params.write_text(_h_params_cur)
-            _f_model.write_text(_h_model_cur)
+            # Hash the backbone clip_scan ACTUALLY loaded (it may have fallen
+            # back), so a later successful load of the requested model is
+            # seen as a change and invalidates the fallback's scores.
+            _actual_f = auto_dir / "clip_scan_model.actual"
+            if _actual_f.exists():
+                _f_model.write_text(_hashlib.sha256(
+                    f"{_actual_f.read_text().strip()}|{','.join(sorted(cameras_scan))}".encode()
+                ).hexdigest())
+            else:
+                _f_model.write_text(_h_model_cur)
             if _scan_phase in ("all", "reselect"):
                 # Write prompts hash — clip_scan.py scored with current prompts
                 (auto_dir / "scores_prompts.hash").write_text(_hashlib.sha256(
@@ -1176,7 +1217,11 @@ async def run(params: dict, work_dir: Path,
                     "list-scenes", "-o", _tmpdir,
                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
                 )
-                await _cp.wait()
+                try:
+                    await _cp.wait()
+                except BaseException:
+                    await _reap(_cp)
+                    raise
                 _cal_csvs = list(Path(_tmpdir).glob("*-Scenes.csv"))
                 _cal_durs = []
                 if _cal_csvs:
@@ -1456,9 +1501,12 @@ async def run(params: dict, work_dir: Path,
     if clip_first:
         yield "  Skipped (CLIP-first mode — peak frames extracted by clip_scan)"
 
-    # Filter to main-cam scenes only (back cam is not scored, no point extracting frames)
+    # Filter to main-cam scenes only (traditional mode: back cam is not scored).
+    # In CLIP-first mode frames are produced and pruned by clip_scan, and with
+    # score_all_cams the back cam IS scored — filtering here deleted its
+    # -clip- frames on every analyze.
     _cam_src_csv  = auto_dir / "camera_sources.csv"
-    _back_srcs_fe = _back_cam_sources(_cam_src_csv, cam_a)
+    _back_srcs_fe = _back_cam_sources(_cam_src_csv, cam_a) if not clip_first else set()
     if _back_srcs_fe:
         scene_files_main = [sf for sf in scene_files
                             if re.sub(r'-(?:scene|clip)-\d+$', '',sf.stem) not in _back_srcs_fe]
@@ -1467,14 +1515,16 @@ async def run(params: dict, work_dir: Path,
     else:
         scene_files_main = scene_files
 
-    # Remove stale frames from previous runs that no longer have a matching scene clip
-    _valid_stems = {sf.stem for sf in scene_files_main}
-    _stale = [p for p in (auto_dir / "frames").glob("*.jpg")
-              if re.sub(r'_f\d+$', '', p.stem) not in _valid_stems]
-    if _stale:
-        for p in _stale:
-            p.unlink(missing_ok=True)
-        yield f"  Removed {len(_stale)} stale frame(s) from previous runs"
+    # Remove stale frames from previous runs that no longer have a matching
+    # scene clip (traditional mode only — clip_scan manages its own frames).
+    if not clip_first:
+        _valid_stems = {sf.stem for sf in scene_files_main}
+        _stale = [p for p in (auto_dir / "frames").glob("*.jpg")
+                  if re.sub(r'_f\d+$', '', p.stem) not in _valid_stems]
+        if _stale:
+            for p in _stale:
+                p.unlink(missing_ok=True)
+            yield f"  Removed {len(_stale)} stale frame(s) from previous runs"
 
     # Upgrade old single-frame format (scene.jpg) to multi-frame (_f0/_f1/_f2)
     _old_format = [p for p in (auto_dir / "frames").glob("*.jpg")
@@ -1500,7 +1550,11 @@ async def run(params: dict, work_dir: Path,
                 str(out_jpg), "-y", "-loglevel", "quiet",
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
             )
-            await proc.wait()
+            try:
+                await proc.wait()
+            except BaseException:
+                await _reap(proc)
+                raise
 
     if not clip_first:
         batch_size = os.cpu_count() or 4
@@ -1698,7 +1752,15 @@ async def run(params: dict, work_dir: Path,
                         str(_clip_out),
                         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
                     )
-                    await _cp.wait()
+                    try:
+                        await _cp.wait()
+                    except BaseException:
+                        await _reap(_cp)
+                        raise
+                    if _cp.returncode != 0 or not _clip_out.exists():
+                        # A partial file must not be reused as a "cached" clip.
+                        _clip_out.unlink(missing_ok=True)
+                        yield f"  ⚠ No-trim encode failed for {_sf.name}"
                 # Invalidate stale trimmed files so select_scenes recreates from fresh autocut
                 _trimmed_dir = _autocut_dir.parent / "trimmed"
                 if _trimmed_dir.exists() and _clip_out.exists():
@@ -1750,13 +1812,18 @@ async def run(params: dict, work_dir: Path,
     _photo_dur = _photo_dur_cfg if _photo_dur_cfg >= _min_take_sec else max(3.5, _min_take_sec)
     _sel_photos_json = auto_dir / "selected_photos.json"
     _photo_paths: list[Path] = []
+    _sel_explicit_empty = False
     if _sel_photos_json.exists():
         import json as _json_ph
         _sel_raw = _json_ph.loads(_sel_photos_json.read_text())
         _sel_list = _sel_raw if isinstance(_sel_raw, list) else (_sel_raw.get("photos") or [])
         if _sel_list:
             _photo_paths = [Path(p) for p in _sel_list if Path(p).exists()]
-    if not _photo_paths and _photos_dir.is_dir():
+        else:
+            # The user explicitly deselected every photo — an empty selection
+            # must not fall back to "all photos in the directory".
+            _sel_explicit_empty = True
+    if not _photo_paths and not _sel_explicit_empty and _photos_dir.is_dir():
         _photo_paths = sorted(
             p for p in _photos_dir.iterdir()
             if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
@@ -1799,7 +1866,11 @@ async def run(params: dict, work_dir: Path,
                         str(_clip_out),
                         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
                     )
-                    await _ph_proc.wait()
+                    try:
+                        await _ph_proc.wait()
+                    except BaseException:
+                        await _reap(_ph_proc)
+                        raise
             return ph.stem, _clip_out.exists()
 
         _ph_results = await asyncio.gather(*[_encode_photo(ph) for ph in _photo_paths])
@@ -1828,6 +1899,25 @@ async def run(params: dict, work_dir: Path,
             yield f"  Photo clips: {_ph_ok}/{len(_photo_paths)} encoded, total pool: {len(scene_files)}"
         else:
             yield f"  Photos: 0 clips encoded — check {_photos_dir}"
+
+    # Purge rows/clips of photos that are no longer selected — including an
+    # explicitly empty selection. Injection alone only replaces its own rows,
+    # so deselected photos would otherwise stay in the CSVs forever.
+    _keep_photo_names = {f"{p.stem}-photo-001" for p in _photo_paths}
+    for _csv_path in [scores_csv, auto_dir / "scene_scores_allcam.csv"]:
+        if _csv_path.exists():
+            try:
+                _exp = pd.read_csv(_csv_path)
+                _mask = (_exp["scene"].astype(str).str.contains(r"-photo-\d+$", regex=True)
+                         & ~_exp["scene"].isin(_keep_photo_names))
+                if _mask.any():
+                    _exp[~_mask].to_csv(_csv_path, index=False)
+                    yield f"  Photos: removed {int(_mask.sum())} deselected row(s) from {_csv_path.name}"
+            except Exception:
+                pass
+    for _old_ph in (auto_dir / "autocut").glob("*-photo-*.mp4"):
+        if _old_ph.stem not in _keep_photo_names:
+            _old_ph.unlink(missing_ok=True)
 
     # ── GPS annotation (optional, additive — skipped silently if no GPS data) ──
     _gps_detected = False
@@ -1881,6 +1971,11 @@ async def run(params: dict, work_dir: Path,
     if analyze_only and not params.get("threshold"):
         try:
             _scores_df = pd.read_csv(scores_csv).dropna(subset=["score"])
+            # Injected rows (photos, no-trim full clips) carry a synthetic
+            # score of 1.0 — they would push the auto-threshold to 1.0.
+            _real = _scores_df[_scores_df["score"] < 0.999]
+            if not _real.empty:
+                _scores_df = _real
             _top10_min = float(_scores_df.nlargest(10, "score")["score"].min())
             _auto_threshold = round(_top10_min, 4)
             if threshold != _auto_threshold:

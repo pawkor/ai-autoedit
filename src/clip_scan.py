@@ -102,6 +102,11 @@ def _parse_prompts(raw):
 
 POSITIVE_PROMPTS = _parse_prompts(_cfg.get("clip_prompts", "positive", fallback=""))
 NEGATIVE_PROMPTS = _parse_prompts(_cfg.get("clip_prompts", "negative", fallback=""))
+import hashlib as _hashlib
+# Raw frame scores depend on the prompt text — key the per-file cache on it.
+PROMPTS_HASH = _hashlib.sha256(
+    ("\n".join(POSITIVE_PROMPTS) + "\n---\n" + "\n".join(NEGATIVE_PROMPTS)).encode()
+).hexdigest()
 
 if not POSITIVE_PROMPTS or not NEGATIVE_PROMPTS:
     print("ERROR: CLIP prompts not configured. Run Settings → Describe this ride.", file=sys.stderr)
@@ -146,6 +151,13 @@ def _ensure_model():
         _model, _, _preprocess = open_clip.create_model_and_transforms(_fallback_name, pretrained=_fallback_pt)
         _tokenizer = open_clip.get_tokenizer(_fallback_name)
         _active_scan_model, _active_scan_pretrained = _fallback_name, _fallback_pt
+    # Record the ACTUALLY loaded backbone — pipeline keys its cache hash on
+    # it, so a temporary fallback cannot masquerade as the requested model.
+    try:
+        (AUTO_DIR / "clip_scan_model.actual").write_text(
+            f"{_active_scan_model}|{_active_scan_pretrained}")
+    except Exception:
+        pass
     _model = _model.to(DEVICE).eval()
     with torch.no_grad():
         pos_tok = _tokenizer(POSITIVE_PROMPTS).to(DEVICE)
@@ -396,8 +408,19 @@ if CLIP_SCAN_PHASE == "reselect":
             print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: no cached raw scores — skipping")
             continue
         raw_data   = _json.loads(raw_path.read_text())
+        # Raw cache written under different sampling/prompts is not reusable.
+        if (raw_data.get("interval") not in (None, INTERVAL_SEC)
+                or (raw_data.get("prompts") or PROMPTS_HASH) != PROMPTS_HASH):
+            print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: raw cache stale (interval/prompts) — skipping")
+            continue
         raw_scores = raw_data["scores"]
         timestamps = raw_data["timestamps"]
+        if not raw_scores:
+            # Short/empty file — keep coverage complete with empty peaks.
+            (_peaks_dir / f"{sf.stem}.json").write_text(
+                _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC,
+                             "interval": INTERVAL_SEC, "peaks": []}))
+            continue
         cam = next((c for c in CAMERAS if f"/{c}/" in str(sf)), CAMERAS[0] if CAMERAS else "")
         is_main = (cam == AUDIO_CAM or not CAMERAS)
         for old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
@@ -408,6 +431,11 @@ if CLIP_SCAN_PHASE == "reselect":
         peak_idxs  = _find_peaks(smoothed, min_gap_frames, SCORE_FLOOR)
         if not peak_idxs:
             print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: no peaks")
+            # Keep the coverage complete: an explicit empty-peaks entry.
+            _peaks_dir.mkdir(parents=True, exist_ok=True)
+            (_peaks_dir / f"{sf.stem}.json").write_text(
+                _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC,
+                             "interval": INTERVAL_SEC, "peaks": []}))
             continue
         _peaks_list = []
         for i, peak_i in enumerate(peak_idxs, 1):
@@ -493,7 +521,10 @@ if CLIP_SCAN_PHASE == "all":
         if _raw_path.exists():
             try:
                 _rd = _json.loads(_raw_path.read_text())
-                if _rd.get("interval") == INTERVAL_SEC and _rd.get("scores"):
+                # Legacy files without the prompts field stay reusable; a
+                # mismatching hash means the scores answer different prompts.
+                if (_rd.get("interval") == INTERVAL_SEC and _rd.get("scores")
+                        and (_rd.get("prompts") or PROMPTS_HASH) == PROMPTS_HASH):
                     _rs = _rd["scores"]
                     _ts = _rd.get("timestamps", [i * INTERVAL_SEC for i in range(len(_rs))])
                     print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: scores cached — re-picking peaks")
@@ -545,6 +576,16 @@ if CLIP_SCAN_PHASE == "all":
         dur = _probe_duration(sf)
         if dur < INTERVAL_SEC:
             print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: too short ({dur:.1f}s), skipped")
+            # Write empty cache entries so this file counts as COVERED — one
+            # short GoPro fragment must not force full "all" rescans forever.
+            _raw_scores_dir.mkdir(parents=True, exist_ok=True)
+            (_raw_scores_dir / f"{sf.stem}.json").write_text(
+                _json.dumps({"interval": INTERVAL_SEC, "prompts": PROMPTS_HASH,
+                             "timestamps": [], "scores": []}))
+            _peaks_dir.mkdir(parents=True, exist_ok=True)
+            (_peaks_dir / f"{sf.stem}.json").write_text(
+                _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC,
+                             "interval": INTERVAL_SEC, "peaks": []}))
             continue
 
         n_frames_expected = max(1, int(dur / INTERVAL_SEC))
@@ -565,7 +606,8 @@ if CLIP_SCAN_PHASE == "all":
             # Save raw scores for future reselect
             _timestamps = [i * INTERVAL_SEC for i in range(len(raw_scores))]
             (_raw_scores_dir / f"{sf.stem}.json").write_text(
-                _json.dumps({"interval": INTERVAL_SEC, "timestamps": _timestamps, "scores": raw_scores})
+                _json.dumps({"interval": INTERVAL_SEC, "prompts": PROMPTS_HASH,
+                             "timestamps": _timestamps, "scores": raw_scores})
             )
 
             # GPS excitement boost (optional — only when gps_weight > 0 and GPS track found)
@@ -716,7 +758,42 @@ if all_clips:
             _active_scan_model == "ViT-L-14" and
             _active_scan_pretrained == "openai"
         )
-        if _use_native_aesthetic:
+        # Aesthetic Predictor V2.5 (SigLIP-based, broader domain coverage) is
+        # preferred over the 2022 LAION MLP whenever a separate pass is needed
+        # anyway (non-ViT-L backbones). Optional dependency — silently falls
+        # back to the LAION path when not installed.
+        _v25_vals = None
+        if not _use_native_aesthetic:
+            try:
+                from aesthetic_predictor_v2_5 import convert_v2_5_from_siglip
+                print(f"  Aesthetic: predictor V2.5 (SigLIP) on {len(stems)} peak frames")
+                _v25, _v25_prep = convert_v2_5_from_siglip(
+                    low_cpu_mem_usage=True, trust_remote_code=True)
+                _v25 = _v25.to(DEVICE).eval()
+                _vals: list[float] = []
+                for _i in range(0, len(stems), BATCH_SIZE):
+                    _pils = []
+                    for stem in stems[_i:_i + BATCH_SIZE]:
+                        try:
+                            _pils.append(Image.open(frames_dir / f"{stem}_f0.jpg").convert("RGB"))
+                        except Exception:
+                            _pils.append(Image.new("RGB", (224, 224)))
+                    _px = _v25_prep(images=_pils, return_tensors="pt").pixel_values.to(DEVICE)
+                    with torch.no_grad():
+                        _out = _v25(_px).logits.squeeze(-1).float().cpu().tolist()
+                    _vals.extend(_out if isinstance(_out, list) else [_out])
+                del _v25
+                if DEVICE == "cuda":
+                    torch.cuda.empty_cache()
+                _v25_vals = _vals
+            except ImportError:
+                pass
+            except Exception as _v25e:
+                print(f"  Aesthetic V2.5 failed ({_v25e}) — ViT-L fallback")
+
+        if _v25_vals is not None:
+            aes_vals = _v25_vals
+        elif _use_native_aesthetic:
             emb_t = torch.tensor(
                 np.array([path_to_emb.get(str(frames_dir / f"{s}_f0.jpg"),
                           np.zeros(768, dtype=np.float32)) for s in stems]),
@@ -746,9 +823,10 @@ if all_clips:
             if DEVICE == "cuda":
                 torch.cuda.empty_cache()
             emb_t = torch.cat(_aes_parts).to(DEVICE)
-        emb_t = emb_t / emb_t.norm(dim=-1, keepdim=True)
-        with torch.no_grad():
-            aes_vals = aes(emb_t).squeeze(-1).cpu().tolist()
+        if _v25_vals is None:
+            emb_t = emb_t / emb_t.norm(dim=-1, keepdim=True)
+            with torch.no_grad():
+                aes_vals = aes(emb_t).squeeze(-1).cpu().tolist()
         for clip, av in zip(all_clips, aes_vals):
             clip["aesthetic_score"] = round(av, 4)
         print(f"Aesthetic: {min(aes_vals):.2f}–{max(aes_vals):.2f}  mean={sum(aes_vals)/len(aes_vals):.2f}")

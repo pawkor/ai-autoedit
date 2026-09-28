@@ -92,6 +92,7 @@ _JOB_CONFIG_MAP = {
     "beats_fast":          ("music_driven", "beats_fast"),
     "beats_mid":           ("music_driven", "beats_mid"),
     "beats_slow":          ("music_driven", "beats_slow"),
+    "adjacent_time_gap_sec": ("music_driven", "adjacent_time_gap_sec"),
     "cam_pattern":         ("music_driven", "cam_pattern"),
     "gps_weight":               ("scene_selection", "gps_weight"),
     "gps_altitude_threshold_m": ("scene_selection", "gps_altitude_threshold_m"),
@@ -187,6 +188,7 @@ def read_job_config(work_dir: Path) -> dict:
                 elif field in ("threshold", "max_scene", "per_file", "target_minutes", "sd_threshold",
                                "clip_scan_interval", "clip_scan_clip_dur", "clip_scan_min_gap",
                                "beats_fast", "beats_mid", "beats_slow",
+                               "adjacent_time_gap_sec",
                                "gps_weight", "gps_altitude_threshold_m"):
                     result[field] = float(raw.rstrip('s').strip())
                 elif field == "cameras":
@@ -277,7 +279,12 @@ def save_job_config(work_dir: Path, params: dict):
         if field not in params:
             continue
         v = params.get(field)
-        if v is None or v == "" or v == []:
+        if v is None:
+            # None means "not provided" (Pydantic defaults, job.params) — keep
+            # the existing config value. Explicit clearing uses "" (the PUT
+            # endpoint maps incoming nulls to "" before calling us).
+            continue
+        if v == "" or v == []:
             updates.setdefault(section, {})[key] = ""
             continue
         if isinstance(v, list):
@@ -386,6 +393,8 @@ class JobParams(BaseModel):
     title:        Optional[str]   = None
     cameras:      Optional[list[str]] = None
     cam_offsets:  Optional[dict] = None
+    cam_crop_16x9: Optional[dict] = None
+    cam_no_trim:   Optional[dict] = None
     cam_a:        Optional[str]   = None
     cam_b:        Optional[str]   = None
     no_intro:     bool = False
@@ -537,6 +546,13 @@ async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> b
         await proc.wait()
         return proc.returncode == 0
     except asyncio.CancelledError:
+        # In a batch only slot 0 lands on job.process — every make_shorts
+        # subprocess must still die with its own session on cancel.
+        try:
+            if proc.returncode is None:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
         raise
     except Exception as exc:
         msg = f"{prefix}ERROR: {exc}"
@@ -553,6 +569,7 @@ async def _run_shorts(job: Job, count: int = 1, parallel: bool = False):
     """
     import pipeline as _pipeline
     async with job._shorts_lock:
+        _shorts_cancelled = False
         job.shorts_running = True
         if not parallel:
             job.status = "running"
@@ -612,6 +629,7 @@ async def _run_shorts(job: Job, count: int = 1, parallel: bool = False):
             if not parallel:
                 job.status = "killed"
                 job.phase  = "failed"
+            _shorts_cancelled = True
         except Exception as exc:
             job.log.append(f"ERROR: {exc}")
             if not parallel:
@@ -631,6 +649,10 @@ async def _run_shorts(job: Job, count: int = 1, parallel: bool = False):
         await job.broadcast({"type": "shorts_status", "running": False, "status": shorts_status})
         if not parallel:
             await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
+        if _shorts_cancelled:
+            # Propagate so a chained task (render queued after shorts) never
+            # starts on a killed job — same contract as _run_job.
+            raise asyncio.CancelledError()
 
 
 # ── Result helpers ─────────────────────────────────────────────────────────────
@@ -820,10 +842,17 @@ async def rerun_job(job_id: str, params: JobParams):
         "music_dir", "selected_track", "music_file", "music_files",
         "shorts_music_dir", "shorts_music_dirs",
         "cc_brightness", "cc_gamma", "cc_contrast", "cc_saturation", "cc_temperature",
-        "description", "cam_no_trim",
+        "description",
     )
     for _k in _preserve_rerun:
         if not d.get(_k) and job.params.get(_k):
+            d[_k] = job.params[_k]
+    # cam_no_trim / cam_crop_16x9: the UI sends the FULL 0/1 map on every
+    # Analyze, so an explicit value (even all-zeros) wins; only a missing key
+    # (None — legacy client) falls back to the previous params. Restoring on
+    # falsy made it impossible to ever DISABLE no-trim.
+    for _k in ("cam_no_trim", "cam_crop_16x9"):
+        if d.get(_k) is None and job.params.get(_k) is not None:
             d[_k] = job.params[_k]
     job.params         = d
     job.log            = _LogList(JOBS_DIR / f"{job.id}.log")
@@ -1114,7 +1143,9 @@ async def _preview_sequence_inner(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
-    if job.status == "running":
+    if job.status in ("running", "queued"):
+        # A queued render would race the dry-run for preview_sequence.json,
+        # and its progress socket would be hijacked by the Build follow-socket.
         raise HTTPException(409, "Job is running — wait for it to finish")
 
     auto_dir = job.auto_dir()
@@ -1169,7 +1200,7 @@ async def _preview_sequence_inner(job_id: str):
 
     # Write photo_selection.json so dry-run can weave photo slots
     _sel_photos = job.params.get("selected_photos") or []
-    _photo_sel_path = Path(job.params["work_dir"]) / "_autoframe" / "photo_selection.json"
+    _photo_sel_path = job.auto_dir() / "photo_selection.json"
     _photo_sel_path.parent.mkdir(parents=True, exist_ok=True)
     _photo_sel_path.write_text(json.dumps({"photos": _sel_photos}))
 
@@ -1190,6 +1221,7 @@ async def _preview_sequence_inner(job_id: str):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(SCRIPT_DIR),
+            start_new_session=True,
         )
         await job.broadcast({"type": "status", "status": "running", "phase": "timeline"})
         job.log.append("── Build Timeline ───────────────────────")
@@ -1227,6 +1259,29 @@ async def _preview_sequence_inner(job_id: str):
         await job.broadcast({"type": "log", "line": "ERROR: Build Timeline timed out (>180s)"})
         await job.broadcast({"type": "status", "status": "failed", "phase": "timeline"})
         raise HTTPException(504, "Dry-run timed out (>180s)")
+    except HTTPException:
+        raise
+    except BaseException:
+        # Client disconnect / shutdown / decode error — the dry-run subprocess
+        # (own session, may have ffprobe children) must not be orphaned, and
+        # the follow-socket needs a terminal status.
+        if proc.returncode is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                await proc.wait()
+            except Exception:
+                pass
+        try:
+            await job.broadcast({"type": "status", "status": "failed", "phase": "timeline"})
+        except Exception:
+            pass
+        raise
 
     if not seq_path.exists():
         await job.broadcast({"type": "status", "status": "failed", "phase": "timeline"})
@@ -1274,7 +1329,7 @@ async def preview_render(job_id: str):
         job.params.get("music_file") or
         data.get("music", "")
     )
-    music_ss = sequence[0].get("music_start", 0.0)
+    music_ss = float(data.get("music_ss") or sequence[0].get("music_start", 0.0))
 
     output = auto_dir / "preview_draft.mp4"
     concat_path = auto_dir / "preview_concat.txt"
@@ -1352,7 +1407,7 @@ def _build_preview_inputs(job, max_clips: int = 0) -> dict:
         _cands = [f for f in Path(music_path_str).iterdir()
                   if f.suffix.lower() in (".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg")]
         music_path_str = str(_rndp.choice(_cands)) if _cands else ""
-    music_ss = float(sequence[0].get("music_start", 0.0))
+    music_ss = float(data.get("music_ss") or sequence[0].get("music_start", 0.0))
 
     valid_slots: list[tuple] = []
     for slot in sequence:
@@ -1519,8 +1574,10 @@ async def serve_preview_hls(job_id: str, filename: str):
     if filename.endswith(".m3u8"):
         return _FR2(str(p), media_type="application/vnd.apple.mpegurl",
                     headers={"Cache-Control": "no-store, no-cache"})
+    # Segment names (seg%03d.ts) are reused after every rebuild — caching
+    # them serves stale video in Safari/WKWebView (no nginx in that path).
     return _FR2(str(p), media_type="video/mp2t",
-                headers={"Cache-Control": "max-age=3600"})
+                headers={"Cache-Control": "no-store, no-cache"})
 
 
 @router.get("/api/jobs/{job_id}/preview-stream")
@@ -1554,7 +1611,7 @@ async def preview_stream(job_id: str):
         job.params.get("music_file") or
         data.get("music", "")
     )
-    music_ss = float(sequence[0].get("music_start", 0.0))
+    music_ss = float(data.get("music_ss") or sequence[0].get("music_start", 0.0))
     has_music = bool(music_path_str and Path(music_path_str).exists())
 
     # If any camera has 4:3→16:9 crop enabled, force 16:9 output with center crop.
@@ -1758,7 +1815,7 @@ async def render_music_driven(job_id: str, data: dict = Body(default={})):
 
                 # Write photo_selection.json so render can weave photo slots
                 _sel_photos = job.params.get("selected_photos") or []
-                _photo_sel_path = Path(job.params["work_dir"]) / "_autoframe" / "photo_selection.json"
+                _photo_sel_path = job.auto_dir() / "photo_selection.json"
                 _photo_sel_path.parent.mkdir(parents=True, exist_ok=True)
                 _photo_sel_path.write_text(json.dumps({"photos": _sel_photos}))
 
@@ -1973,13 +2030,23 @@ async def dequeue_job(job_id: str):
         raise HTTPException(404)
     if job.status != "queued":
         raise HTTPException(409, "Job is not queued")
+    _was_chain = bool(getattr(job._task, "_chained_after", None)) if job._task else False
     if job._task and not job._task.done():
+        if _was_chain:
+            # Dequeue removes only the QUEUED follow-up; the analysis that is
+            # still running must survive the chain's cancellation.
+            job._task._dequeue_only = True
         job._task.cancel()
-    job.status = "failed"
-    job.ended_at = time.time()
-    job.log.append("[dequeued by user]")
-    job.save()
-    await job.broadcast({"type": "status", "status": "failed", "phase": job.phase})
+    if _was_chain:
+        job.log.append("[queued render dequeued — current task continues]")
+        job.save()
+        await job.broadcast({"type": "log", "line": "[queued render dequeued]"})
+    else:
+        job.status = "failed"
+        job.ended_at = time.time()
+        job.log.append("[dequeued by user]")
+        job.save()
+        await job.broadcast({"type": "status", "status": "failed", "phase": job.phase})
     return {"ok": True}
 
 

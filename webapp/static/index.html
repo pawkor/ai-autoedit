@@ -15,7 +15,7 @@
     <aside id="m-sidebar">
       <div class="m-sidebar-header">
         <span data-i18n="m.projects">Projects</span>
-        <button class="m-btn m-btn-ghost m-btn-sm" onclick="openProjectModal()"
+        <button class="m-btn m-btn-ghost m-btn-sm" onclick="openProjectModal('new')"
                 data-i18n-title="m.title_new_project" title="New project"
                 style="padding:1px 7px;font-size:14px;line-height:1">+</button>
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="openAppSettingsModal()"
@@ -313,7 +313,7 @@
           <input id="m-analyze-dir" class="m-input" type="text"
                  data-i18n-ph="m.ph_project_dir" placeholder="Project directory…"
                  onblur="analyzeRefreshCams(this.value.trim())">
-          <button class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeToggleBrowser()"
+          <button id="m-analyze-browse-btn" class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeToggleBrowser()"
                   data-i18n-title="m.title_browse_dir" title="Browse project directory">📁</button>
         </div>
         <div id="m-analyze-browser" style="display:none">
@@ -339,7 +339,7 @@
         <div class="m-modal-dir" style="margin-top:4px">
           <input id="m-analyze-photos-dir" class="m-input" type="text"
                  data-i18n-ph="m.ph_photos_dir" placeholder="Photos directory (optional)…">
-          <button class="m-btn m-btn-ghost m-btn-sm" onclick="openPhotoBrowser()"
+          <button id="m-analyze-photos-btn" class="m-btn m-btn-ghost m-btn-sm" onclick="openPhotoBrowser()"
                   data-i18n-title="m.title_browse_photos" title="Browse photos directory">🖼</button>
         </div>
 
@@ -518,6 +518,13 @@
             <input id="m-settings-beats-slow" class="m-input" type="number"
                    min="1" max="16" step="1" style="width:46px" placeholder="6">
           </span>
+          <span class="m-section-meta" style="margin:0 4px 0 10px"
+                data-i18n="m.lbl_adj_gap" data-i18n-title="m.title_adj_gap"
+                title="Minimum capture-time jump between consecutive shots (seconds); 0 = off">adj. gap</span>
+          <input id="m-settings-adjacent-gap" class="m-input" type="number"
+                 min="0" max="3600" step="10" style="width:60px" placeholder="180"
+                 data-i18n-title="m.title_adj_gap"
+                 title="Minimum capture-time jump between consecutive shots (seconds); 0 = off">
         </div>
         <div class="m-field-help" data-i18n-help="m.help.beats_shot"></div>
         </div>
@@ -536,7 +543,7 @@
       </div>
       <div class="m-modal-footer">
         <span id="m-analyze-status" class="m-section-meta"></span>
-        <button class="m-btn m-btn-ghost" onclick="saveProjectModal()"
+        <button class="m-btn m-btn-ghost" id="m-analyze-save-btn" onclick="saveProjectModal()"
                 style="margin-left:auto"
                 data-i18n="m.btn_save_project">Save</button>
         <button class="m-btn m-btn-blue" id="m-analyze-btn"

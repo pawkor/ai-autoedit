@@ -3,27 +3,104 @@
 // ── Project modal state ───────────────────────────────────────────────────────
 let _analyzeBrowserOpen = false;
 let _analyzeSubdirs = [];
+let _projectModalMode = 'edit';   // 'edit' = settings of current project, 'new' = blank form
+let _projectModalGen = 0;         // bumped on every open — stale async saves must not touch UI
+let _projectModalPrefillOk = false; // edit-mode saves allowed only after a successful prefill
+
+function _resetProjectModalFields() {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('m-analyze-dir', '');
+  set('m-analyze-positive', '');
+  set('m-analyze-negative', '');
+  set('m-analyze-description', '');
+  set('m-analyze-clip-dur', 6);
+  set('m-analyze-interval', 3);
+  set('m-analyze-min-gap', 15);
+  const dm = document.getElementById('m-analyze-detect-method');
+  if (dm) { dm.value = 'clip-first'; if (typeof _applyDetectMethod === 'function') _applyDetectMethod('clip-first'); }
+  const sc = document.getElementById('m-analyze-score-all');
+  if (sc) sc.checked = true;
+  const camList = document.getElementById('m-analyze-cam-list');
+  if (camList) camList.innerHTML = '';
+  ['m-settings-title', 'm-settings-intro-card', 'm-settings-cam-pattern',
+   'm-settings-beats-fast', 'm-settings-beats-mid', 'm-settings-beats-slow',
+   'm-settings-shorts-music', 'm-analyze-photos-dir',
+   'm-settings-gps-weight', 'm-settings-gps-alt-threshold',
+   'm-settings-adjacent-gap'].forEach(id => set(id, ''));
+  const bm = document.getElementById('m-settings-beats-method');
+  if (bm) bm.value = 'segments';
+  const tm = document.getElementById('m-settings-timeline-method');
+  if (tm) { tm.value = 'music-driven'; if (typeof _applyTimelineMethod === 'function') _applyTimelineMethod('music-driven'); }
+}
+
+// The settings fields are shared with the live Render/Build controls of the
+// open project. After a 'new' form is abandoned, restore them so Render does
+// not pick up values typed for the never-created project.
+async function _restoreProjectSettingsFields() {
+  if (typeof _jobId === 'undefined' || !_jobId) return;
+  const job = await window._modernApi.get(`/api/jobs/${_jobId}`).catch(() => null);
+  const wd = job?.params?.work_dir;
+  if (!wd) return;
+  const cfg = await window._modernApi.get(`/api/job-config?dir=${encodeURIComponent(wd)}`).catch(() => null);
+  if (!cfg) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+  set('m-settings-cam-pattern', cfg.cam_pattern ?? '');
+  const bm2 = document.getElementById('m-settings-beats-method');
+  if (bm2 && cfg.beats_method) bm2.value = cfg.beats_method;
+  const tm2 = document.getElementById('m-settings-timeline-method');
+  const _tmv = cfg.ui_timeline_method ?? 'music-driven';
+  if (tm2) { tm2.value = _tmv; if (typeof _applyTimelineMethod === 'function') _applyTimelineMethod(_tmv); }
+}
 
 // ── Open / close ──────────────────────────────────────────────────────────────
-async function openProjectModal() {
+async function openProjectModal(mode = 'edit') {
   const modal = document.getElementById('m-project-modal');
   if (!modal) return;
+  // No open project = nothing to edit — behave as a blank new-project form.
+  const _hasJob = typeof _jobId !== 'undefined' && !!_jobId;
+  _projectModalMode = (mode === 'new' || !_hasJob) ? 'new' : 'edit';
+  _projectModalGen++;
   const _helpOn = localStorage.getItem('projectHelp') === '1';
   modal.classList.toggle('show-help', _helpOn);
   const _hb = document.getElementById('m-help-btn');
   if (_hb) _hb.classList.toggle('active', _helpOn);
   document.getElementById('m-analyze-status').textContent = '';
   document.getElementById('m-analyze-btn').disabled = false;
+  const _saveBtn0 = document.getElementById('m-analyze-save-btn');
+  if (_saveBtn0) _saveBtn0.disabled = false;
   _analyzeSubdirs = [];
 
-  if (typeof _jobId !== 'undefined' && _jobId) {
+  // Always start from a clean form — stale values from the previous open
+  // must never leak into another project.
+  _resetProjectModalFields();
+
+  // In edit mode the directory is fixed to the open project: a changed dir
+  // combined with per-job saves is exactly the split-brain overwrite bug.
+  const _dirEl = document.getElementById('m-analyze-dir');
+  const _browseBtn = document.getElementById('m-analyze-browse-btn');
+  if (_dirEl) _dirEl.readOnly = _projectModalMode === 'edit';
+  if (_browseBtn) _browseBtn.disabled = _projectModalMode === 'edit';
+  // Photo browser operates on the OPEN project (_jobId) — in 'new' mode it
+  // would silently save selections into the previous project.
+  const _photosBtn = document.getElementById('m-analyze-photos-btn');
+  if (_photosBtn) _photosBtn.disabled = _projectModalMode === 'new';
+  const _titleEl = modal.querySelector('.m-modal-title');
+  if (_titleEl) _titleEl.textContent = _projectModalMode === 'new' ? '+ New project' : '⚙ Project';
+
+  // New mode has nothing to prefill; edit mode may save only after prefill.
+  _projectModalPrefillOk = _projectModalMode === 'new';
+  if (_projectModalMode === 'edit' && typeof _jobId !== 'undefined' && _jobId) {
+    const _pgen = _projectModalGen;
     const job = await window._modernApi.get(`/api/jobs/${_jobId}`);
+    // A newer open owns the form now — a late prefill must not write into it.
+    if (_pgen !== _projectModalGen) return;
     if (job?.params?.work_dir) {
       const wd = job.params.work_dir;
       document.getElementById('m-analyze-dir').value = wd;
       const cfg = await window._modernApi.get(
         `/api/job-config?dir=${encodeURIComponent(wd)}`
       );
+      if (_pgen !== _projectModalGen) return;
       if (cfg) {
         document.getElementById('m-analyze-clip-dur').value     = cfg.clip_scan_clip_dur ?? 6;
         const _dm = (cfg.clip_first !== false) ? 'clip-first' : 'traditional';
@@ -40,6 +117,7 @@ async function openProjectModal() {
       const scoreEl = document.getElementById('m-analyze-score-all');
       if (scoreEl) scoreEl.checked = job.params.score_all_cams ?? true;
       _analyzeSubdirs = await _fetchAnalyzeSubdirs(wd);
+      if (_pgen !== _projectModalGen) return;
       const camList = document.getElementById('m-analyze-cam-list');
       camList.innerHTML = '';
       const cams = job.params.cameras
@@ -66,9 +144,13 @@ async function openProjectModal() {
       set('m-analyze-photos-dir',         cfg?.photos_dir || (wd + '/photos'));
       set('m-settings-gps-weight',        cfg?.gps_weight                 ?? '');
       set('m-settings-gps-alt-threshold', cfg?.gps_altitude_threshold_m   ?? '');
+      set('m-settings-adjacent-gap',      cfg?.adjacent_time_gap_sec      ?? '');
       const _tm = cfg?.ui_timeline_method ?? 'music-driven';
       const _tmEl = document.getElementById('m-settings-timeline-method');
       if (_tmEl) { _tmEl.value = _tm; _applyTimelineMethod(_tm); }
+      // Saving with an empty form after a failed prefill would wipe the
+      // project's config — allow edit-mode saves only when cfg loaded.
+      _projectModalPrefillOk = !!cfg;
     }
   }
   modal.style.display = 'flex';
@@ -78,7 +160,10 @@ window.openAnalyzeModal  = openProjectModal;
 window.openSettingsModal = openProjectModal;
 
 async function closeProjectModal() {
-  await saveProjectModal();
+  // 'new' mode saves nothing on close — the project config is written only
+  // by Analyze (runAnalyze) once the user actually creates it.
+  if (_projectModalMode === 'edit') await saveProjectModal();
+  else _restoreProjectSettingsFields();   // shared fields back to the open project
   document.getElementById('m-project-modal').style.display = 'none';
   _closeBrowser();
 }
@@ -208,6 +293,26 @@ async function _selectBrowserPath(path) {
   camList.innerHTML = '';
   for (const cam of _analyzeSubdirs.slice(0, 2))
     _appendAnalyzeCamRow(camList, cam, _analyzeSubdirs);
+  // Re-adding a previously deleted project: its config.ini still holds the
+  // prompts/params — prefill instead of overwriting them with blanks on Save.
+  if (_projectModalMode === 'new') {
+    const cfg = await window._modernApi.get(
+      `/api/job-config?dir=${encodeURIComponent(path)}`).catch(() => null);
+    if (cfg && document.getElementById('m-analyze-dir')?.value.trim() === path) {
+      const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') el.value = v; };
+      set('m-analyze-positive',    cfg.positive);
+      set('m-analyze-negative',    cfg.negative);
+      set('m-analyze-description', cfg.description);
+      set('m-analyze-clip-dur',    cfg.clip_scan_clip_dur);
+      set('m-analyze-interval',    cfg.clip_scan_interval);
+      set('m-analyze-min-gap',     cfg.clip_scan_min_gap);
+      const _tparts = (cfg.title || '').split('\n');
+      set('m-settings-title',      _tparts[0]);
+      set('m-settings-intro-card', _tparts.slice(1).join('\n'));
+      set('m-analyze-photos-dir',  cfg.photos_dir);
+      set('m-settings-cam-pattern', cfg.cam_pattern);
+    }
+  }
 }
 
 async function _fetchAnalyzeSubdirs(dir) {
@@ -392,13 +497,10 @@ async function _autoSuggestOnDirSelect(dir, cams) {
   }
 }
 
-// ── Run analyze ───────────────────────────────────────────────────────────────
-async function runAnalyze() {
-  const dir = document.getElementById('m-analyze-dir').value.trim();
-  if (!dir) { alert('Select a project directory first.'); return; }
-
-  const camRows = [...document.getElementById('m-analyze-cam-list')
-    .querySelectorAll('.m-analyze-cam-row')];
+// ── Collect the Source form into job params (shared by Analyze and Save) ────
+function _collectProjectParams(dir) {
+  const camRows = [...(document.getElementById('m-analyze-cam-list')
+    ?.querySelectorAll('.m-analyze-cam-row') || [])];
   const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
   const camOffsets = {};
   const camCrops   = {};
@@ -408,29 +510,27 @@ async function runAnalyze() {
     const off    = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
     const crop   = r.querySelector('.m-cam-crop')?.checked    ?? false;
     const noTrim = r.querySelector('.m-cam-no-trim')?.checked ?? false;
-    if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; if (noTrim) camNoTrim[name] = 1; }
+    // Always send explicit 0/1 for every camera — omitting unchecked ones
+    // left stale `cam = 1` entries in config.ini and made no-trim impossible
+    // to disable via rerun.
+    if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; camNoTrim[name] = noTrim ? 1 : 0; }
   });
   const clipFirst  = document.getElementById('m-analyze-detect-method')?.value !== 'traditional';
-  const clipDur    = parseFloat(document.getElementById('m-analyze-clip-dur').value)     || 6;
+  const clipDur    = parseFloat(document.getElementById('m-analyze-clip-dur')?.value)   || 6;
   const interval   = parseFloat(document.getElementById('m-analyze-interval')?.value)   || 3;
   const minGap     = parseFloat(document.getElementById('m-analyze-min-gap')?.value)    || 15;
   const scoreAll   = document.getElementById('m-analyze-score-all')?.checked ?? true;
-  const positive   = document.getElementById('m-analyze-positive').value.trim() || null;
-  const negative   = document.getElementById('m-analyze-negative').value.trim() || null;
-
-  const btn    = document.getElementById('m-analyze-btn');
-  const status = document.getElementById('m-analyze-status');
-  if (btn)    btn.disabled = true;
-  if (status) status.textContent = 'Starting…';
-
-  const camPattern  = document.getElementById('m-settings-cam-pattern')?.value.trim() || undefined;
-
-  const params = {
+  const positive   = document.getElementById('m-analyze-positive')?.value.trim() || null;
+  const negative   = document.getElementById('m-analyze-negative')?.value.trim() || null;
+  const description = document.getElementById('m-analyze-description')?.value.trim() || null;
+  const camPattern = document.getElementById('m-settings-cam-pattern')?.value.trim() || undefined;
+  return {
     work_dir:              dir,
+    description,
     cameras:               cameras.length ? cameras : null,
     cam_offsets:           Object.keys(camOffsets).length ? camOffsets : null,
     cam_crop_16x9:         Object.keys(camCrops).length  ? camCrops  : null,
-    cam_no_trim:           Object.keys(camNoTrim).length  ? camNoTrim : null,
+    cam_no_trim:           cameras.length ? camNoTrim : null,
     clip_first:            clipFirst,
     clip_scan_clip_dur:    clipDur,
     clip_scan_interval:    interval,
@@ -440,6 +540,27 @@ async function runAnalyze() {
     negative,
     cam_pattern:           camPattern,
   };
+}
+
+// ── Run analyze ───────────────────────────────────────────────────────────────
+async function runAnalyze() {
+  const dir = document.getElementById('m-analyze-dir').value.trim();
+  if (!dir) { alert('Select a project directory first.'); return; }
+
+  const btn    = document.getElementById('m-analyze-btn');
+  const saveBtn = document.getElementById('m-analyze-save-btn');
+  const status = document.getElementById('m-analyze-status');
+  if (btn)     btn.disabled = true;
+  // Save during a starting Analyze would race it into a duplicate draft.
+  if (saveBtn) saveBtn.disabled = true;
+  if (status) status.textContent = 'Starting…';
+
+  const params = _collectProjectParams(dir);
+
+  // Persist the Output/Render block BEFORE starting the analysis so the
+  // pipeline reads the just-typed title/beats/photos_dir from config.ini —
+  // direct Analyze (without Save) must not lose these fields.
+  await _putProjectConfig(dir, _collectOutputConfig());
 
   // Re-use existing job when dir matches current project
   let data = null;
@@ -462,8 +583,9 @@ async function runAnalyze() {
   }
 
   if (!data?.id) {
-    if (btn)    btn.disabled = false;
-    if (status) status.textContent = 'Failed — check server log';
+    if (btn)     btn.disabled = false;
+    if (saveBtn) saveBtn.disabled = false;
+    if (status)  status.textContent = 'Failed — check server log';
     return;
   }
 
@@ -500,36 +622,31 @@ async function saveAnalyzeSettings() {
   ];
 
   const jobId = (typeof _jobId !== 'undefined') ? _jobId : null;
-  if (jobId) {
-    const camRows = [...(document.getElementById('m-analyze-cam-list')
-      ?.querySelectorAll('.m-analyze-cam-row') || [])];
-    const cameras = camRows.map(r => r.querySelector('select')?.value.trim()).filter(Boolean);
-    const camOffsets = {};
-    const camCrops  = {};
-    const camNoTrim = {};
-    camRows.forEach(r => {
-      const name   = r.querySelector('select')?.value.trim();
-      const off    = parseFloat(r.querySelector('.m-cam-offset')?.value) || 0;
-      const crop   = r.querySelector('.m-cam-crop')?.checked    ?? false;
-      const noTrim = r.querySelector('.m-cam-no-trim')?.checked ?? false;
-      if (name) { camOffsets[name] = off; camCrops[name] = crop ? 1 : 0; if (noTrim) camNoTrim[name] = 1; }
-    });
-    if (cameras.length) {
+  // Snapshot cameras BEFORE the await below — no DOM reads after awaits.
+  const _snap = _collectProjectParams(dir);
+  // Per-job saves only when the form's directory IS the open project —
+  // otherwise cameras/prompts would land in a different project (split-brain).
+  const _job = jobId ? await window._modernApi.get(`/api/jobs/${jobId}`).catch(() => null) : null;
+  const _dirMatchesJob = !!(_job && _job.params?.work_dir === dir);
+  if (jobId && _dirMatchesJob) {
+    if (_snap.cameras?.length) {
       saves.push(fetch(`/api/jobs/${jobId}/params`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cameras, cam_offsets: camOffsets, cam_crop_16x9: camCrops, cam_no_trim: Object.keys(camNoTrim).length ? camNoTrim : null }),
+        body: JSON.stringify({
+          cameras:       _snap.cameras,
+          cam_offsets:   _snap.cam_offsets,
+          cam_crop_16x9: _snap.cam_crop_16x9,
+          cam_no_trim:   _snap.cam_no_trim,
+        }),
       }).catch(() => {}));
     }
 
-    const job = await window._modernApi.get(`/api/jobs/${jobId}`).catch(() => null);
-    if (job && job.params?.work_dir === dir) {
-      saves.push(fetch(`/api/jobs/${jobId}/save-prompts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description, positive, negative }),
-      }).catch(() => {}));
-    }
+    saves.push(fetch(`/api/jobs/${jobId}/save-prompts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, positive, negative }),
+    }).catch(() => {}));
   }
 
   await Promise.all(saves);
@@ -572,38 +689,122 @@ async function generateAnalyzePrompts() {
 window.generateAnalyzePrompts = generateAnalyzePrompts;
 
 // ── Unified save (Project modal) ──────────────────────────────────────────────
+// Snapshot the Output/Render/Shorts form block. Taken synchronously BEFORE
+// any await — a delayed save must never read fields of a newer form.
+function _collectOutputConfig() {
+  const _titleLine  = document.getElementById('m-settings-title')?.value.trim() || '';
+  const _cardLine   = document.getElementById('m-settings-intro-card')?.value.trim() || '';
+  const title       = _titleLine ? (_cardLine ? `${_titleLine}\n${_cardLine}` : _titleLine) : null;
+  return {
+    title,
+    shorts_music_dir:      document.getElementById('m-settings-shorts-music')?.value.trim() || null,
+    photos_dir:            document.getElementById('m-analyze-photos-dir')?.value.trim()    || null,
+    cam_pattern:           document.getElementById('m-settings-cam-pattern')?.value.trim()  || '',
+    ui_timeline_method:    document.getElementById('m-settings-timeline-method')?.value || 'music-driven',
+    beats_method:               document.getElementById('m-settings-beats-method')?.value ?? 'segments',
+    beats_fast:                 parseInt(document.getElementById('m-settings-beats-fast')?.value)  || null,
+    beats_mid:                  parseInt(document.getElementById('m-settings-beats-mid')?.value)   || null,
+    beats_slow:                 parseInt(document.getElementById('m-settings-beats-slow')?.value)  || null,
+    gps_weight:                 parseFloat(document.getElementById('m-settings-gps-weight')?.value) || null,
+    gps_altitude_threshold_m:   parseFloat(document.getElementById('m-settings-gps-alt-threshold')?.value) || null,
+    // parseFloat('0')||null would drop an explicit 0 (= disabled) — keep it.
+    adjacent_time_gap_sec:      (document.getElementById('m-settings-adjacent-gap')?.value.trim() === ''
+                                 ? null
+                                 : parseFloat(document.getElementById('m-settings-adjacent-gap').value)),
+  };
+}
+
+// PUT the Output/Render/Shorts settings block into workDir's config.ini.
+function _putProjectConfig(workDir, snap) {
+  return fetch('/api/job-config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ work_dir: workDir, ...(snap || _collectOutputConfig()) }),
+  }).catch(() => null);
+}
+
 async function saveProjectModal() {
+  // New-project mode: Save creates a draft job (idle, no analysis) so the
+  // project shows up in the sidebar immediately; the modal then switches to
+  // edit mode targeting the freshly created project.
+  if (_projectModalMode === 'new') {
+    const status = document.getElementById('m-analyze-status');
+    const dir = document.getElementById('m-analyze-dir')?.value.trim();
+    if (!dir) { if (status) status.textContent = 'Select a project directory first'; return; }
+    // Snapshot EVERYTHING before the first await — a delayed response must
+    // save this form's values, never those of a form opened meanwhile.
+    const gen = _projectModalGen;
+    const srcParams = _collectProjectParams(dir);
+    const outSnap   = _collectOutputConfig();
+    let data = null;
+    try {
+      const r = await fetch('/api/jobs?analyze_only=true&draft=true', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(srcParams),
+      });
+      data = r.ok ? await r.json() : null;
+    } catch { data = null; }
+    if (!data?.id) {
+      if (gen === _projectModalGen && status) status.textContent = '✗ Save failed — check server log';
+      return;
+    }
+    const cfgR = await _putProjectConfig(dir, outSnap);
+    if (typeof refreshProjectList === 'function') refreshProjectList();
+    // UI/mode updates only for the form this save belongs to.
+    if (gen !== _projectModalGen) return;
+    if (typeof openProject === 'function') await openProject(data.id);
+    _projectModalMode = 'edit';
+    _projectModalPrefillOk = true;   // form holds the user's fresh input
+    const _dirEl = document.getElementById('m-analyze-dir');
+    if (_dirEl) _dirEl.readOnly = true;
+    // Normalize the field to the resolved work_dir (typed paths may differ,
+    // e.g. a trailing slash — a mismatch would block every later save).
+    const _nj = await window._modernApi.get(`/api/jobs/${data.id}`).catch(() => null);
+    if (_nj?.params?.work_dir && _dirEl) _dirEl.value = _nj.params.work_dir;
+    const _bb = document.getElementById('m-analyze-browse-btn');
+    if (_bb) _bb.disabled = true;
+    const _t = document.querySelector('#m-project-modal .m-modal-title');
+    if (_t) _t.textContent = '⚙ Project';
+    if (status) {
+      if (cfgR && cfgR.ok) {
+        status.textContent = '✓ Project created';
+        setTimeout(() => { status.textContent = ''; }, 1500);
+      } else {
+        status.textContent = '✗ Project created, output settings not saved — press Save to retry';
+      }
+    }
+    return;
+  }
   if (typeof _jobId === 'undefined' || !_jobId) return;
+  if (!_projectModalPrefillOk) {
+    // Prefill failed (API error / restart) — the form holds blanks, saving
+    // them would erase the project's config.
+    const _st0 = document.getElementById('m-analyze-status');
+    if (_st0) _st0.textContent = '✗ Settings not loaded — reopen ⚙ Project';
+    return;
+  }
+  // Snapshot before any await — same stale-form hazard as in 'new' mode.
+  const gen = _projectModalGen;
+  const outSnap = _collectOutputConfig();
+  const _dirField = document.getElementById('m-analyze-dir')?.value.trim();
+  const status = document.getElementById('m-analyze-status');
   const job = await window._modernApi.get(`/api/jobs/${_jobId}`);
   if (!job?.params?.work_dir) return;
-  const status = document.getElementById('m-analyze-status');
+  // Belt & braces: in edit mode the dir field is read-only, but never write
+  // this project's Output/Render block when the form points elsewhere.
+  if (_dirField && _dirField !== job.params.work_dir) {
+    if (gen === _projectModalGen && status) status.textContent = '✗ Directory mismatch — not saved';
+    return;
+  }
 
   // Analyze settings
   await saveAnalyzeSettings();
 
   // Output / Render / Shorts / Privacy
-  const _titleLine  = document.getElementById('m-settings-title')?.value.trim() || '';
-  const _cardLine   = document.getElementById('m-settings-intro-card')?.value.trim() || '';
-  const title       = _titleLine ? (_cardLine ? `${_titleLine}\n${_cardLine}` : _titleLine) : null;
-  const cfgR = await fetch('/api/job-config', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      work_dir:              job.params.work_dir,
-      title,
-      shorts_music_dir:      document.getElementById('m-settings-shorts-music')?.value.trim() || null,
-      photos_dir:            document.getElementById('m-analyze-photos-dir')?.value.trim()    || null,
-      cam_pattern:           document.getElementById('m-settings-cam-pattern')?.value.trim()  || '',
-      ui_timeline_method:    document.getElementById('m-settings-timeline-method')?.value || 'music-driven',
-      beats_method:               document.getElementById('m-settings-beats-method')?.value ?? 'segments',
-      beats_fast:                 parseInt(document.getElementById('m-settings-beats-fast')?.value)  || null,
-      beats_mid:                  parseInt(document.getElementById('m-settings-beats-mid')?.value)   || null,
-      beats_slow:                 parseInt(document.getElementById('m-settings-beats-slow')?.value)  || null,
-      gps_weight:                 parseFloat(document.getElementById('m-settings-gps-weight')?.value) || null,
-      gps_altitude_threshold_m:   parseFloat(document.getElementById('m-settings-gps-alt-threshold')?.value) || null,
-    }),
-  });
-  if (!cfgR.ok) { if (status) status.textContent = '✗ Save failed'; return; }
+  const cfgR = await _putProjectConfig(job.params.work_dir, outSnap);
+  if (gen !== _projectModalGen) return;   // a newer form owns the UI now
+  if (!cfgR || !cfgR.ok) { if (status) status.textContent = '✗ Save failed'; return; }
   if (status) { status.textContent = '✓ Saved'; setTimeout(() => { status.textContent = ''; }, 1500); }
 }
 window.saveProjectModal = saveProjectModal;

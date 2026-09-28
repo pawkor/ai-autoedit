@@ -248,6 +248,8 @@ def analyze_music(music_path: Path) -> dict:
         except Exception as _bt_err:
             print(f"  [Beat This!] unavailable — falling back ({_bt_err})")
         try:
+            if _beatthis_beats is not None:
+                raise ImportError("Beat This! succeeded — BeatNet not needed")
             from beatnet import BeatNet as _BeatNet
             _bn_out = np.array(
                 _BeatNet(1, mode="offline", inference_model="DBN",
@@ -634,7 +636,8 @@ def build_schedule(
 
 def _apply_high_energy_beat_lock(schedule: list[dict], beat_times: list[float],
                                  max_beats: int = 2,
-                                 energy_threshold: float = 0.65) -> list[dict]:
+                                 energy_threshold: float = 0.65,
+                                 min_sub_dur: float = 0.4) -> list[dict]:
     """Split high-energy slots on the beat grid so strong sections cut densely.
 
     The normal schedule deliberately groups 3–6 beats for calmer sections. In
@@ -658,6 +661,10 @@ def _apply_high_energy_beat_lock(schedule: list[dict], beat_times: list[float],
         i = start_i
         while i < end_i:
             j = min(i + max_beats, end_i)
+            # At high BPM max_beats beats may be shorter than the minimum
+            # shot length — extend by whole beats until the tier minimum.
+            while j < end_i and (beat_times[j] - beat_times[i]) < min_sub_dur:
+                j = min(j + 1, end_i)
             start = float(beat_times[i])
             end = float(beat_times[j]) if j < end_i else float(slot["end"])
             subs.append({**slot, "start": start, "end": end,
@@ -666,7 +673,7 @@ def _apply_high_energy_beat_lock(schedule: list[dict], beat_times: list[float],
         # A too-short tail must be merged into the previous sub-slot, never
         # dropped — a gap in the schedule desyncs every later cut from the
         # music once the clips are concatenated.
-        if len(subs) >= 2 and subs[-1]["duration"] < 0.4:
+        if len(subs) >= 2 and subs[-1]["duration"] < min_sub_dur:
             tail = subs.pop()
             subs[-1]["end"] = tail["end"]
             subs[-1]["duration"] = subs[-1]["end"] - subs[-1]["start"]
@@ -722,13 +729,18 @@ def motion_profile(clip_path: Path, duration: float, ffmpeg_bin: str = "ffmpeg",
 def analyse_clips(autocut_dir: Path, scene_scores: dict,
                   top_percent: float, ffprobe: str,
                   stem_to_camera: dict | None = None,
-                  stem_to_time: dict | None = None) -> list[dict]:
+                  stem_to_time: dict | None = None,
+                  min_keep: int = 0) -> list[dict]:
     """
     Compute motion profiles for the top_percent% of CLIP-scored clips.
     Returns list sorted by CLIP score descending.
+
+    min_keep: lower bound on the candidate pool regardless of top_percent —
+    the caller passes the schedule slot count so the percentage cut can never
+    leave fewer clips than the timeline needs (that would truncate the video).
     """
     sorted_scenes = sorted(scene_scores.items(), key=lambda x: x[1], reverse=True)
-    cutoff     = max(1, int(len(sorted_scenes) * top_percent))
+    cutoff     = max(1, min_keep, int(len(sorted_scenes) * top_percent))
     candidates = list(sorted_scenes[:cutoff])
     print(f"  Motion pass: top {top_percent*100:.0f}% → {len(candidates)}/{len(sorted_scenes)} clips")
 
@@ -753,11 +765,44 @@ def analyse_clips(autocut_dir: Path, scene_scores: dict,
     if _rescued:
         print(f"  Per-source rescue: +{_rescued} clips to ensure {_MIN_PER_SOURCE}/source minimum")
 
+    # Motion of a clip never changes between Builds — cache (peak, level,
+    # duration) keyed by the clip file's mtime+size so a repeat Build skips
+    # every ffprobe/ffmpeg invocation for unchanged clips.
+    _mcache_path = autocut_dir.parent / "motion_cache.json"
+    _mcache: dict = {}
+    try:
+        if _mcache_path.exists():
+            _mcache = _json.loads(_mcache_path.read_text())
+    except Exception:
+        _mcache = {}
+    _mcache_new: dict = {}   # entries computed this run (merged + saved below)
+
     def _analyse_one(item):
         i, (scene, score) = item
         clip_path = autocut_dir / f"{scene}.mp4"
         if not clip_path.exists():
             return None
+        try:
+            _fst = clip_path.stat()
+        except OSError:
+            return None
+        _c = _mcache.get(scene)
+        if (_c and _c.get("mtime") == round(_fst.st_mtime, 3)
+                and _c.get("size") == _fst.st_size):
+            clip_dur, peak_t, motion_lvl = _c["dur"], _c["peak"], _c["lvl"]
+            if clip_dur < 0.5:
+                return None
+            src = _clip_source(scene)
+            return {
+                "scene":          scene,
+                "score":          score,
+                "path":           clip_path,
+                "duration":       clip_dur,
+                "motion_peak":    peak_t,
+                "motion_level":   motion_lvl,
+                "camera":         stem_to_camera.get(src, "unknown") if stem_to_camera else "unknown",
+                "clip_time_norm": stem_to_time.get(src) if stem_to_time else None,
+            }
         try:
             r = subprocess.run(
                 [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
@@ -768,9 +813,13 @@ def analyse_clips(autocut_dir: Path, scene_scores: dict,
         except Exception:
             clip_dur = 0.0
         if clip_dur < 0.5:
+            _mcache_new[scene] = {"mtime": round(_fst.st_mtime, 3), "size": _fst.st_size,
+                                  "dur": clip_dur, "peak": 0.0, "lvl": 0.0}
             return None
         ffmpeg_bin = str(Path(ffprobe).parent / "ffmpeg")
         peak_t, motion_lvl = motion_profile(clip_path, duration=clip_dur, ffmpeg_bin=ffmpeg_bin)
+        _mcache_new[scene] = {"mtime": round(_fst.st_mtime, 3), "size": _fst.st_size,
+                              "dur": clip_dur, "peak": peak_t, "lvl": motion_lvl}
         src = _clip_source(scene)
         return {
             "scene":          scene,
@@ -794,6 +843,19 @@ def analyse_clips(autocut_dir: Path, scene_scores: dict,
                 clips.append(result)
             if done % 25 == 0:
                 print(f"    {done}/{len(candidates)}…")
+    # Persist the motion cache (merge, drop entries for vanished clips).
+    if _mcache_new:
+        _mcache.update(_mcache_new)
+    try:
+        _mcache = {k: v for k, v in _mcache.items()
+                   if (autocut_dir / f"{k}.mp4").exists()}
+        _mcache_path.write_text(_json.dumps(_mcache))
+    except Exception:
+        pass
+    _hits = len(candidates) - len(_mcache_new)
+    if _hits > 0:
+        print(f"  Motion cache: {_hits}/{len(candidates)} clips reused")
+
     # Restore original score order (as_completed is unordered)
     clips.sort(key=lambda c: c["score"], reverse=True)
 
@@ -849,7 +911,8 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 gps_weight: float = 0.0,
                 mood_weight: float = 0.0,
                 temporal_exclusion_sec: float = 15.0,
-                repeat_penalty: float = 0.08) -> list[dict]:
+                repeat_penalty: float = 0.08,
+                adjacent_gap_sec: float = 180.0) -> list[dict]:
     """
     Assign best clip to each slot.
     Scoring per candidate (when chron_weight=0):
@@ -892,6 +955,25 @@ def match_clips(schedule: list[dict], clips: list[dict],
     recent_sources: collections.deque = collections.deque(maxlen=_src_window)
     selected_windows: list[dict] = []
     source_uses: collections.Counter = collections.Counter()
+    _last_pick_t: float | None = None   # capture time of the previous slot's clip
+
+    # Normalise CLIP and mood scores across the pool. Raw cosine similarities
+    # are heavily compressed (e.g. 0.07-0.09), so without this the fixed-scale
+    # terms (chron 0.20, motion 0.30) silently dominate the advertised weights
+    # and the edit degenerates toward pure chronology/motion.
+    def _norm_field(key: str, out: str):
+        vals = [c[key] for c in clips
+                if c.get(key) is not None and c[key] == c[key]]  # nan-safe
+        if not vals:
+            return
+        lo, hi = min(vals), max(vals)
+        span = (hi - lo) or 1e-6
+        for c in clips:
+            v = c.get(key)
+            c[out] = ((v - lo) / span) if (v is not None and v == v) else v
+    _norm_field("score", "_score_n")
+    _norm_field("action_score", "_act_n")
+    _norm_field("scenic_score", "_sce_n")
 
     # Camera selection: explicit pattern (user override) or diversity-cap (default).
     _resolved_pattern = _parse_cam_pattern(cam_pattern, cameras)
@@ -912,7 +994,8 @@ def match_clips(schedule: list[dict], clips: list[dict],
     _consecutive_cam: int = 0
     if temporal_exclusion_sec > 0:
         print(f"  Temporal diversity: exclusion={temporal_exclusion_sec:.1f}s  "
-              f"repeat penalty={repeat_penalty:.2f}")
+              f"repeat penalty={repeat_penalty:.2f}  "
+              f"adjacent gap={adjacent_gap_sec:.0f}s")
 
     for slot in schedule:
         dur    = slot["duration"]
@@ -928,8 +1011,22 @@ def match_clips(schedule: list[dict], clips: list[dict],
         def _pool(relax_dur: bool = False,
                   camera_filter: bool = True,
                   source_filter: bool = True,
-                  temporal_filter: bool = True) -> list[dict]:
+                  temporal_filter: bool = True,
+                  adjacent_filter: bool = True) -> list[dict]:
             min_dur = dur if relax_dur else dur + 0.2
+
+            def _adjacent_ok(c: dict) -> bool:
+                # Consecutive slots must jump in capture time — with flat CLIP
+                # scores the chronological-arc term otherwise degenerates the
+                # edit into a boring file-by-file sequence (chaptered files
+                # from one recording are minutes apart, so the ±15s temporal
+                # exclusion never catches them).
+                if not adjacent_filter or adjacent_gap_sec <= 0 or _last_pick_t is None:
+                    return True
+                c_t = c.get("source_start")
+                if c_t is None:
+                    return True
+                return abs(float(c_t) - float(_last_pick_t)) >= adjacent_gap_sec
 
             def _temporal_ok(c: dict) -> bool:
                 if not temporal_filter or temporal_exclusion_sec <= 0:
@@ -962,6 +1059,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 and c["scene"] not in used
                 and (not source_filter or _clip_source(c["scene"]) not in recent_sources)
                 and _temporal_ok(c)
+                and _adjacent_ok(c)
                 and (not camera_filter or _desired_cam is None
                      or c.get("camera", "unknown") == _desired_cam)
                 and (not camera_filter or _cap_cam is None
@@ -970,16 +1068,20 @@ def match_clips(schedule: list[dict], clips: list[dict],
 
         pool = _pool()
         if not pool: pool = _pool(relax_dur=True)
-        if not pool: pool = _pool(source_filter=False)
-        if not pool: pool = _pool(relax_dur=True, source_filter=False)
-        if not pool: pool = _pool(camera_filter=False)
-        if not pool: pool = _pool(relax_dur=True, camera_filter=False)
+        # Adjacency (min. capture-time jump between neighbours) is the softest
+        # aesthetic constraint — relax it before source/camera/temporal.
+        if not pool: pool = _pool(adjacent_filter=False)
+        if not pool: pool = _pool(relax_dur=True, adjacent_filter=False)
+        if not pool: pool = _pool(source_filter=False, adjacent_filter=False)
+        if not pool: pool = _pool(relax_dur=True, source_filter=False, adjacent_filter=False)
+        if not pool: pool = _pool(camera_filter=False, adjacent_filter=False)
+        if not pool: pool = _pool(relax_dur=True, camera_filter=False, adjacent_filter=False)
         # Temporal diversity is relaxed last.  A full timeline is preferable
         # to an empty slot, but only after camera/source constraints failed.
-        if not pool: pool = _pool(source_filter=False, temporal_filter=False)
-        if not pool: pool = _pool(relax_dur=True, source_filter=False, temporal_filter=False)
-        if not pool: pool = _pool(camera_filter=False, temporal_filter=False)
-        if not pool: pool = _pool(relax_dur=True, camera_filter=False, temporal_filter=False)
+        if not pool: pool = _pool(source_filter=False, temporal_filter=False, adjacent_filter=False)
+        if not pool: pool = _pool(relax_dur=True, source_filter=False, temporal_filter=False, adjacent_filter=False)
+        if not pool: pool = _pool(camera_filter=False, temporal_filter=False, adjacent_filter=False)
+        if not pool: pool = _pool(relax_dur=True, camera_filter=False, temporal_filter=False, adjacent_filter=False)
         if not pool:
             pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in used]
         # Pool exhausted — allow reuse rather than leaving slots empty,
@@ -1018,26 +1120,28 @@ def match_clips(schedule: list[dict], clips: list[dict],
             _gps = c.get("gps_norm", 0.0) * gps_weight * 0.3
             # Mood score: interpolate action↔scenic by slot energy
             # energy=1.0 (chorus/ultra) → action clip; energy=0.0 (verse/slow) → scenic clip
-            _act = c.get("action_score", float("nan"))
-            _sce = c.get("scenic_score", float("nan"))
+            _sc  = c.get("_score_n", c.get("score", 0.0))
+            _act = c.get("_act_n", float("nan"))
+            _sce = c.get("_sce_n", float("nan"))
             _has_mood = mood_weight > 0 and _act == _act and _sce == _sce  # nan-safe
             if _chron_w > 0 and c.get("clip_time_norm") is not None:
                 music_pos   = slot["start"] / total_music_dur
                 chron_match = 1.0 - abs(music_pos - c["clip_time_norm"])
+                _rp = repeat_penalty * min(2, source_uses[_clip_source(c["scene"])])
                 if _has_mood:
                     _mood = energy * _act + (1.0 - energy) * _sce
                     return (_mood * 0.35 + motion_match * 0.25
-                            + chron_match * _chron_w + c["score"] * 0.20 + _gps)
-                return (c["score"] * 0.50 + motion_match * 0.30 + chron_match * _chron_w + _gps)
+                            + chron_match * _chron_w + _sc * 0.20 + _gps - _rp)
+                return (_sc * 0.50 + motion_match * 0.30 + chron_match * _chron_w + _gps - _rp)
             if _has_mood:
                 _mood = energy * _act + (1.0 - energy) * _sce
-                base = _mood * 0.45 + motion_match * 0.30 + c["score"] * 0.25 + _gps
+                base = _mood * 0.45 + motion_match * 0.30 + _sc * 0.25 + _gps
                 return base - repeat_penalty * min(2, source_uses[_clip_source(c["scene"])])
             # Fallback (no mood scores): original formula
             if energy > 0.65:
-                base = c["score"] * 0.45 + motion_match * 0.55 + _gps
+                base = _sc * 0.45 + motion_match * 0.55 + _gps
             else:
-                base = c["score"] * 0.60 + motion_match * 0.40 + _gps
+                base = _sc * 0.60 + motion_match * 0.40 + _gps
             return base - repeat_penalty * min(2, source_uses[_clip_source(c["scene"])])
 
         best = max(pool, key=rank)
@@ -1051,6 +1155,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
             "source": _clip_source(best["scene"]),
             "source_start": best.get("source_start"),
         })
+        _last_pick_t = best.get("source_start")
         _best_cam = best.get("camera", "unknown")
         if _best_cam == _last_cam:
             _consecutive_cam += 1
@@ -1274,7 +1379,7 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
             if out:
                 trimmed.append((out, actual_dur))
             else:
-                print(f"  WARN: trim failed for {edit[i]['scene']}")
+                print(f"  WARN: trim failed for {edit[i].get('scene', edit[i].get('path', '?'))}")
 
         if not trimmed:
             raise RuntimeError("All clip trims failed")
@@ -1462,8 +1567,11 @@ def assemble(
         if _music_dur > 0:
             _no_intro_cfg = _cp.getboolean("job", "no_intro", fallback=False)
             _card_dur_cfg = _cp.getfloat("intro_outro", "duration", fallback=3.0) if not _no_intro_cfg else 0.0
-            _cap_dur = _music_dur - _card_dur_cfg * 2  # reserve intro + outro
-            _cap_dur = max(_cap_dur, _music_dur * 0.9)  # never shave more than 10%
+            # Music is consumed from music_ss, so only the remainder is
+            # available for clips + intro/outro cards.
+            _avail = max(0.0, _music_dur - music_ss)
+            _cap_dur = _avail - _card_dur_cfg * 2  # reserve intro + outro
+            _cap_dur = max(_cap_dur, _avail * 0.9)  # never shave more than 10%
             _accum = 0.0
             _capped = []
             for slot in edit:
@@ -1782,7 +1890,8 @@ def assemble(
         _beat_lock_beats = _cpint("music_driven", "beat_lock_beats", "2")
         _beat_lock_energy = _cpfloat("music_driven", "beat_lock_energy", "0.65")
         schedule = _apply_high_energy_beat_lock(
-            schedule, beat_times, _beat_lock_beats, _beat_lock_energy
+            schedule, beat_times, _beat_lock_beats, _beat_lock_energy,
+            min_sub_dur=_min_ultra
         )
 
     # Reserve intro + outro card time; trim slots that exceed available window.
@@ -1890,6 +1999,41 @@ def assemble(
     # 3. Build clip pool: top clips by score — no threshold cutoff for music-driven.
     # Banned scenes already excluded from _all_sorted.
     needed = len(schedule)
+    # Injected photo clips (-photo-NNN, score 1.0) enter the edit as dedicated
+    # photo SLOTS via photo_selection.json — keeping them in the clip pool
+    # would place every photo twice and crowd out real footage.
+    _all_sorted = [(k, v) for k, v in _all_sorted if not _re.search(r'-photo-\d+$', k)]
+
+    # Visual dedup: peaks of one source often show the same stretch of road
+    # from a different second. Drop near-duplicates (cosine similarity of the
+    # CLIP embeddings within a source) so the pool holds genuinely different
+    # shots instead of five variants of the same straight.
+    _dedup_thr = _cpfloat("music_driven", "dedup_similarity", "0.93")
+    if _dedup_thr > 0:
+        try:
+            _npz = np.load(str(auto_dir / "scene_embeddings.npz"))
+            _emb_map = {n: e for n, e in zip(_npz["names"].tolist(), _npz["embeddings"])}
+            _kept: list = []
+            _kept_by_src: dict[str, list] = {}
+            _dropped = 0
+            for _k, _v in _all_sorted:          # score-descending: keep the best variant
+                _e = _emb_map.get(_k)
+                if _e is None:
+                    _kept.append((_k, _v))
+                    continue
+                _e = _e / (np.linalg.norm(_e) + 1e-9)
+                _srck = _clip_source(_k)
+                if any(float(np.dot(_e, _p)) > _dedup_thr for _p in _kept_by_src.get(_srck, [])):
+                    _dropped += 1
+                    continue
+                _kept_by_src.setdefault(_srck, []).append(_e)
+                _kept.append((_k, _v))
+            if _dropped:
+                print(f"  Dedup: {_dropped} near-duplicate clip(s) removed "
+                      f"(cos>{_dedup_thr:.2f} within source)")
+            _all_sorted = _kept
+        except Exception as _de:
+            print(f"  Dedup skipped: {_de}")
     _pool_size = max(needed * 2, 50)
     scene_scores = dict(_all_sorted[:_pool_size])
     _fallback = [(k, v) for k, v in _all_sorted if k not in scene_scores]
@@ -1950,7 +2094,8 @@ def assemble(
     else:
         clips = analyse_clips(autocut_dir, scene_scores, top_percent, ffprobe,
                               stem_to_camera=stem_to_camera or None,
-                              stem_to_time=stem_to_time or None)
+                              stem_to_time=stem_to_time or None,
+                              min_keep=int(needed * 1.5) + 5)
     if not clips:
         raise RuntimeError("No clips available for motion analysis")
 
@@ -2075,13 +2220,15 @@ def assemble(
     _chron_weight = 0.20 if stem_to_time else 0.0
     _temporal_exclusion = _cpfloat("music_driven", "temporal_exclusion_sec", "15")
     _repeat_penalty = _cpfloat("music_driven", "repeat_penalty", "0.08")
+    _adjacent_gap = _cpfloat("music_driven", "adjacent_time_gap_sec", "180")
     edit = match_clips(schedule, clips, chron_weight=_chron_weight,
                        cam_pattern=_cam_pattern, cam_order=_cam_order,
                        max_consecutive_cam=_max_consecutive_cam,
                        gps_weight=_gps_weight,
                        mood_weight=1.0 if _mood_raw else 0.0,
                        temporal_exclusion_sec=_temporal_exclusion,
-                       repeat_penalty=_repeat_penalty)
+                       repeat_penalty=_repeat_penalty,
+                       adjacent_gap_sec=_adjacent_gap)
     if not edit:
         raise RuntimeError("Clip matching produced no edit")
 
@@ -2100,10 +2247,12 @@ def assemble(
     # 5a. Dry-run: write sequence JSON and exit without encoding
     if dry_run:
         seq = []
-        for e in edit:
+        for _ei, e in enumerate(edit):
             if e.get("type") == "photo":
                 seq.append({
                     "type":       "photo",
+                    # scene is required downstream (render error paths, UI keys)
+                    "scene":      e.get("scene") or f"photo_{_ei}",
                     "path":       e["path"],
                     "duration":   round(e["duration"], 2),
                     "music_start": round(e["music_start"], 2),
@@ -2125,6 +2274,7 @@ def assemble(
                 "clip_score": e.get("clip_score", 0),
                 "clip_ss":    round(e.get("clip_ss", 0), 3),
                 "clip_path":  e.get("clip_path", ""),
+                "camera":     e.get("camera", ""),
                 "music_start": round(e["music_start"], 2),
                 "frame_path": frame_path,
             })

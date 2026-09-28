@@ -169,11 +169,15 @@ async def save_job_prompts(job_id: str, data: dict):
     description = (data.get("description") or "").strip()
     positive    = (data.get("positive")    or "").strip()
     negative    = (data.get("negative")    or "").strip()
+    # Validate BEFORE any write — a 400 must not leave a partial update.
+    _wd = Path(job.params["work_dir"]).resolve()
+    if (positive or negative) and not in_browse_root(_wd):
+        raise HTTPException(400, f"Directory outside browse root: {_wd}")
     if description:
         job.params["description"] = description
         job.save()
     if positive or negative:
-        save_prompts_to_config(Path(job.params["work_dir"]) / "config.ini", positive, negative)
+        save_prompts_to_config(_wd / "config.ini", positive, negative)
     return {"ok": True}
 
 
@@ -181,11 +185,14 @@ async def save_job_prompts(job_id: str, data: dict):
 async def save_prompts(data: dict):
     from webapp.routers.jobs import save_prompts_to_config
     work_dir = data.get("work_dir", "").strip()
-    if not work_dir or not Path(work_dir).is_dir():
+    _wd = Path(work_dir).resolve() if work_dir else None
+    if _wd is None or not in_browse_root(_wd):
+        raise HTTPException(400, f"Directory outside browse root: {work_dir}")
+    if not _wd.is_dir():
         raise HTTPException(400, f"work_dir not found: {work_dir}")
     positive = data.get("positive", "").strip()
     negative = data.get("negative", "").strip()
-    save_prompts_to_config(Path(work_dir) / "config.ini", positive, negative)
+    save_prompts_to_config(_wd / "config.ini", positive, negative)
     return {"ok": True}
 
 
@@ -210,6 +217,9 @@ async def put_job_config(data: dict):
         raise HTTPException(403)
     if not work_dir.is_dir():
         raise HTTPException(400, "work_dir not found")
+    # In a PUT every present key is intentional — null means "clear", which
+    # save_job_config expresses as "" (None there means "keep existing").
+    data = {k: ("" if v is None else v) for k, v in data.items()}
     save_job_config(work_dir, data)
     for job in jobs.values():
         if Path(job.params.get("work_dir", "")).resolve() == work_dir:

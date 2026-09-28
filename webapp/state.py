@@ -276,7 +276,19 @@ class Job:
         return Path(self.params["work_dir"])
 
     def auto_dir(self) -> Path:
-        return self.work_dir() / self.params.get("work_subdir", "_autoframe")
+        # work_subdir must stay inside the project — an absolute path, a
+        # ..-escape or a symlinked target would redirect writes outside
+        # BROWSE_ROOT. resolve() follows symlinks, so the check covers both.
+        base = self.work_dir().resolve()
+        p = (base / str(self.params.get("work_subdir", "_autoframe"))).resolve()
+        if p == base or p.is_relative_to(base):
+            return p
+        # Fall back to the default subdir, re-validated: _autoframe itself
+        # could be a symlink pointing outside the project.
+        fallback = (base / "_autoframe").resolve()
+        if fallback == base or fallback.is_relative_to(base):
+            return fallback
+        raise WorkSubdirEscape(f"work_subdir escapes project directory: {p}")
 
     async def broadcast(self, msg: dict):
         dead = set()
@@ -288,6 +300,10 @@ class Job:
             except Exception:
                 dead.add(ws)
         self.subscribers -= dead
+
+
+class WorkSubdirEscape(ValueError):
+    """work_subdir (or a symlinked _autoframe) points outside the project."""
 
 
 jobs: dict[str, Job] = {}
@@ -448,10 +464,25 @@ def _enqueue_job_task(job: "Job", coro) -> "asyncio.Task":
         async def _chain():
             try:
                 await old
+            except _aio.CancelledError:
+                # Either this chain was cancelled while waiting or the running
+                # task was cancelled — the queued follow-up must not start.
+                # Dequeue sets _dequeue_only: drop the follow-up but let the
+                # currently running task finish.
+                _self = _aio.current_task()
+                if not getattr(_self, "_dequeue_only", False) and not old.done():
+                    old.cancel()
+                    try:
+                        await old
+                    except BaseException:
+                        pass
+                coro.close()
+                raise
             except Exception:
                 pass
             await coro
         task = _aio.create_task(_chain())
+        task._chained_after = old  # marks "queued behind a running task"
     else:
         task = _aio.create_task(coro)
     return task
@@ -469,6 +500,7 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
         await job.broadcast({"type": "status", "status": "running", "phase": job.phase})
         job.save()
 
+        _cancelled = False
         try:
             run_params = {**job.params,
                           "max_detect_workers": int(wcfg("max_detect_workers", str(os.cpu_count() or 4))),
@@ -534,6 +566,7 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
             job.log.append("[job cancelled]")
             job.status = "killed"
             job.phase  = "failed"
+            _cancelled = True
         except RuntimeError as e:
             job.log.append(f"ERROR: {e}")
             job.status = "failed"
@@ -550,3 +583,7 @@ async def _run_job(job: Job, analyze_only: bool = False, selected_track: Optiona
             _prom_job_duration.labels(phase=phase).observe(job.ended_at - job.started_at)
         job.save()
         await job.broadcast({"type": "status", "status": job.status, "phase": job.phase})
+        if _cancelled:
+            # Propagate so a queued chained task (render after analyze) sees
+            # the cancellation instead of starting on a killed job.
+            raise asyncio.CancelledError()

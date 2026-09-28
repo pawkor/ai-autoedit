@@ -64,9 +64,21 @@ async def no_cache_middleware(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
     ext  = path[path.rfind("."):].lower() if "." in path.split("/")[-1] else ""
-    if ext not in {".jpg", ".jpeg", ".png", ".mp4", ".webp"}:
+    # Respect an explicit Cache-Control from the handler — /api/file serves
+    # media via a query-string path (no extension here) and sets its own
+    # public/max-age + ETag; overriding it with no-store killed all caching.
+    if "cache-control" not in response.headers and ext not in {".jpg", ".jpeg", ".png", ".mp4", ".webp"}:
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+from webapp.state import WorkSubdirEscape
+
+
+@app.exception_handler(WorkSubdirEscape)
+async def _work_subdir_escape_handler(request: Request, exc: WorkSubdirEscape):
+    # Raised by Job.auto_dir() from ~30 call sites — a clear 400 beats a 500.
+    return JSONResponse({"detail": str(exc)}, status_code=400)
 
 
 # ── Prometheus metrics endpoint ────────────────────────────────────────────────
@@ -178,7 +190,10 @@ async def job_ws(websocket: WebSocket, job_id: str):
         return
 
     await websocket.accept()
-    for line in job.log:
+    # Follow-mode sockets exist to watch NEW output; replaying thousands of
+    # historical lines delays subscription past the live status broadcasts.
+    _hist = job.log[-300:] if websocket.query_params.get("follow") == "1" else job.log
+    for line in _hist:
         await websocket.send_text(json.dumps({"type": "log", "line": line}))
     await websocket.send_text(json.dumps({"type": "status", "status": job.status, "phase": job.phase}))
     if job.shorts_running:

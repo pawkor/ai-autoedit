@@ -40,11 +40,15 @@ async def serve_file(request: Request, path: str = Query(...), dl: int = Query(0
 
     CHUNK = 2 * 1024 * 1024
 
+    # frames_cc thumbnails are overwritten in place by regenerate-thumbs —
+    # long-lived caching would show stale color-corrected previews. The ETag
+    # (mtime+size) still allows cheap 304 revalidation.
+    _cc = "no-cache" if "frames_cc" in p.parts else "public, max-age=86400"
     base_headers = {
         "Accept-Ranges":  "bytes",
         "ETag":           etag,
         "Last-Modified":  last_mod,
-        "Cache-Control":  "public, max-age=86400",
+        "Cache-Control":  _cc,
     }
     if dl:
         base_headers["Content-Disposition"] = f'attachment; filename="{p.name}"'

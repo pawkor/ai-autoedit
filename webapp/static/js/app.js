@@ -213,6 +213,8 @@ const TRANS = {
       'm.lbl_cam_pattern':'Cam pattern',
       'm.lbl_beats_shot':'Beats/shot',
       'm.lbl_fast':'fast',           'm.lbl_mid':'mid',     'm.lbl_slow':'slow',
+      'm.lbl_adj_gap':'adj. gap',
+      'm.title_adj_gap':'Minimum capture-time jump between consecutive shots (seconds). Prevents back-to-back clips from the same moment of the ride. 0 = off.',
       'm.sec_shorts_cfg':'Shorts',
       'm.lbl_shorts_music':'Music dir',
       'm.ph_shorts_music':'/data/music/shorts…',
@@ -238,7 +240,8 @@ const TRANS = {
         'Examples: ab = strict A/B alternation, aabaab = camera A twice as often, aabb = pairs.',
       'm.help.beats_shot':
         'How many music beats each shot lasts. Auto mode adapts dynamically — quiet intro gets long shots, loud chorus gets fast cuts. ' +
-        'Manual: set a fixed number of beats per shot for each energy level (fast/mid/slow).',
+        'Manual: set a fixed number of beats per shot for each energy level (fast/mid/slow). ' +
+        'Adj. gap: minimum capture-time jump (seconds) between consecutive shots, so neighbouring cuts never come from the same moment of the ride; 0 disables it.',
       'm.help.description':
         'Describe the footage — location, route, road conditions, mood. Used by Claude AI to generate CLIP prompts automatically when you click ✦ Generate prompts.',
       'm.help.prompts':
@@ -516,6 +519,8 @@ const TRANS = {
       'm.lbl_cam_pattern':'Wzorzec kamer',
       'm.lbl_beats_shot':'Uderzenia/ujęcie',
       'm.lbl_fast':'szybki',      'm.lbl_mid':'średni',   'm.lbl_slow':'wolny',
+      'm.lbl_adj_gap':'odstęp',
+      'm.title_adj_gap':'Minimalny skok czasu nagrania między sąsiednimi ujęciami (sekundy). Zapobiega klipom z tego samego momentu jazdy jeden po drugim. 0 = wyłączone.',
       'm.sec_shorts_cfg':'Shorty',
       'm.lbl_shorts_music':'Folder muzyki',
       'm.ph_shorts_music':'/data/music/shorts…',
@@ -541,7 +546,8 @@ const TRANS = {
         'Przykłady: ab = ścisłe przeplatanie A/B, aabaab = kamera A dwa razy częściej, aabb = pary.',
       'm.help.beats_shot':
         'Ile beatów muzycznych trwa jedno ujęcie. Tryb auto dostosowuje dynamicznie — ciche intro = długie ujęcia, głośny refren = szybkie cięcia. ' +
-        'Ręcznie: ustaw stałą liczbę beatów na ujęcie dla każdego poziomu energii (fast/mid/slow).',
+        'Ręcznie: ustaw stałą liczbę beatów na ujęcie dla każdego poziomu energii (fast/mid/slow). ' +
+        'Odstęp: minimalny skok czasu nagrania (sekundy) między sąsiednimi ujęciami — kolejne cięcia nie pochodzą z tego samego momentu jazdy; 0 wyłącza.',
       'm.help.description':
         'Opisz materiał — lokalizację, trasę, warunki, nastrój. Używane przez Claude AI do automatycznego generowania promptów CLIP po kliknięciu ✦ Generuj prompty.',
       'm.help.prompts':
