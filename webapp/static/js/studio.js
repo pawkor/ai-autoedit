@@ -1456,9 +1456,57 @@ function fmtSec(s) {
 }
 
 function enableActions(on) {
-  ['m-btn-rebuild', 'm-btn-preview', 'm-btn-render', 'm-btn-shorts'].forEach(id => {
+  ['m-btn-rebuild', 'm-btn-preview', 'm-btn-render', 'm-btn-shorts',
+   'm-btn-critic', 'm-btn-critic-deep'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = !on; });
 }
+
+// ── VLM critic (advisory; applies at most ONE param per round) ──────────────
+async function criticTimeline(mode = 'quick') {
+  if (!_jobId) return;
+  const jobId = _jobId;
+  const deep = mode === 'deep';
+  const btn = document.getElementById(deep ? 'm-btn-critic-deep' : 'm-btn-critic');
+  const idle = deep ? '🎬 Deep critic' : '🧠 Critic';
+  if (btn) { btn.disabled = true; btn.textContent = deep ? '🎬 Rendering+watching…' : '🧠 Reviewing…'; }
+  let v = null;
+  try {
+    v = await api.post(`/api/jobs/${jobId}/critic?mode=${mode}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = idle; }
+  }
+  if (!v || v._error) { alert('Critic failed: ' + (v?._error || 'check server log')); return; }
+  if (_jobId !== jobId) return;   // project switched during review
+  const meta = document.getElementById('m-timeline-meta');
+  if (meta) meta.textContent = `Critic ${v.score_0_10}/10: ${v.verdict || ''}`;
+  const issues = (v.issues || []).map(i => `[${i.at}] ${i.problem}`).join('\n');
+  const s = v.suggestions || {};
+  // One bounded change per round — the selection pipeline is discontinuous,
+  // multi-knob jumps oscillate. Priority: gap → chron → dedup.
+  let key = null;
+  for (const k of ['adjacent_time_gap_sec', 'chron_weight', 'dedup_similarity'])
+    if (s[k] != null) { key = k; break; }
+  let msg = `Critic ${v.score_0_10}/10 — ${v.verdict || ''}\n\n${issues}`;
+  if (key) {
+    msg += `\n\nSuggestion (${s.comment || ''}):\n  ${key} → ${s[key]}\n\nApply this one change & rebuild?`;
+    if (confirm(msg)) {
+      // Rebuild ONLY after the config write confirmed — rebuilding clears
+      // manual_timeline, so a failed save would lose the current edit for
+      // nothing. Also re-check the project after the await.
+      const r = await fetch('/api/job-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_dir: _workDir, [key]: s[key] }),
+      }).catch(() => null);
+      if (!r || !r.ok) { alert('Saving the suggestion failed — nothing changed.'); return; }
+      if (_jobId !== jobId) return;
+      rebuildTimeline();
+    }
+  } else {
+    alert(msg + '\n\n(no parameter changes suggested)');
+  }
+}
+window.criticTimeline = criticTimeline;
 
 // ── Inline clip preview ───────────────────────────────────────────────────────
 let _activePreviewThumb = null;

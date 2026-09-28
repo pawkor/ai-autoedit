@@ -180,6 +180,14 @@
         <button id="m-btn-rebuild" class="m-btn m-btn-blue m-btn-full" onclick="rebuildTimeline()" disabled
                 data-i18n="m.panel_build" data-i18n-title="m.title_build"
                 title="Build beat-aligned timeline">↺ Build timeline</button>
+        <button id="m-btn-critic" class="m-btn m-btn-ghost m-btn-full" onclick="criticTimeline('quick')" disabled
+                data-i18n="m.panel_critic" data-i18n-title="m.title_critic"
+                title="AI reviews the built timeline and suggests improvements"
+                style="margin-top:4px">🧠 Critic</button>
+        <button id="m-btn-critic-deep" class="m-btn m-btn-ghost m-btn-full" onclick="criticTimeline('deep')" disabled
+                data-i18n="m.panel_critic_deep" data-i18n-title="m.title_critic_deep"
+                title="Renders a 1080p draft and AI watches the actual edit — slower, much deeper verdict"
+                style="margin-top:4px">🎬 Deep critic</button>
       </div>
 
     </aside>
@@ -259,6 +267,9 @@
         <input id="m-music-filter" class="m-input" type="text"
                data-i18n-ph="m.ph_filter_music" placeholder="Filter title…"
                oninput="filterMusicModal()">
+        <button id="m-music-suggest-btn" class="m-btn m-btn-ghost m-btn-sm" onclick="suggestMusic()"
+                data-i18n-title="m.title_suggest_music"
+                title="Rank tracks by fit: duration, footage energy, freshness">✨ Suggest</button>
         <span id="m-music-count" class="m-section-meta"></span>
       </div>
       <div id="m-music-modal-list" class="m-music-modal-list"></div>

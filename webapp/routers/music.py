@@ -21,6 +21,8 @@ from webapp.state import (
     JOBS_DIR,
     in_browse_root,
     _rebuild_tasks,
+    jobs,
+    wcfg,
 )
 
 # ── Used-tracks global index ──────────────────────────────────────────────────
@@ -45,6 +47,98 @@ def record_used_track(track_path: str, project: str, render_name: str, yt_url: s
     _USED_TRACKS_FILE.write_text(json.dumps(index, indent=2))
 
 router = APIRouter()
+
+
+@router.get("/api/jobs/{job_id}/suggest-music")
+async def suggest_music(job_id: str, target_sec: float = 0.0, music_dir: str = ""):
+    """Rank the music index for this job's footage — advisory, explainable.
+    duration fit (asymmetric: too-short is worse than too-long), energy vs
+    footage character (mood columns, weak signal), freshness (uses in OTHER
+    projects penalized with decay). acr_blocked entries are skipped."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    _mdir = (music_dir or job.params.get("music_dir")
+             or wcfg("music_dir", "")).strip()
+    if not _mdir:
+        raise HTTPException(400, "No music_dir configured")
+    _mroot = Path(os.path.expanduser(_mdir)).resolve()
+    if not in_browse_root(_mroot):
+        raise HTTPException(400, f"music_dir outside browse root: {_mroot}")
+    idx_path = (_mroot / "index.json").resolve()
+    if not in_browse_root(idx_path):
+        raise HTTPException(400, "index.json escapes browse root")
+    if not idx_path.exists():
+        raise HTTPException(400, "Music index missing — rebuild it in the Music tab")
+    try:
+        tracks = json.loads(idx_path.read_text())
+    except Exception as e:
+        raise HTTPException(500, f"index.json unreadable: {e}")
+
+    # Footage character → target energy (weak, capped signal; graceful
+    # degradation to neutral when mood columns are absent).
+    target_e = 0.6
+    try:
+        import pandas as _pd
+        _auto = job.auto_dir()
+        _csv = _auto / "scene_scores_allcam.csv"
+        if not _csv.exists():
+            _csv = _auto / "scene_scores.csv"
+        _df = _pd.read_csv(_csv)
+        if "action_score" in _df.columns and "scenic_score" in _df.columns:
+            _a = float(_df["action_score"].mean())
+            _s = float(_df["scenic_score"].mean())
+            if _a == _a and _s == _s and (_a + _s) != 0:
+                target_e = 0.35 + 0.5 * max(0.0, min(1.0, _a / (_a + _s)))
+    except Exception:
+        pass
+
+    # Repeat rule (matches the existing UI convention): a track must not
+    # repeat WITHIN one trip (all days under the same parent dir, e.g.
+    # .../Toskania/*) — used-in-trip tracks are hard-excluded. Global reuse
+    # across different trips is fine and carries no penalty.
+    used = _load_used_tracks()
+    _work = str(job.params.get("work_dir", "")).rstrip("/")
+    _trip_dir = _work.rsplit("/", 1)[0] if "/" in _work else _work
+
+    def _used_in_trip(path: str) -> bool:
+        for u in (used.get(path) or []):
+            _p = str(u.get("project", ""))
+            if _p == _work or (_trip_dir and _p.startswith(_trip_dir + "/")):
+                return True
+        return False
+
+    scored = []
+    for t in tracks:
+        if t.get("acr_blocked"):
+            continue
+        dur = float(t.get("duration") or 0)
+        if dur <= 0:
+            continue
+        if _used_in_trip(t.get("file", "")):
+            continue
+        if target_sec > 0:
+            _diff = dur - target_sec
+            # Asymmetric: a track shorter than the edit forces trimming the
+            # video; a longer one just fades out.
+            _rel = (-_diff * 2.0 if _diff < 0 else _diff) / max(target_sec, 1.0)
+            dfit = max(0.0, 1.0 - _rel)
+        else:
+            dfit = 0.5
+        e = t.get("energy_norm")
+        efit = 1.0 - abs(float(e) - target_e) if e is not None else 0.5
+        score = 1.2 * dfit + 0.7 * efit
+        scored.append({
+            "file": t.get("file"), "title": t.get("title"),
+            "artist": t.get("artist"), "duration": dur,
+            "bpm": t.get("bpm"), "energy_norm": e,
+            "score": round(score, 4),
+            "why": (f"dur {dfit:.2f} · energy {efit:.2f} "
+                    f"(cel {target_e:.2f})"),
+        })
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return {"target_energy": round(target_e, 3), "target_sec": target_sec,
+            "suggestions": scored[:5]}
 
 # ── ACRCloud credentials ──────────────────────────────────────────────────────
 

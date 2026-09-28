@@ -967,7 +967,15 @@ def match_clips(schedule: list[dict], clips: list[dict],
         if not vals:
             return
         lo, hi = min(vals), max(vals)
-        span = (hi - lo) or 1e-6
+        span = hi - lo
+        if span < 1e-4:
+            # The pool carries no real signal on this field — stretching
+            # micro-noise to a full 0..1 range would let randomness dominate
+            # the advertised weights. Everyone gets a neutral 0.5 instead.
+            for c in clips:
+                v = c.get(key)
+                c[out] = 0.5 if (v is not None and v == v) else v
+            return
         for c in clips:
             v = c.get(key)
             c[out] = ((v - lo) / span) if (v is not None and v == v) else v
@@ -1182,6 +1190,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
             "clip_score":     round(best["score"], 4),
             "motion_peak":    round(best["motion_peak"], 3),
             "camera":         best.get("camera", "unknown"),
+            "clip_time_norm": best.get("clip_time_norm"),
         })
 
     covered = sum(e["duration"] for e in edit)
@@ -2008,14 +2017,49 @@ def assemble(
     # from a different second. Drop near-duplicates (cosine similarity of the
     # CLIP embeddings within a source) so the pool holds genuinely different
     # shots instead of five variants of the same straight.
-    _dedup_thr = _cpfloat("music_driven", "dedup_similarity", "0.93")
-    if _dedup_thr > 0:
+    # dedup_similarity: numeric = explicit; "auto"/empty = derive per pool.
+    # Cosine ranges differ per embedding model (SigLIP2 sits much higher than
+    # ViT-L), so a fixed threshold either over-prunes or does nothing.
+    _dedup_raw = _cp.get("music_driven", "dedup_similarity", fallback="auto").strip().lower()
+    try:
+        _dedup_thr = float(_dedup_raw)
+    except ValueError:
+        _dedup_thr = -1.0   # derive below, once embeddings are loaded
+    if _dedup_thr != 0:
         try:
             _npz = np.load(str(auto_dir / "scene_embeddings.npz"))
             _emb_map = {n: e for n, e in zip(_npz["names"].tolist(), _npz["embeddings"])}
+            if _dedup_thr < 0:
+                # Sample TEMPORALLY adjacent within-source pairs (clip-number
+                # order ≈ capture order) — the q90 of that distribution
+                # separates "same stretch of road" from genuinely different
+                # shots for THIS model and THIS footage. Zero/degenerate
+                # embeddings are rejected before the quantile.
+                _by_src_e: dict[str, list] = {}
+                for _k, _v in _all_sorted:
+                    _e0 = _emb_map.get(_k)
+                    if _e0 is None:
+                        continue
+                    _n0 = float(np.linalg.norm(_e0))
+                    if not np.isfinite(_n0) or _n0 < 1e-6:
+                        continue
+                    _mnum = _re.search(r'-(?:scene|clip)-(\d+)$', _k)
+                    _by_src_e.setdefault(_clip_source(_k), []).append(
+                        (int(_mnum.group(1)) if _mnum else 0, _e0 / _n0))
+                _sims: list[float] = []
+                for _lst in _by_src_e.values():
+                    _lst.sort(key=lambda t: t[0])
+                    for _i2 in range(min(len(_lst) - 1, 60)):
+                        _sims.append(float(np.dot(_lst[_i2][1], _lst[_i2 + 1][1])))
+                if len(_sims) >= 20:
+                    _dedup_thr = float(min(0.985, max(0.88, np.quantile(_sims, 0.90))))
+                    print(f"  Dedup threshold: auto → {_dedup_thr:.3f} "
+                          f"(q90 of {len(_sims)} within-source similarities)")
+                else:
+                    _dedup_thr = 0.93
             _kept: list = []
             _kept_by_src: dict[str, list] = {}
-            _dropped = 0
+            _dropped_items: list = []
             for _k, _v in _all_sorted:          # score-descending: keep the best variant
                 _e = _emb_map.get(_k)
                 if _e is None:
@@ -2024,12 +2068,17 @@ def assemble(
                 _e = _e / (np.linalg.norm(_e) + 1e-9)
                 _srck = _clip_source(_k)
                 if any(float(np.dot(_e, _p)) > _dedup_thr for _p in _kept_by_src.get(_srck, [])):
-                    _dropped += 1
+                    _dropped_items.append((_k, _v))
                     continue
                 _kept_by_src.setdefault(_srck, []).append(_e)
                 _kept.append((_k, _v))
-            if _dropped:
-                print(f"  Dedup: {_dropped} near-duplicate clip(s) removed "
+            # Never dedup below the pool floor — a starved pool would force
+            # the matcher to trim the schedule and shorten the video.
+            _dedup_floor = int(needed * 1.5) + 5
+            while len(_kept) < _dedup_floor and _dropped_items:
+                _kept.append(_dropped_items.pop(0))
+            if _dropped_items:
+                print(f"  Dedup: {len(_dropped_items)} near-duplicate clip(s) removed "
                       f"(cos>{_dedup_thr:.2f} within source)")
             _all_sorted = _kept
         except Exception as _de:
@@ -2099,12 +2148,9 @@ def assemble(
     if not clips:
         raise RuntimeError("No clips available for motion analysis")
 
-    # Carry absolute source timestamps into matching.  This allows temporal
-    # deduplication across synchronized cameras as well as within one source.
-    for _clip in clips:
-        _rng = _clip_range(_clip["scene"])
-        if _rng:
-            _clip["source_start"], _clip["source_end"] = _rng
+    # (Absolute capture timestamps are attached right before match_clips —
+    # AFTER every pool addition including camera-pattern rescue, so no clip
+    # can bypass temporal diversity for lack of source_start.)
 
     # Filter out static clips: configurable via [music_driven] min_motion_score (0.0 = off)
     # Smart-detect: ≤1.0 = relative (motion_norm); >1.0 = absolute pixel diff (motion_level).
@@ -2217,10 +2263,52 @@ def assemble(
         print(f"  Mood scores: {_mood_cnt}/{len(clips)} clips annotated (action/scenic)")
 
     # 4. Match clips to schedule
-    _chron_weight = 0.20 if stem_to_time else 0.0
+    _chron_weight = (_cpfloat("music_driven", "chron_weight", "0.20")
+                     if stem_to_time else 0.0)
+    # Attach absolute capture timestamps AFTER every pool addition (incl.
+    # camera-pattern rescue) — a clip without source_start would silently
+    # bypass temporal diversity and reset the adjacency anchor.
+    for _clip in clips:
+        if _clip.get("source_start") is None:
+            _rng = _clip_range(_clip["scene"])
+            if _rng:
+                _clip["source_start"], _clip["source_end"] = _rng
+    # Chronology at CLIP granularity: the file-start-based norm gave every
+    # clip of one long recording an identical arc position, which is exactly
+    # the "session blocks" monotony. Re-derive from actual capture times.
+    _sts = [c["source_start"] for c in clips if c.get("source_start") is not None]
+    if len(_sts) >= 2 and (max(_sts) - min(_sts)) > 1.0:
+        _t_lo = min(_sts)
+        _t_span = max(_sts) - _t_lo
+        for c in clips:
+            _st = c.get("source_start")
+            if _st is not None:
+                c["clip_time_norm"] = (_st - _t_lo) / _t_span
+
     _temporal_exclusion = _cpfloat("music_driven", "temporal_exclusion_sec", "15")
     _repeat_penalty = _cpfloat("music_driven", "repeat_penalty", "0.08")
-    _adjacent_gap = _cpfloat("music_driven", "adjacent_time_gap_sec", "180")
+    # adjacent_time_gap_sec: numeric = explicit; "auto"/empty = derive from the
+    # footage. The right gap depends on chaptering: it must exceed the typical
+    # distance between consecutive recordings, or the arc just walks chapters.
+    _adj_raw = _cp.get("music_driven", "adjacent_time_gap_sec", fallback="auto").strip().lower()
+    try:
+        _adjacent_gap = float(_adj_raw)
+    except ValueError:
+        # Recording cadence from TRUE per-file start epochs (_src_epoch,
+        # creation_time + cam offset) — clip-derived starts carry the first
+        # clip's in-file offset and distort the statistic.
+        import statistics as _stats
+        _file_starts = sorted(_src_epoch.values()) if _src_epoch else []
+        _gaps = [b - a for a, b in zip(_file_starts, _file_starts[1:])
+                 if b - a > 1.0]
+        if len(_gaps) >= 3:
+            _median_gap = _stats.median(_gaps)
+            _adjacent_gap = max(120.0, min(900.0, _median_gap * 1.2))
+            print(f"  Adjacent gap: auto → {_adjacent_gap:.0f}s "
+                  f"(median of {len(_gaps)} inter-recording gaps × 1.2)")
+        else:
+            _adjacent_gap = 180.0
+            print("  Adjacent gap: auto → 180s (too few recordings to derive)")
     edit = match_clips(schedule, clips, chron_weight=_chron_weight,
                        cam_pattern=_cam_pattern, cam_order=_cam_order,
                        max_consecutive_cam=_max_consecutive_cam,
@@ -2275,6 +2363,7 @@ def assemble(
                 "clip_ss":    round(e.get("clip_ss", 0), 3),
                 "clip_path":  e.get("clip_path", ""),
                 "camera":     e.get("camera", ""),
+                "clip_time_norm": e.get("clip_time_norm"),
                 "music_start": round(e["music_start"], 2),
                 "frame_path": frame_path,
             })

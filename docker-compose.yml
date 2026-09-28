@@ -44,6 +44,9 @@ services:
       - /proc/meminfo:/proc/meminfo:ro
       - /home/pawkor/.cache/huggingface:/home/ubuntu/.cache/huggingface
       - /home/pawkor/.cache/aesthetic_predictor:/home/ubuntu/.cache/aesthetic_predictor
+      # torch.hub cache (Beat This! checkpoint) — parent .cache is root-owned
+      # in the image, so torch cannot mkdir it; persist like the HF cache.
+      - /home/pawkor/.cache/torch:/home/ubuntu/.cache/torch
     environment:
       TZ: Europe/Warsaw
       NUMBA_CACHE_DIR: /tmp/numba_cache

@@ -173,6 +173,20 @@ function renderMusicModalList(tracks) {
     if (usedHere.length) row.classList.add('used');
     row.onclick = () => pinTrack(t.file);
 
+    // Selection checkbox → music_files (render draws randomly from the set;
+    // an active pinned track still takes precedence over the set).
+    const selCb = document.createElement('input');
+    selCb.type = 'checkbox';
+    selCb.className = 'm-mtrack-cb';
+    selCb.checked = _checkedTracks.has(t.file);
+    selCb.title = 'Add to render pool (music_files)';
+    selCb.onclick = e => {
+      e.stopPropagation();
+      if (selCb.checked) _checkedTracks.add(t.file);
+      else _checkedTracks.delete(t.file);
+      _saveCheckedTracks();
+    };
+
     // Play button
     const playBtn = document.createElement('button');
     playBtn.className = 'm-mtrack-play m-btn m-btn-ghost m-btn-sm';
@@ -186,6 +200,11 @@ function renderMusicModalList(tracks) {
     const title = document.createElement('div');
     title.className = 'm-mtrack-title';
     title.textContent = t.title || t.file.split('/').pop();
+    const _sug = _musicSuggestMap && _musicSuggestMap[t.file];
+    if (_sug) {
+      title.textContent = `✨${_sug.rank} ` + title.textContent;
+      title.title = _sug.why || '';
+    }
     info.appendChild(title);
     if (t.artist) {
       const artist = document.createElement('div');
@@ -217,6 +236,7 @@ function renderMusicModalList(tracks) {
     }
     acrEl.onclick = e => { e.stopPropagation(); acrCheckTrack(t.file, acrEl); };
 
+    row.appendChild(selCb);
     row.appendChild(playBtn);
     row.appendChild(info);
     row.appendChild(durEl);
@@ -407,16 +427,22 @@ window.pinTrack = pinTrack;
 // ── Load on project open ──────────────────────────────────────────────────────
 async function loadMusicList(jobId) {
   const jobData = await window._modernApi.get(`/api/jobs/${jobId}`);
+  // Stale-load guard: a slow response for a previous project must not
+  // populate the current project's modal state (next save would then
+  // persist the wrong selection under the current _jobId).
+  if (typeof _jobId !== 'undefined' && _jobId && _jobId !== jobId) return;
   _musicDir = jobData?.params?.music_dir || '';
 
   const dirInput = document.getElementById('m-music-dir-input');
   if (dirInput && _musicDir) dirInput.value = _musicDir;
 
   const usedRaw = await window._modernApi.get('/api/music/used-tracks').catch(() => null);
+  if (typeof _jobId !== 'undefined' && _jobId && _jobId !== jobId) return;
   _usedTracksIndex = usedRaw || {};
 
   if (_musicDir) {
     const tracks = await window._modernApi.get(`/api/music-files?dir=${encodeURIComponent(_musicDir)}`);
+    if (typeof _jobId !== 'undefined' && _jobId && _jobId !== jobId) return;
     _allTracks = tracks || [];
   } else {
     _allTracks = [];
@@ -425,6 +451,7 @@ async function loadMusicList(jobId) {
   if (jobData?.params?.selected_track) {
     _pinnedTrack = jobData.params.selected_track;
   }
+  _checkedTracks = new Set(jobData?.params?.music_files || []);
 
   _updatePinnedInfo();
 
@@ -435,6 +462,56 @@ async function loadMusicList(jobId) {
   }
 }
 window.loadMusicList = loadMusicList;
+
+// ── Suggest music: advisory ranking (duration/energy/freshness) ─────────────
+let _musicSuggestMap = null;   // file → {rank, why}
+let _checkedTracks = new Set(); // → job.params.music_files (render picks randomly)
+
+let _checkedSaveChain = Promise.resolve();
+function _saveCheckedTracks() {
+  if (typeof _jobId === 'undefined' || !_jobId) return;
+  const jobId = _jobId;
+  const files = [..._checkedTracks];
+  // Serialize saves: rapid checkbox toggles fire full-set PATCHes; without
+  // ordering, an earlier (larger) set could land after a later one.
+  _checkedSaveChain = _checkedSaveChain
+    .then(() => window._modernApi.patch(`/api/jobs/${jobId}/params`,
+                                        { music_files: files }))
+    .catch(() => {});
+}
+
+async function suggestMusic() {
+  if (typeof _jobId === 'undefined' || !_jobId) return;
+  const btn = document.getElementById('m-music-suggest-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '✨ …'; }
+  try {
+    const jobId = _jobId, dirSnap = _musicDir;
+    const targetSec = _timeline.reduce((s, c) => s + (c.duration || 0), 0);
+    const q = `target_sec=${targetSec.toFixed(1)}&music_dir=${encodeURIComponent(dirSnap || '')}`;
+    const data = await window._modernApi.get(`/api/jobs/${jobId}/suggest-music?${q}`);
+    // Project/dir switched while waiting — a stale ranking must not be
+    // applied to another project's list or its music_files.
+    if (_jobId !== jobId || _musicDir !== dirSnap) return;
+    if (!data?.suggestions) { alert(data?._error || 'Suggest failed — check music index'); return; }
+    _musicSuggestMap = {};
+    data.suggestions.forEach((s, i) => { _musicSuggestMap[s.file] = { rank: i + 1, why: s.why }; });
+    // Check exactly the suggested set — render will draw randomly from it
+    // (unless a pinned track overrides).
+    _checkedTracks = new Set(data.suggestions.map(s => s.file));
+    _saveCheckedTracks();
+    // Non-destructive: sort the list with suggested tracks first (by rank),
+    // the rest keep their current order. The pinned track is untouched.
+    _allTracks = [..._allTracks].sort((a, b) => {
+      const ra = _musicSuggestMap[a.file]?.rank ?? 999;
+      const rb = _musicSuggestMap[b.file]?.rank ?? 999;
+      return ra - rb;
+    });
+    filterMusicModal();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Suggest'; }
+  }
+}
+window.suggestMusic = suggestMusic;
 
 // ── YT-DLP download ───────────────────────────────────────────────────────────
 let _musicYtEs = null;

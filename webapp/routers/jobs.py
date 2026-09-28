@@ -93,6 +93,8 @@ _JOB_CONFIG_MAP = {
     "beats_mid":           ("music_driven", "beats_mid"),
     "beats_slow":          ("music_driven", "beats_slow"),
     "adjacent_time_gap_sec": ("music_driven", "adjacent_time_gap_sec"),
+    "chron_weight":          ("music_driven", "chron_weight"),
+    "dedup_similarity":      ("music_driven", "dedup_similarity"),
     "cam_pattern":         ("music_driven", "cam_pattern"),
     "gps_weight":               ("scene_selection", "gps_weight"),
     "gps_altitude_threshold_m": ("scene_selection", "gps_altitude_threshold_m"),
@@ -190,7 +192,11 @@ def read_job_config(work_dir: Path) -> dict:
                                "beats_fast", "beats_mid", "beats_slow",
                                "adjacent_time_gap_sec",
                                "gps_weight", "gps_altitude_threshold_m"):
-                    result[field] = float(raw.rstrip('s').strip())
+                    try:
+                        result[field] = float(raw.rstrip('s').strip())
+                    except ValueError:
+                        # e.g. "auto" — pass through, UI shows placeholder
+                        result[field] = raw.strip()
                 elif field == "cameras":
                     result[field] = [c.strip() for c in raw.split(",") if c.strip()]
                 else:
@@ -1301,6 +1307,122 @@ async def _preview_sequence_inner(job_id: str):
             slot["frame_url"] = None
 
     return data
+
+
+@router.post("/api/jobs/{job_id}/critic")
+async def timeline_critic(job_id: str, mode: str = "quick"):
+    """VLM critic: Claude reviews the built timeline and returns a verdict +
+    parameter suggestions (src/critic.py). mode=quick: paired pool frames;
+    mode=deep: renders/reuses the 1080p draft and samples the ACTUAL edit."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is running — wait for it to finish")
+    if mode not in ("quick", "deep"):
+        raise HTTPException(400, "mode must be 'quick' or 'deep'")
+    _seq_file = job.auto_dir() / "preview_sequence.json"
+    if not _seq_file.exists():
+        raise HTTPException(400, "Build Timeline first")
+    # In-flight guard FIRST: it must also cover the deep draft render — two
+    # concurrent deep requests would write preview_draft.mp4 over each other.
+    if getattr(job, "_critic_running", False):
+        raise HTTPException(409, "Critic already running for this job")
+    job._critic_running = True
+    _timeout = 300 if mode == "deep" else 120
+    try:
+        _deep_args: list[str] = []
+        if mode == "deep":
+            _draft = job.auto_dir() / "preview_draft.mp4"
+            # Reuse a draft newer than the sequence; otherwise render one now.
+            if (not _draft.exists()
+                    or _draft.stat().st_mtime < _seq_file.stat().st_mtime):
+                await preview_render(job_id)
+            if not _draft.exists():
+                raise HTTPException(500, "Draft render did not produce preview_draft.mp4")
+            _deep_args = ["--deep", str(_draft)]
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(SCRIPT_DIR / "critic.py"),
+            job.params["work_dir"], str(_seq_file), *_deep_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRIPT_DIR),
+            env=dict(os.environ),   # critic NEEDS ANTHROPIC_API_KEY
+            start_new_session=True,
+        )
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=_timeout)
+        except BaseException as _ce:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:
+                pass
+            if isinstance(_ce, asyncio.TimeoutError):
+                raise HTTPException(504, f"Critic timed out (>{_timeout}s)")
+            raise
+    finally:
+        job._critic_running = False
+    if proc.returncode != 0:
+        raise HTTPException(500, f"Critic failed: {err.decode(errors='replace')[-500:]}")
+    try:
+        verdict = json.loads(out.decode(errors="replace"))
+    except json.JSONDecodeError:
+        raise HTTPException(500, "Critic returned invalid JSON")
+    if not isinstance(verdict, dict):
+        raise HTTPException(500, "Critic returned non-object JSON")
+    # Schema + bounds validation: the model's suggestions feed a config write,
+    # so anything non-numeric or out of range is dropped, not forwarded.
+    _clean_issues = []
+    _issues_in = verdict.get("issues")
+    for _iss in (_issues_in if isinstance(_issues_in, list) else []):
+        if isinstance(_iss, dict):
+            _clean_issues.append({"at": str(_iss.get("at", "?"))[:12],
+                                  "problem": str(_iss.get("problem", ""))[:200]})
+    verdict["issues"] = _clean_issues[:6]
+    _bounds = {"adjacent_time_gap_sec": (0, 3600),
+               "chron_weight": (0.0, 0.3),
+               "dedup_similarity": (0.88, 0.985)}
+    _sg_in = verdict.get("suggestions")
+    _sg_out: dict = {"comment": ""}
+    if isinstance(_sg_in, dict):
+        _sg_out["comment"] = str(_sg_in.get("comment", ""))[:300]
+        for _k, (_lo, _hi) in _bounds.items():
+            _v = _sg_in.get(_k)
+            try:
+                _vf = float(_v)
+                _sg_out[_k] = _vf if (_lo <= _vf <= _hi) else None
+            except (TypeError, ValueError):
+                _sg_out[_k] = None
+    else:
+        for _k in _bounds:
+            _sg_out[_k] = None
+    verdict["suggestions"] = _sg_out
+    try:
+        verdict["score_0_10"] = max(0, min(10, int(verdict.get("score_0_10", 0))))
+    except (TypeError, ValueError):
+        verdict["score_0_10"] = 0
+    verdict["verdict"] = str(verdict.get("verdict", ""))[:300]
+    # Surface the verdict in the job log for history.
+    job.log.append(f"── Critic ── score {verdict.get('score_0_10', '?')}/10: "
+                   f"{verdict.get('verdict', '')}")
+    for _iss in (verdict.get("issues") or [])[:6]:
+        job.log.append(f"  [{_iss.get('at', '?')}] {_iss.get('problem', '')}")
+    _sg = verdict.get("suggestions") or {}
+    if any(_sg.get(k) is not None for k in
+           ("adjacent_time_gap_sec", "chron_weight", "dedup_similarity")):
+        job.log.append(f"  Suggests: gap={_sg.get('adjacent_time_gap_sec')} "
+                       f"chron={_sg.get('chron_weight')} dedup={_sg.get('dedup_similarity')} "
+                       f"— {_sg.get('comment', '')}")
+    job.save()
+    await job.broadcast({"type": "log", "line": "── Critic verdict saved to log ──"})
+    return verdict
 
 
 @router.post("/api/jobs/{job_id}/preview-render")
