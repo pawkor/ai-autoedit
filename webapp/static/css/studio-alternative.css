@@ -1,6 +1,8 @@
 /* Alternative Studio layout. Loaded alongside studio.css and activated by
    body.ui-alternative. No selectors outside this namespace are changed. */
-body.ui-alternative {
+/* Scoped to dark: the theme attribute lives on <body>, and this selector
+   outranked [data-theme="light"], forcing dark tokens in light mode. */
+body.ui-alternative:not([data-theme="light"]) {
   --bg0: oklch(18% .018 250);
   --bg1: oklch(23% .022 250);
   --bg2: oklch(29% .026 250);
@@ -81,4 +83,7 @@ body.ui-alternative #m-build-overlay .m-spinner { align-self: flex-start; }
   body.ui-alternative #m-build-overlay { inset: auto 10px 70px 10px; width: auto; }
   body.ui-alternative .m-modal { max-width: calc(100vw - 20px) !important; max-height: calc(100dvh - 20px); overflow-y: auto; }
   body.ui-alternative .m-modal-body { padding: 12px; }
+  /* Dialogs must cover the mobile chrome: sheet is 1100, bottom nav 1150,
+     sidebar 1200 — the base overlay (1000) rendered underneath them. */
+  body.ui-alternative .m-modal-overlay { z-index: 1300; }
 }

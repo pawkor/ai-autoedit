@@ -6,15 +6,6 @@ let _photoHoverTimer = null;
 let _photoHoverEl = null;
 let _preloadCache = {};
 
-function _preloadAll() {
-  for (const photo of _photoList) {
-    if (_preloadCache[photo.path]) continue;
-    const pre = new Image();
-    pre.src = `/api/file?path=${encodeURIComponent(photo.path)}`;
-    _preloadCache[photo.path] = pre;
-  }
-}
-
 function _preloadAdjacent(idx) {
   [-2, -1, 1, 2].forEach(delta => {
     const i = idx + delta;
@@ -93,7 +84,8 @@ async function openPhotoBrowser() {
   _preloadCache = {};
   _renderPhotoGrid();
   _updatePhotoCount();
-  _preloadAll();
+  // Originals are fetched on demand (_preloadAdjacent in the preview) —
+  // eagerly downloading every full-size photo swamped the connection.
 }
 window.openPhotoBrowser = openPhotoBrowser;
 
@@ -123,6 +115,7 @@ function _renderPhotoGrid() {
     cell.addEventListener('mousemove', _movePhotoHover);
 
     const cb = document.createElement('div');
+    cb.className = 'm-photo-cb';
     cb.style.cssText = `position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:3px;
       border:2px solid #fff;background:${sel ? 'var(--green-hi)' : 'rgba(0,0,0,.5)'};
       display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;
@@ -153,7 +146,9 @@ function _photoToggle(path) {
     if (cell) {
       const sel = _photoSelection.has(path);
       cell.style.borderColor = sel ? 'var(--green-hi)' : 'transparent';
-      const cb = cell.querySelector('div > div');
+      // '.m-photo-cb', not 'div > div' — that selector matched the image
+      // wrapper, and the textContent write below wiped the img + checkbox.
+      const cb = cell.querySelector('.m-photo-cb');
       if (cb) { cb.style.background = sel ? 'var(--green-hi)' : 'rgba(0,0,0,.5)'; cb.textContent = sel ? '✓' : ''; }
     }
   }

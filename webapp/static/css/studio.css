@@ -144,7 +144,8 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 .m-track-row { display: flex; align-items: stretch; gap: 8px; }
 .m-track-label { width: 44px; flex-shrink: 0; font-size: 9px; color: var(--sub);
                  text-align: right; padding-top: 4px; }
-.m-track-clips { display: flex; gap: 0; align-items: stretch; min-height: 44px; flex: 1; overflow: hidden; }
+.m-track-clips { display: flex; gap: 0; align-items: stretch; min-height: 44px; flex: 1;
+                 overflow-x: auto; overflow-y: hidden; }
 .m-thumb.removed .m-thumb-img { border: 2px dashed var(--red); }
 .m-thumb.in-timeline .m-thumb-img { opacity: .55; }
 .m-thumb.in-timeline::after { content: '▶'; position: absolute; top: 3px; right: 5px; font-size: 9px; color: #60a5fa; pointer-events: none; }
@@ -178,6 +179,7 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
                 box-shadow: 0 8px 24px rgba(0,0,0,.6); z-index: 500; pointer-events: none; }
 #m-tl-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .m-clip.drag-over { border-color: var(--green-hi); box-shadow: 0 0 0 2px var(--green-hi); }
+.m-thumb.touch-dragging, .m-clip.touch-dragging { opacity: .5; outline: 2px dashed var(--blue); }
 .m-clip-insert { flex-shrink: 0; width: 3px; min-height: 44px; border-radius: 2px;
                  transition: width .12s, background .12s; background: transparent; }
 .m-clip-insert.active { width: 36px; background: rgba(59,130,246,.25);
@@ -500,6 +502,11 @@ body { background: var(--bg0); color: var(--text); font-family: var(--font);
 
   /* Timeline preview: smaller on phone */
   #m-tl-preview { width: 220px; }
+
+  /* Results: the 400px list column overflowed narrow phones — stack the
+     player above a full-width list instead. */
+  .m-results-body { flex-direction: column; }
+  .m-results-list-col { width: 100%; flex-shrink: 1; }
 
   /* Modals: full width on phone */
   .m-modal {

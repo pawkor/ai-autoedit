@@ -11,6 +11,7 @@ let _browseRoot  = '';     // stripped from work_dir paths for display
 let _timelineMusic = null; // music path from last dry-run (for preview playback)
 let _workDir     = '';     // current job work_dir (for clip_path reconstruction)
 let _activeCameras = new Set(); // currently visible cameras in pool filter
+let _camFilterActive = false;   // true only when the cam checkbox bar is shown
 let _photos      = [];     // selected photos: [{path, thumb_url, filename, timestamp}]
 let _filterVids  = true;   // pool source filter: video clips visible
 let _filterPhotos = true;  // pool source filter: photos visible
@@ -31,6 +32,16 @@ function _flushTlSave() {
     const prev = _tlSaveInflight || Promise.resolve();
     const p = prev.catch(() => {})
       .then(() => api.patch(`/api/jobs/${jobId}/params`, payload))
+      .then(res => {
+        // Failed autosave must stay dirty: re-queue the snapshot (unless a
+        // newer edit superseded it) or a later Render ships stale state.
+        if (res == null && !_pendingTlSave) {
+          _pendingTlSave = { jobId, payload };
+          clearTimeout(_saveTlTimer);
+          _saveTlTimer = setTimeout(_flushTlSave, 5000);
+        }
+        return res;
+      })
       .finally(() => { if (_tlSaveInflight === p) _tlSaveInflight = null; });
     _tlSaveInflight = p;
   }
@@ -131,21 +142,30 @@ async function deleteProject(id, ev) {
 }
 window.deleteProject = deleteProject;
 
+let _projListFp = '';
 async function refreshProjectList() {
   const data = await api.get('/api/jobs') || [];
   const sorted = [...data].sort((a, b) => {
     const cmp = (a.work_dir || '').localeCompare(b.work_dir || '');
     return _projSortAsc ? cmp : -cmp;
   });
+  // Skip the rebuild when nothing changed — the 5s poll otherwise replaces
+  // the whole list (and kills hover/focus) on every tick.
+  const _fp = JSON.stringify([_jobId, _projSortAsc,
+                              sorted.map(j => [j.id, j.work_dir])]);
+  if (_fp === _projListFp) return;
+  _projListFp = _fp;
   const list = document.getElementById('m-project-list');
   if (!list) return;
+  const _esc = s => String(s).replace(/[&<>"']/g,
+    ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   list.innerHTML = sorted.map(j => {
     const name = trimPath(j.work_dir) || j.id;
     const segs = name.split('/');
     const label = segs.length > 2 ? segs.slice(-2).join('/') : name;
     return `<div class="m-proj-item${j.id === _jobId ? ' active' : ''}"
                  data-id="${j.id}" onclick="openProject('${j.id}')">
-              <span style="display:block;padding-right:20px" title="${name}">${label}</span>
+              <span style="display:block;padding-right:20px" title="${_esc(name)}">${_esc(label)}</span>
               <button class="m-proj-del" onclick="deleteProject('${j.id}',event)" title="Remove project">✕</button>
             </div>`;
   }).join('');
@@ -173,6 +193,7 @@ async function openProject(id) {
 
   const job = await api.get(`/api/jobs/${id}`);
   if (!job) return;
+  if (_jobId !== id) return;   // switched again while awaiting — stale response
   _workDir = job.params?.work_dir || '';
   _loadTimeline(job);  // restore from backend params before loadMusicList runs
   const name = trimPath(job.params?.work_dir) || id;
@@ -180,6 +201,7 @@ async function openProject(id) {
   // Sync timeline method dropdown from config.ini (not stored in job.params)
   if (_workDir) {
     const _cfg = await api.get(`/api/job-config?dir=${encodeURIComponent(_workDir)}`);
+    if (_jobId !== id) return;
     const _tm = _cfg?.ui_timeline_method || 'music-driven';
     const _tmEl = document.getElementById('m-settings-timeline-method');
     if (_tmEl) { _tmEl.value = _tm; if (typeof _applyTimelineMethod === 'function') _applyTimelineMethod(_tm); }
@@ -221,6 +243,8 @@ async function loadPool(id) {
     api.get(`/api/jobs/${id}/analyze-result`).catch(() => null),
     api.get(`/api/jobs/${id}/photos`).catch(() => null),
   ]);
+  if (_jobId !== id) return;   // project switched — a late A response must
+                               // not populate B's pool
   _frames = (data?.frames ?? data ?? []).sort((a, b) => b.score - a.score);
   _photos = (ph?.photos || []).filter(p => p.selected);
   const gpsBadge = document.getElementById('m-gps-badge');
@@ -250,9 +274,12 @@ function toggleSourceFilter(kind) {
 }
 window.toggleSourceFilter = toggleSourceFilter;
 
+let _poolFilterTimer = null;
 function filterPool(q) {
   _poolSearch = (q || '').trim();
-  renderPool();
+  // Debounce: each keystroke used to rebuild the whole thumbnail grid.
+  clearTimeout(_poolFilterTimer);
+  _poolFilterTimer = setTimeout(renderPool, 150);
 }
 window.filterPool = filterPool;
 
@@ -267,6 +294,7 @@ function _buildCamFilters() {
   const bar = document.getElementById('m-cam-filters');
   if (!bar) return;
   const cams = [...new Set(_frames.map(f => f.camera).filter(Boolean))];
+  _camFilterActive = cams.length > 1;
   if (cams.length <= 1) { bar.style.display = 'none'; _activeCameras = new Set(cams); return; }
   _activeCameras = new Set(cams);
   bar.style.display = 'flex';
@@ -366,7 +394,9 @@ function renderPool() {
   const bannedNew  = new Set(Object.keys(_overrides).filter(s => _overrides[s] === 'ban-new'));
   const inTimeline = new Set(_timeline.map(c => c.scene));
   const _sq = _poolSearch.toLowerCase();
-  const camFiltered = (_activeCameras.size
+  // When the cam bar is shown, an EMPTY selection means "none" — the old
+  // `size ? … : all` fallback made unchecking every camera show everything.
+  const camFiltered = (_camFilterActive
     ? _frames.filter(f => !f.camera || _activeCameras.has(f.camera))
     : _frames
   ).filter(f => !_sq || f.scene.toLowerCase().includes(_sq));
@@ -392,6 +422,7 @@ function renderPool() {
       div.addEventListener('click', () => toggleBan(slot.scene));
       div.addEventListener('contextmenu', e => { e.preventDefault(); _showPoolCtx(e, slot.scene); });
       div.addEventListener('dragstart', onPoolDragStart);
+      _bindTouchDrag(div, () => ({ from: 'pool', scene: div.dataset.scene }));
       if (frameUrl) {
         div.addEventListener('mouseenter', () => _showInlinePreview(div, frameUrl));
         div.addEventListener('mouseleave', () => _hideInlinePreview(div));
@@ -423,6 +454,7 @@ function renderPool() {
         e.dataTransfer.setData('text/plain', ph.filename || '');
         div.addEventListener('dragend', () => { _drag = null; }, { once: true });
       });
+      _bindTouchDrag(div, () => ({ from: 'pool', type: 'photo', photo: ph }));
       grid.appendChild(div);
     }
   }
@@ -437,6 +469,7 @@ function renderPool() {
     div.addEventListener('click', () => toggleBan(f.scene));
     div.addEventListener('contextmenu', e => { e.preventDefault(); _showPoolCtx(e, f.scene); });
     div.addEventListener('dragstart', onPoolDragStart);
+    _bindTouchDrag(div, () => ({ from: 'pool', scene: div.dataset.scene }));
     div.addEventListener('mouseenter', () => _showInlinePreview(div, f.frame_url));
     div.addEventListener('mouseleave', () => _hideInlinePreview(div));
     grid.appendChild(div);
@@ -616,7 +649,13 @@ function drawTimeline() {
   // Clear FIRST, then measure with getBoundingClientRect (forces reflow, sub-px accurate).
   clipTrack.innerHTML = '';
   const trackW = Math.floor(clipTrack.getBoundingClientRect().width);
-  if (!trackW) { requestAnimationFrame(drawTimeline); return; }
+  if (!trackW) {
+    // Hidden (mobile Pool tab): don't spin rAF forever — mark dirty and let
+    // the tab switch redraw. Visible zero-width is a transient layout state.
+    if (clipTrack.offsetParent === null) { window._tlNeedsRedraw = true; return; }
+    requestAnimationFrame(drawTimeline);
+    return;
+  }
   const ruler = document.getElementById('m-time-ruler');
 
   if (meta) {
@@ -664,6 +703,7 @@ function drawTimeline() {
   const makeInsert = insertIdx => {
     const z = document.createElement('div');
     z.className = 'm-clip-insert';
+    z.dataset.insertIdx = insertIdx;   // touch layer resolves zones by index
     z.addEventListener('dragover',  e => { e.preventDefault(); z.classList.add('active'); });
     z.addEventListener('dragleave', () => z.classList.remove('active'));
     z.addEventListener('drop', e => { e.preventDefault(); z.classList.remove('active'); handleInsert(insertIdx); });
@@ -721,6 +761,11 @@ function drawTimeline() {
     }
 
     div.addEventListener('dragstart', onClipDragStart);
+    _bindTouchDrag(div, () => ({
+      from: 'timeline',
+      scene: _timeline[parseInt(div.dataset.idx)]?.scene,
+      idx: parseInt(div.dataset.idx),
+    }));
     div.addEventListener('dblclick',  () => removeClip(idx));
     clipTrack.appendChild(div);
     clipTrack.appendChild(makeInsert(idx + 1));
@@ -800,6 +845,77 @@ function removeClip(idx) {
 
 // ── Drag & Drop ───────────────────────────────────────────────────────────────
 let _drag = null;   // { from: 'pool'|'timeline', scene, idx }
+
+// ── Touch drag (HTML5 DnD has no touch support) ──────────────────────────────
+// Long-press (300ms) arms the drag, then touchmove tracks the finger and
+// touchend drops through the same _drag/handleInsert path as mouse DnD.
+let _touchDrag = null;   // { el, getDrag, x, y, active, timer }
+let _touchZone = null;   // currently highlighted .m-clip-insert
+
+function _bindTouchDrag(el, getDrag) {
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    _touchDrag = {
+      el, getDrag, x: t.clientX, y: t.clientY, active: false,
+      timer: setTimeout(() => {
+        if (!_touchDrag || _touchDrag.el !== el) return;
+        _touchDrag.active = true;
+        _drag = getDrag();
+        el.classList.add('touch-dragging');
+      }, 300),
+    };
+  }, { passive: true });
+}
+
+function _touchFindZone(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el || !el.closest) return null;
+  const z = el.closest('.m-clip-insert');
+  if (z) return z;
+  // The 3px zones are hopeless finger targets — fall back to the nearest
+  // clip and pick the zone on the side the finger is on.
+  const clip = el.closest('.m-track-clips > [data-idx]');
+  if (clip) {
+    const r = clip.getBoundingClientRect();
+    const i = parseInt(clip.dataset.idx) + (x > r.left + r.width / 2 ? 1 : 0);
+    return clip.parentElement.querySelector(`.m-clip-insert[data-insert-idx="${i}"]`);
+  }
+  return null;
+}
+
+function _touchDragCleanup(dropped) {
+  if (!_touchDrag) return;
+  clearTimeout(_touchDrag.timer);
+  _touchDrag.el.classList.remove('touch-dragging');
+  if (dropped && _touchDrag.active && _touchZone)
+    handleInsert(parseInt(_touchZone.dataset.insertIdx));
+  if (_touchZone) _touchZone.classList.remove('active');
+  _touchZone = null;
+  _drag = null;
+  _touchDrag = null;
+}
+
+document.addEventListener('touchmove', e => {
+  if (!_touchDrag) return;
+  const t = e.touches[0];
+  if (!_touchDrag.active) {
+    // Finger moved before the long-press fired — it's a scroll, not a drag.
+    if (Math.hypot(t.clientX - _touchDrag.x, t.clientY - _touchDrag.y) > 10) {
+      clearTimeout(_touchDrag.timer);
+      _touchDrag = null;
+    }
+    return;
+  }
+  e.preventDefault();
+  const z = _touchFindZone(t.clientX, t.clientY);
+  if (_touchZone && _touchZone !== z) _touchZone.classList.remove('active');
+  _touchZone = z;
+  if (z) z.classList.add('active');
+}, { passive: false });
+
+document.addEventListener('touchend',    () => _touchDragCleanup(true));
+document.addEventListener('touchcancel', () => _touchDragCleanup(false));
 
 function onPoolDragStart(e) {
   _drag = { from: 'pool', scene: e.currentTarget.dataset.scene };
@@ -1041,16 +1157,40 @@ function _connectJobProgress(jobId, followDone = false) {
       _updateWorkerBar(msg.slot, msg.pct ?? 0, msg.curr, msg.total, msg.state === 'done');
     }
   };
-  ws.onclose = () => { if (_jobWs === ws) _jobWs = null; };
+  ws.onclose = () => {
+    if (_jobWs !== ws) return;
+    _jobWs = null;
+    // Server restart / network blip: reconnect if the job may still be
+    // running — otherwise progress freezes and Render stays disabled.
+    setTimeout(async () => {
+      if (_jobId !== jobId || _jobWs) return;
+      const j = await api.get(`/api/jobs/${jobId}`).catch(() => null);
+      if (_jobId !== jobId || _jobWs) return;
+      if (j && (j.status === 'running' || j.status === 'queued')) {
+        _connectJobProgress(jobId, followDone);
+      } else if (j) {
+        _setRenderBusy(false);
+        loadResults();
+      }
+    }, 3000);
+  };
 }
 window._connectJobProgress = _connectJobProgress;
 
+// Busy/idle button labels through i18n — hardcoded English here used to
+// overwrite the translated captions applied via data-i18n.
+function _btnIdle(id) {
+  const el = document.getElementById(id);
+  if (el && el.dataset.i18n && typeof _tm === 'function')
+    el.textContent = _tm(el.dataset.i18n);
+}
 function _setRenderBusy(busy) {
   ['m-btn-render'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.disabled = busy;
-    el.textContent = busy ? 'Rendering…' : '⬡ Render';
+    if (busy) el.textContent = _tm('m.busy_render');
+    else _btnIdle(id);
   });
 }
 
@@ -1058,7 +1198,8 @@ function _setShortsRenderBusy(busy) {
   const el = document.getElementById('m-btn-shorts');
   if (!el) return;
   el.disabled = busy;
-  el.textContent = busy ? 'Generating…' : '▶ Shorts';
+  if (busy) el.textContent = _tm('m.busy_shorts');
+  else _btnIdle('m-btn-shorts');
 }
 
 // ── Log modal ──────────────────────────────────────────────────────────────────
@@ -1119,6 +1260,8 @@ function _appendLog(line) {
         div.className = 'll' + (/error|fail|Error|Fail/i.test(cleanLine) ? ' err' : '');
         div.textContent = cleanLine;
         el.appendChild(div);
+        // Mirror the 200-line buffer bound — the DOM grew without limit.
+        while (el.children.length > 200) el.removeChild(el.firstChild);
       }
       const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       if (nearBottom) el.scrollTop = el.scrollHeight;
@@ -1150,7 +1293,7 @@ async function previewTimeline() {
   if (!_jobId) return;
   _previewActive = true;
   const btn = document.getElementById('m-btn-preview');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sequencing…'; }
+  if (btn) { btn.disabled = true; btn.textContent = _tm('m.busy_seq'); }
 
   // Flush manual timeline to server so preview-sequence uses it instead of dry-run
   if (_timeline.length > 0) {
@@ -1160,7 +1303,7 @@ async function previewTimeline() {
     });
   }
   const data = await api.post(`/api/jobs/${_jobId}/preview-sequence`);
-  if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+  if (btn) { btn.disabled = false; _btnIdle('m-btn-preview'); }
   if (!data?.sequence?.length) { if (_previewActive) alert('Preview failed:\n' + (data?._error || 'check server log')); return; }
   if (!_timeline.length) _timeline = data.sequence;
   _timelineMusic = data.music || null;
@@ -1171,12 +1314,12 @@ async function previewTimeline() {
   if (modal) modal.style.display = 'flex';
   if (video) {
     video.src = '';
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Encoding…'; }
+    if (btn) { btn.disabled = true; btn.textContent = _tm('m.busy_encode'); }
     const hlsNative = video.canPlayType('application/vnd.apple.mpegurl') !== '';
     if (hlsNative) {
       // Safari / WKWebView — HLS native
       const hls = await api.post(`/api/jobs/${_jobId}/preview-hls`);
-      if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+      if (btn) { btn.disabled = false; _btnIdle('m-btn-preview'); }
       if (hls?.url) {
         video.src = hls.url;
         video.addEventListener('canplay', () => video.play().catch(() => {}), {once: true});
@@ -1187,12 +1330,12 @@ async function previewTimeline() {
       // Chrome / Firefox — full MP4 (no native HLS)
       video.src = `/api/jobs/${_jobId}/preview-stream`;
       video.addEventListener('canplaythrough', () => {
-        if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+        if (btn) { btn.disabled = false; _btnIdle('m-btn-preview'); }
         video.play().catch(() => {});
       }, {once: true});
       video.addEventListener('error', () => {
         if (!_previewActive) return;
-        if (btn) { btn.disabled = false; btn.textContent = '▶ Preview'; }
+        if (btn) { btn.disabled = false; _btnIdle('m-btn-preview'); }
         alert('Preview failed — check server log');
       }, {once: true});
     }
@@ -1467,13 +1610,13 @@ async function criticTimeline(mode = 'quick') {
   const jobId = _jobId;
   const deep = mode === 'deep';
   const btn = document.getElementById(deep ? 'm-btn-critic-deep' : 'm-btn-critic');
-  const idle = deep ? '🎬 Deep critic' : '🧠 Critic';
-  if (btn) { btn.disabled = true; btn.textContent = deep ? '🎬 Rendering+watching…' : '🧠 Reviewing…'; }
+  const idleId = deep ? 'm-btn-critic-deep' : 'm-btn-critic';
+  if (btn) { btn.disabled = true; btn.textContent = _tm(deep ? 'm.busy_deep' : 'm.busy_review'); }
   let v = null;
   try {
     v = await api.post(`/api/jobs/${jobId}/critic?mode=${mode}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = idle; }
+    if (btn) { btn.disabled = false; _btnIdle(idleId); }
   }
   if (!v || v._error) { alert('Critic failed: ' + (v?._error || 'check server log')); return; }
   if (_jobId !== jobId) return;   // project switched during review
@@ -1616,6 +1759,23 @@ window.modernToggleTheme = modernToggleTheme;
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  if (e.key === 'Tab') {
+    // Focus containment: while a modal overlay is open, Tab must cycle
+    // inside it — without this, focus walked the studio underneath.
+    const ov = [...document.querySelectorAll('.m-modal-overlay')]
+      .filter(el => el.style.display !== 'none' && el.getClientRects().length).pop();
+    if (ov) {
+      const f = [...ov.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter(el => !el.disabled && el.getClientRects().length);
+      if (!f.length) { e.preventDefault(); return; }
+      const first = f[0], last = f[f.length - 1];
+      if (!ov.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    return;
+  }
   if (e.key !== 'Escape') return;
   const visible = id => { const el = document.getElementById(id); return el && el.style.display !== 'none'; };
   if (visible('m-preview-modal'))     { closePreviewModal();     return; }
@@ -1682,6 +1842,13 @@ window.openPictureModal = openPictureModal;
 function closePictureModal() {
   const m = document.getElementById('m-picture-modal');
   if (m) m.style.display = 'none';
+  _picPreviewSeq++;   // invalidate any in-flight preview
+  if (_picPreviewUrl) {
+    const img = document.getElementById('m-picture-preview-img');
+    if (img) img.removeAttribute('src');
+    URL.revokeObjectURL(_picPreviewUrl);
+    _picPreviewUrl = null;
+  }
 }
 window.closePictureModal = closePictureModal;
 
@@ -1716,12 +1883,15 @@ function nextPicScene() { _picSceneIdx = (_picSceneIdx + 1) % _picSceneCount; _r
 window.prevPicScene = prevPicScene;
 window.nextPicScene = nextPicScene;
 
+let _picPreviewSeq = 0;    // freshness token — slow responses must not win
+let _picPreviewUrl = null; // current blob URL, revoked on replacement
 function _refreshPicturePreview() {
   if (!_jobId) return;
   const img     = document.getElementById('m-picture-preview-img');
   const sp      = document.getElementById('m-picture-spinner');
   const counter = document.getElementById('m-pic-counter');
   if (sp) sp.style.display = 'block';
+  const seq = ++_picPreviewSeq;
   const q = new URLSearchParams({
     b: _pictureSettings.brightness,
     g: _pictureSettings.gamma,
@@ -1737,9 +1907,16 @@ function _refreshPicturePreview() {
       if (counter) counter.textContent = `${_picSceneIdx + 1} / ${_picSceneCount}`;
       return r.blob();
     })
-    .then(blob => { if (img) img.src = URL.createObjectURL(blob); })
+    .then(blob => {
+      if (seq !== _picPreviewSeq) return;   // an older response — drop it
+      if (img) {
+        if (_picPreviewUrl) URL.revokeObjectURL(_picPreviewUrl);
+        _picPreviewUrl = URL.createObjectURL(blob);
+        img.src = _picPreviewUrl;
+      }
+    })
     .catch(() => {})
-    .finally(() => { if (sp) sp.style.display = 'none'; });
+    .finally(() => { if (sp && seq === _picPreviewSeq) sp.style.display = 'none'; });
 }
 
 function resetPictureDefaults() {

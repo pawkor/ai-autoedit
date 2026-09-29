@@ -42,6 +42,12 @@ function mobileTab(tab) {
   } else if (tab === 'timeline') {
     if (pool) pool.classList.add('mobile-hidden');
     if (tl)   tl.classList.remove('mobile-hidden');
+    // A redraw requested while the timeline was display:none was deferred
+    // (zero-width guard in drawTimeline) — run it now that it can measure.
+    if (window._tlNeedsRedraw && typeof drawTimeline === 'function') {
+      window._tlNeedsRedraw = false;
+      drawTimeline();
+    }
   }
 
   tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
