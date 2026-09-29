@@ -47,3 +47,6 @@ chats
 # Launcher build output
 dist/
 venv/
+
+# Insta360 SDK — licensed download, never commit
+insta360-sdk/

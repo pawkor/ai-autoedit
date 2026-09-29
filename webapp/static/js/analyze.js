@@ -467,8 +467,42 @@ async function analyzeAutoDetectOffsets() {
 }
 window.analyzeAutoDetectOffsets = analyzeAutoDetectOffsets;
 
+// 360 section: shown only when the MediaSDK is configured server-side AND
+// the project has stitchable .insv pairs — dead controls stay hidden.
+async function _refresh360Section(dir) {
+  const box = document.getElementById('m-analyze-360');
+  if (!box) return;
+  box.style.display = 'none';
+  if (!dir) return;
+  const info = await window._modernApi
+    .get(`/api/insta360-info?work_dir=${encodeURIComponent(dir)}`)
+    .catch(() => null);
+  if (!info || !info.sdk_available || !info.pairs) return;
+  const cnt = document.getElementById('m-analyze-360-count');
+  if (cnt) cnt.textContent = `${info.pairs} recording(s)`;
+  box.style.display = 'flex';
+}
+
+async function runInsta360Scan() {
+  if (typeof _jobId === 'undefined' || !_jobId) {
+    alert('Save the project first — the 360 scan runs on a saved project.');
+    return;
+  }
+  const jobId = _jobId;
+  const btn = document.getElementById('m-analyze-360-btn');
+  if (btn) btn.disabled = true;
+  const r = await window._modernApi.post(`/api/jobs/${jobId}/insta360-scan`, {})
+    .catch(() => null);
+  if (btn) btn.disabled = false;
+  if (!r || r._error) { alert('360 scan failed to start: ' + (r?._error || 'see server log')); return; }
+  closeProjectModal();
+  if (typeof openLogModal === 'function') openLogModal();
+}
+window.runInsta360Scan = runInsta360Scan;
+
 async function analyzeRefreshCams(dir) {
   if (!dir) return;
+  _refresh360Section(dir);
   const camList = document.getElementById('m-analyze-cam-list');
   if (!camList || camList.querySelectorAll('.m-analyze-cam-row').length) return;
   _analyzeSubdirs = await _fetchAnalyzeSubdirs(dir);

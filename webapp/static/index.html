@@ -194,16 +194,16 @@
 
     <nav id="m-bottom-nav" style="display:none">
       <button class="m-bnav-tab active" onclick="mobileTab('pool')" data-tab="pool">
-        <span class="m-bnav-icon">⊞</span><span class="m-bnav-label">Pool</span>
+        <span class="m-bnav-icon">⊞</span><span class="m-bnav-label" data-i18n="m.bnav_pool">Pool</span>
       </button>
       <button class="m-bnav-tab" onclick="mobileTab('timeline')" data-tab="timeline">
-        <span class="m-bnav-icon">▤</span><span class="m-bnav-label">Timeline</span>
+        <span class="m-bnav-icon">▤</span><span class="m-bnav-label" data-i18n="m.bnav_timeline">Timeline</span>
       </button>
       <button class="m-bnav-tab" onclick="mobileTab('controls')" data-tab="controls">
-        <span class="m-bnav-icon">⚙</span><span class="m-bnav-label">Controls</span>
+        <span class="m-bnav-icon">⚙</span><span class="m-bnav-label" data-i18n="m.bnav_controls">Controls</span>
       </button>
       <button class="m-bnav-tab" onclick="openLogModal()" data-tab="log">
-        <span class="m-bnav-icon">📋</span><span class="m-bnav-label">Log</span>
+        <span class="m-bnav-icon">📋</span><span class="m-bnav-label" data-i18n="m.bnav_log">Log</span>
       </button>
     </nav>
 
@@ -334,6 +334,16 @@
                style="max-height:180px"></div>
         </div>
         <div id="m-analyze-cam-list" class="m-analyze-cams"></div>
+        <div id="m-analyze-360" style="display:none;margin-top:6px;align-items:center;gap:8px">
+          <span class="m-section-meta">
+            <span data-i18n="m.lbl_360">360 camera:</span>
+            <span id="m-analyze-360-count"></span>
+          </span>
+          <button class="m-btn m-btn-ghost m-btn-sm" id="m-analyze-360-btn"
+                  onclick="runInsta360Scan()"
+                  data-i18n="m.btn_360_scan" data-i18n-title="m.title_360_scan"
+                  title="AI-reframe the 360 recordings: CLIP picks the moments and the view direction, MediaSDK stitches with FlowState, clips land in the pool as camera '360'">⚈ Scan 360</button>
+        </div>
         <div style="margin-top:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <button class="m-btn m-btn-ghost m-btn-sm" onclick="analyzeAddCam()"
                   data-i18n="m.btn_add_cam" data-i18n-title="m.title_add_cam"
@@ -896,6 +906,16 @@
           </div>
           <div class="m-section-meta" style="margin-top:2px">
             Use <code>$DATA_DIR</code> in config.ini for portable paths, e.g. <code>music_dir = $DATA_DIR/music</code>
+          </div>
+        </div>
+
+        <!-- Insta360 SDK (optional capability; 360 controls hide without it) -->
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+          <div class="m-settings-row">
+            <span class="m-settings-label" data-i18n="m.lbl_insta360">Insta360 SDK</span>
+            <span id="m-app-insta360-status" class="m-section-meta"
+                  data-i18n-title="m.title_insta360"
+                  title="Optional: AI reframing of Insta360 360° recordings (auto view selection). Free SDK — apply at insta360.com/sdk/apply, then set [paths] insta360_mediasdk in config.ini. See README, '360 support'.">—</span>
           </div>
         </div>
 

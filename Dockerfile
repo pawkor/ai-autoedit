@@ -12,6 +12,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bash libsndfile1 libgomp1 libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 
+# Insta360 MediaSDK runtime deps (SDK itself is user-supplied, bind-mounted
+# read-only — its EULA forbids redistribution). The binary links Ubuntu 22.04
+# era libtiff.so.5 — 24.04 ships .so.6, the symlink covers the gap.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libx11-6 libxcb1 libpng16-16 libgl1 libglx0 libglvnd0 libegl1 \
+        libjpeg-turbo8 libxdmcp6 libbsd0 libxau6 libmd0 libxext6 \
+        libvulkan1 mesa-vulkan-drivers libglfw3 libdc1394-25 libopenblas0 \
+        libtiff6 libgtk-3-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/lib/x86_64-linux-gnu/libtiff.so.6 /usr/lib/x86_64-linux-gnu/libtiff.so.5
+
 # jellyfin-ffmpeg7 — shared build known to work with NVIDIA driver 550+
 # (BtbN static build fails with this driver version)
 RUN wget -q -O /tmp/jellyfin.gpg https://repo.jellyfin.org/jellyfin_team.gpg.key \

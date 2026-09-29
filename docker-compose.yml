@@ -47,8 +47,13 @@ services:
       # torch.hub cache (Beat This! checkpoint) — parent .cache is root-owned
       # in the image, so torch cannot mkdir it; persist like the HF cache.
       - /home/pawkor/.cache/torch:/home/ubuntu/.cache/torch
+      # Insta360 MediaSDK — user-supplied (EULA: not redistributable); path
+      # matches config.ini [paths] insta360_mediasdk relative to /app
+      - ./insta360-sdk:/app/insta360-sdk:ro
     environment:
       TZ: Europe/Warsaw
+      # graphics: EGL for the Insta360 MediaSDK stitcher (headless GPU render)
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video,graphics
       NUMBA_CACHE_DIR: /tmp/numba_cache
       MPLCONFIGDIR: /tmp/matplotlib_cache
       BROWSE_ROOT: /data
@@ -73,7 +78,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu, video, compute, utility]
+              capabilities: [gpu, video, compute, utility, graphics]
     restart: always
 
 volumes:

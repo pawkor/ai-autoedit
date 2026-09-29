@@ -1650,9 +1650,13 @@ def assemble(
                 if "source" in _csr and "camera" in _csr:
                     _src_cam_map[_csr["source"]] = _csr["camera"]
     _src_epoch: dict[str, float] = {}
-    _vext3 = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts"}
+    # .insv restricted to the front-lens VID_*_00_* file — it carries the
+    # recording's identity; LRV previews and _10_ companions would pollute
+    # the cadence/normalisation statistics with duplicate epochs.
+    _vext3 = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".insv"}
     for _svf in sorted(work_dir.rglob("*")):
         if _svf.suffix.lower() not in _vext3: continue
+        if _svf.suffix.lower() == ".insv" and "_00_" not in _svf.name: continue
         if "_autoframe" in _svf.parts: continue
         try:
             _r3 = subprocess.run(
@@ -1678,6 +1682,18 @@ def assemble(
                 try: _clip_offset[_roff["scene"]] = float(_os)
                 except ValueError: pass
 
+    # Per-clip durations: 360 clips (and any future producer) may differ from
+    # the global [clip_scan] clip_dur_sec — a fixed range length mis-sizes
+    # sync-ban windows and source_start/source_end.
+    _dur_map: dict[str, float] = {}
+    _dcp = auto_dir / "duration_cache.json"
+    if _dcp.exists():
+        try:
+            for _dk, _dv in _json.loads(_dcp.read_text()).items():
+                _dur_map[_dk.removesuffix(".mp4")] = float(_dv)
+        except Exception:
+            pass
+
     import re as _re3
     def _clip_range(scene_key: str):
         src = _clip_source(scene_key)
@@ -1690,7 +1706,7 @@ def assemble(
             m = _re3.search(r'-clip-(\d+)$', scene_key)
             if not m: return None
             t0 = epoch + int(m.group(1)) * _interval_s
-        return (t0, t0 + _clip_dur_s)
+        return (t0, t0 + _dur_map.get(scene_key, _clip_dur_s))
 
     # Propagate bans to other cameras: banned cam-A clip → ban all cam-B clips
     # overlapping the same absolute time window.
@@ -1959,7 +1975,7 @@ def assemble(
     # Build stem → normalised creation_time [0, 1] for chronological arc
     # 0 = first recording of the day, 1 = last recording of the day
     stem_to_time: dict[str, float] = {}
-    _video_ext2 = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts"}
+    _video_ext2 = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".insv"}
     # Read cam_offsets from config (same keys as [cam_offsets] in config.ini)
     _cam_offsets: dict[str, float] = {}
     if _cp.has_section("cam_offsets"):
@@ -1970,6 +1986,9 @@ def assemble(
                 pass
     for _vf in sorted(work_dir.rglob("*")):
         if _vf.suffix.lower() not in _video_ext2:
+            continue
+        # .insv: only the canonical front-lens file (see _vext3 note above)
+        if _vf.suffix.lower() == ".insv" and "_00_" not in _vf.name:
             continue
         if "_autoframe" in _vf.parts:
             continue

@@ -148,6 +148,17 @@ const TRANS = {
       'm.title_sort_order':'Sort order',
       'm.title_cancel':'Cancel render',
       'm.title_results':'Show render results',
+      'm.title_log':'Show the live render log',
+      'm.busy_render':'Rendering…', 'm.busy_shorts':'Generating…',
+      'm.busy_seq':'⏳ Sequencing…', 'm.busy_encode':'⏳ Encoding…',
+      'm.busy_review':'🧠 Reviewing…', 'm.busy_deep':'🎬 Rendering+watching…',
+      'm.lbl_360':'360 camera:', 'm.btn_360_scan':'⚈ Scan 360',
+      'm.title_360_scan':'AI-reframe the 360 recordings: CLIP picks the moments and the view direction, MediaSDK stitches with FlowState, clips land in the pool as camera “360”',
+      'm.lbl_insta360':'Insta360 SDK',
+      'm.title_insta360':'Optional: AI reframing of Insta360 360° recordings. Free SDK — apply at insta360.com/sdk/apply, then set [paths] insta360_mediasdk in config.ini. See README, “360 support”.',
+      'm.i360_missing':'✗ not configured — see README “360 support”',
+      'm.bnav_pool':'Pool', 'm.bnav_timeline':'Timeline',
+      'm.bnav_controls':'Controls', 'm.bnav_log':'Log',
       'm.title_preview':'Preview beat-aligned scene order',
       'm.title_shorts_top':'Generate short clips',
       'm.title_render':'Render highlight video',
@@ -459,6 +470,17 @@ const TRANS = {
       'm.title_sort_order':'Kolejność sortowania',
       'm.title_cancel':'Anuluj renderowanie',
       'm.title_results':'Pokaż wyniki renderowania',
+      'm.title_log':'Pokaż log renderowania na żywo',
+      'm.busy_render':'Renderowanie…', 'm.busy_shorts':'Generowanie…',
+      'm.busy_seq':'⏳ Sekwencjonowanie…', 'm.busy_encode':'⏳ Kodowanie…',
+      'm.busy_review':'🧠 Recenzowanie…', 'm.busy_deep':'🎬 Renderuje i ogląda…',
+      'm.lbl_360':'Kamera 360:', 'm.btn_360_scan':'⚈ Skanuj 360',
+      'm.title_360_scan':'Automatyczne kadrowanie nagrań 360: CLIP wybiera momenty i kierunek patrzenia, MediaSDK skleja z FlowState, klipy trafiają do puli jako kamera „360”',
+      'm.lbl_insta360':'Insta360 SDK',
+      'm.title_insta360':'Opcjonalne: automatyczne kadrowanie nagrań 360° z Insta360. Darmowe SDK — wniosek na insta360.com/sdk/apply, potem [paths] insta360_mediasdk w config.ini. Patrz README, „360 support”.',
+      'm.i360_missing':'✗ nieskonfigurowane — patrz README „360 support”',
+      'm.bnav_pool':'Pula', 'm.bnav_timeline':'Oś czasu',
+      'm.bnav_controls':'Sterowanie', 'm.bnav_log':'Log',
       'm.title_preview':'Podgląd kolejności scen',
       'm.title_shorts_top':'Generuj krótkie klipy',
       'm.title_render':'Renderuj highlight',
@@ -634,6 +656,7 @@ function _tm(key) {
 }
 
 function applyI18nModern() {
+  document.documentElement.lang = currentLang;   // initial load honors saved language
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const v = _tm(el.dataset.i18n);
     if (v !== el.dataset.i18n) el.textContent = v;
@@ -661,6 +684,7 @@ function applyI18nModern() {
 function toggleLang() {
   currentLang = currentLang === 'en' ? 'pl' : 'en';
   localStorage.setItem('lang', currentLang);
+  document.documentElement.lang = currentLang;
   applyI18nModern();
 }
 

@@ -37,6 +37,7 @@ Key features: music-driven render (beat-synced, multi-camera, chronological arc)
 - [Konfiguracja / Configuration reference](docs/configuration.md)
 - [Biblioteka muzyczna / Music library](docs/music.md)
 - [Grafana / Prometheus monitoring](docs/grafana.md)
+- [Insta360 360° — automatyczne kadrowanie / 360 support](docs/insta360.md)
 - [Roadmap funkcji / Feature roadmap](docs/features.md)
 
 ---

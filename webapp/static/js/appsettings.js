@@ -30,6 +30,18 @@ async function openAppSettingsModal() {
   const dataRootEl = document.getElementById('m-app-data-root');
   if (dataRootEl && cfg) dataRootEl.value = cfg.data_root ?? '';
 
+  const i360El = document.getElementById('m-app-insta360-status');
+  if (i360El && cfg) {
+    if (cfg.insta360_available) {
+      i360El.textContent = `✓ ${cfg.insta360_sdk_path}`;
+      i360El.style.color = 'var(--green-hi)';
+    } else {
+      i360El.textContent = (typeof _tm === 'function')
+        ? _tm('m.i360_missing') : '✗ not configured';
+      i360El.style.color = 'var(--muted)';
+    }
+  }
+
   _initVolSlider('m-app-music-vol', 'm-app-music-vol-val', settings?.music_vol_pct ?? 100);
 
   const clipCtxEl = document.getElementById('m-app-clip-context');

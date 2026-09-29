@@ -748,6 +748,17 @@ async def find_threshold_iter(params: dict, work_dir: Path, target_sec: float):
         yield {"done": True, "error": "No result"}
 
 
+def _i360_protected(auto_dir: Path) -> set:
+    """Scenes owned by the Insta360 360° scan (insta360_scan.py manifest).
+    Cleanup below rebuilds clips/frames from normal sources only — deleting
+    these would silently destroy externally stitched 360 clips."""
+    try:
+        import insta360_scan as _i360
+        return _i360.protected_scenes(auto_dir)
+    except Exception:
+        return set()
+
+
 async def run(params: dict, work_dir: Path,
               analyze_only: bool = False,
               selected_track: Optional[str] = None) -> AsyncIterator[str]:
@@ -1060,9 +1071,13 @@ async def run(params: dict, work_dir: Path,
             )
             # Full scan: clear all old clips and frames upfront
             if _scan_phase == "all":
-                _stale_clips  = (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
-                                 list((auto_dir / "autocut").glob("*-clip-*.mp4")))
-                _stale_frames = list((auto_dir / "frames").glob("*.jpg"))
+                _prot360 = _i360_protected(auto_dir)
+                _stale_clips  = [p for p in
+                                 (list((auto_dir / "autocut").glob("*-scene-*.mp4")) +
+                                  list((auto_dir / "autocut").glob("*-clip-*.mp4")))
+                                 if p.stem not in _prot360]
+                _stale_frames = [p for p in (auto_dir / "frames").glob("*.jpg")
+                                 if re.sub(r'_f\d+$', '', p.stem) not in _prot360]
                 if _stale_clips:
                     for _sf in _stale_clips: _sf.unlink()
                     yield f"  Cleared {len(_stale_clips)} old clip(s)"
@@ -1160,9 +1175,12 @@ async def run(params: dict, work_dir: Path,
     _csv_dir.mkdir(parents=True, exist_ok=True)
     _stored_sig = _detect_params_file.read_text().strip() if _detect_params_file.exists() else None
     if not clip_first and _norm_detect_sig(_stored_sig or "") != _norm_detect_sig(_detect_params_sig):
+        _prot360      = _i360_protected(auto_dir)
         stale_csv     = list(_csv_dir.glob("*-Scenes.csv"))
-        stale_clips   = list((auto_dir / "autocut").glob("*.mp4"))
-        stale_frames  = list((auto_dir / "frames").glob("*.jpg"))
+        stale_clips   = [p for p in (auto_dir / "autocut").glob("*.mp4")
+                         if p.stem not in _prot360]
+        stale_frames  = [p for p in (auto_dir / "frames").glob("*.jpg")
+                         if re.sub(r'_f\d+$', '', p.stem) not in _prot360]
         stale_trimmed = list((auto_dir / "trimmed").glob("*.mp4"))
         for f in stale_csv + stale_clips + stale_frames + stale_trimmed:
             f.unlink()
@@ -1518,7 +1536,7 @@ async def run(params: dict, work_dir: Path,
     # Remove stale frames from previous runs that no longer have a matching
     # scene clip (traditional mode only — clip_scan manages its own frames).
     if not clip_first:
-        _valid_stems = {sf.stem for sf in scene_files_main}
+        _valid_stems = {sf.stem for sf in scene_files_main} | _i360_protected(auto_dir)
         _stale = [p for p in (auto_dir / "frames").glob("*.jpg")
                   if re.sub(r'_f\d+$', '', p.stem) not in _valid_stems]
         if _stale:
@@ -1527,8 +1545,11 @@ async def run(params: dict, work_dir: Path,
             yield f"  Removed {len(_stale)} stale frame(s) from previous runs"
 
     # Upgrade old single-frame format (scene.jpg) to multi-frame (_f0/_f1/_f2)
+    # — 360 thumbnails are single-frame BY DESIGN and must survive this.
+    _prot360_ff = _i360_protected(auto_dir)
     _old_format = [p for p in (auto_dir / "frames").glob("*.jpg")
-                   if not re.search(r'_f\d+$', p.stem)]
+                   if not re.search(r'_f\d+$', p.stem)
+                   and p.stem not in _prot360_ff]
     if _old_format:
         for p in _old_format:
             p.unlink(missing_ok=True)
@@ -2042,6 +2063,16 @@ async def run(params: dict, work_dir: Path,
         (auto_dir / "analyze_result.json").write_text(json.dumps(_ar, indent=2))
     except Exception as _ar_err:
         yield f"  [warn] analyze_result.json not written: {_ar_err}"
+
+    # Re-merge Insta360 rows: the steps above rebuild the shared CSVs and
+    # caches from normal sources only, dropping foreign (camera=360) entries.
+    try:
+        import insta360_scan as _i360mod
+        _n360 = _i360mod.reintegrate(auto_dir)
+        if _n360:
+            yield f"  Insta360: re-merged {_n360} clip row(s) (camera=360)"
+    except Exception as _e360:
+        yield f"  [warn] insta360 reintegrate failed: {_e360}"
 
     if analyze_only:
         yield ""

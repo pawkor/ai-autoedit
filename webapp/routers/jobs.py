@@ -757,6 +757,12 @@ async def create_job(params: JobParams, analyze_only: bool = Query(default=True)
         raise HTTPException(400, f"Directory not found: {work_dir}")
     _validate_cameras(params.cameras, work_dir)
     _validate_cameras([params.cam_a, params.cam_b], work_dir)
+    # An in-flight 360 scan writes into _autoframe while analyze would be
+    # deleting/rebuilding the same files — refuse to overlap them.
+    for _j in jobs.values():
+        if (_j.params.get("work_dir") == str(work_dir)
+                and getattr(_j, "_i360_running", False)):
+            raise HTTPException(409, "360 scan is running for this project — wait for it to finish")
 
     d = _resolve_params(params.model_dump(), work_dir)
     d["work_dir"] = str(work_dir)
@@ -1307,6 +1313,78 @@ async def _preview_sequence_inner(job_id: str):
             slot["frame_url"] = None
 
     return data
+
+
+@router.get("/api/insta360-info")
+async def insta360_info(work_dir: str):
+    """Capability + discovery for the 360 UI section: SDK configured and
+    how many stitchable VID _00_/_10_ pairs sit in <work_dir>/360/."""
+    from webapp.state import insta360_sdk_path
+    wd = Path(os.path.expanduser(work_dir)).resolve()
+    if not in_browse_root(wd):
+        raise HTTPException(400, "work_dir outside browse root")
+    d = wd / "360"
+    pairs = 0
+    if d.is_dir():
+        for f in d.glob("VID_*_00_*.insv"):
+            if (d / f.name.replace("_00_", "_10_")).exists():
+                pairs += 1
+    return {"sdk_available": insta360_sdk_path() is not None, "pairs": pairs}
+
+
+@router.post("/api/jobs/{job_id}/insta360-scan")
+async def insta360_scan(job_id: str):
+    """Run src/insta360_scan.py for this project in the background,
+    streaming its output into the job log (visible in the Log modal)."""
+    from webapp.state import insta360_sdk_path
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404)
+    if job.status in ("running", "queued"):
+        raise HTTPException(409, "Job is running — wait for it to finish")
+    if insta360_sdk_path() is None:
+        raise HTTPException(400, "Insta360 MediaSDK not configured (config.ini [paths] insta360_mediasdk)")
+    if getattr(job, "_i360_running", False):
+        raise HTTPException(409, "360 scan already running for this job")
+    wd = Path(job.params["work_dir"])
+    if not (wd / "360").is_dir():
+        raise HTTPException(400, "No 360/ directory in this project")
+    job._i360_running = True
+
+    async def _run():
+        proc = None
+        try:
+            job.log.append("— 360 scan started —")
+            await job.broadcast({"type": "log", "line": job.log[-1]})
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(SCRIPT_DIR / "insta360_scan.py"),
+                job.params["work_dir"],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(SCRIPT_DIR),
+                start_new_session=True,
+            )
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    job.log.append(line)
+                    await job.broadcast({"type": "log", "line": line})
+            await proc.wait()
+            _tail = f"— 360 scan finished (exit {proc.returncode}) —"
+            job.log.append(_tail)
+            await job.broadcast({"type": "log", "line": _tail})
+        except Exception as e:
+            job.log.append(f"360 scan error: {e}")
+            try:
+                if proc is not None and proc.returncode is None:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                pass
+        finally:
+            job._i360_running = False
+
+    asyncio.create_task(_run())
+    return {"ok": True}
 
 
 @router.post("/api/jobs/{job_id}/critic")
@@ -2679,7 +2757,7 @@ async def job_frames(job_id: str):
         cam = _cm.get(stem)
         dirs = [_wd / cam] if cam else ([_wd / c for c in _cams_param] if _cams_param else [_wd])
         for d in dirs:
-            for ext in (".mp4", ".MP4", ".mov", ".MOV"):
+            for ext in (".mp4", ".MP4", ".mov", ".MOV", ".insv", ".INSV"):
                 p = d / (stem + ext)
                 if p.exists():
                     try:
@@ -2730,27 +2808,29 @@ async def job_frames(job_id: str):
 
     scored_scenes = set(df["scene"].tolist())
 
+    # frames_cc holds corrected copies of frames that existed at Picture Save
+    # time — scenes added later (e.g. a 360 scan) only have plain frames/
+    # thumbnails, so fall back there instead of dropping the row.
+    _frames_base = job.auto_dir() / "frames"
+    def _resolve_thumb(scene: str):
+        # CLIP-first: _f0 is the peak frame — never prefer _f1 (stale extract)
+        order = (["_f0.jpg", "_f1.jpg", ".jpg"] if "-clip-" in scene
+                 else ["_f1.jpg", "_f0.jpg", ".jpg"])
+        dirs = [frames_dir] + ([_frames_base] if frames_dir != _frames_base else [])
+        for d in dirs:
+            for suf in order:
+                p = d / (scene + suf)
+                if p.exists():
+                    return str(p)
+        return None
+
     frames = [
         {
             "scene":      row["scene"],
             "score":      round(float(row["score"]), 4),
             "duration":   durations.get(row["scene"]),
             "camera":     row.get("camera") if "camera" in df.columns else None,
-            "frame_url":  next(
-                              (str(p) for p in (
-                                  # CLIP-first scenes: _f0 is the peak frame — never prefer _f1 (stale step-4 extract)
-                                  [
-                                      frames_dir / (row["scene"] + "_f0.jpg"),
-                                      frames_dir / (row["scene"] + "_f1.jpg"),
-                                      frames_dir / (row["scene"] + ".jpg"),
-                                  ] if "-clip-" in row["scene"] else [
-                                      frames_dir / (row["scene"] + "_f1.jpg"),
-                                      frames_dir / (row["scene"] + "_f0.jpg"),
-                                      frames_dir / (row["scene"] + ".jpg"),
-                                  ]
-                              ) if p.exists()),
-                              None
-                          ),
+            "frame_url":  _resolve_thumb(row["scene"]),
             "file_start":     file_starts.get(row["scene"]),
             "duplicate":      row["scene"] in dup_scenes,
             "avg_brightness": round(float(row["avg_brightness"]), 1) if "avg_brightness" in df.columns and pd.notna(row.get("avg_brightness")) else None,

@@ -40,10 +40,14 @@ async def favicon():
 
 @router.get("/api/config")
 async def get_config():
+    from webapp.state import insta360_sdk_path
+    _sdk = insta360_sdk_path()
     return {
         "browse_root":          str(BROWSE_ROOT),
         "data_root":            str(_st.DATA_ROOT) if _st.DATA_ROOT else None,
         "data_root_configured": _st.DATA_ROOT is not None,
+        "insta360_available":   _sdk is not None,
+        "insta360_sdk_path":    str(_sdk) if _sdk else None,
     }
 
 

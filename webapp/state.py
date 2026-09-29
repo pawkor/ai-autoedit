@@ -45,6 +45,28 @@ SCRIPT_DIR = APP_DIR / "src"
 sys.path.insert(0, str(SCRIPT_DIR))
 import pipeline  # noqa: E402
 
+
+def insta360_sdk_path() -> Path | None:
+    """MediaSDKTest binary from [paths] insta360_mediasdk in the main
+    config.ini (relative paths resolve against the repo root). None when
+    unset, missing, not executable, or without a models/ dir beside it —
+    the UI hides every 360 control in that case."""
+    cp = configparser.ConfigParser()
+    cp.read(APP_DIR / "config.ini")
+    raw = cp.get("paths", "insta360_mediasdk", fallback="").strip()
+    if not raw:
+        return None
+    p = Path(os.path.expanduser(raw))
+    if not p.is_absolute():
+        p = APP_DIR / p
+    try:
+        p = p.resolve()
+        if p.is_file() and os.access(p, os.X_OK) and (p.parent / "models").is_dir():
+            return p
+    except OSError:
+        pass
+    return None
+
 WEBAPP_DIR    = Path(__file__).resolve().parent
 STATIC_DIR    = WEBAPP_DIR / "static"
 USER_DATA_DIR = Path(os.environ.get("AI_AUTOEDIT_DATA", str(WEBAPP_DIR)))
