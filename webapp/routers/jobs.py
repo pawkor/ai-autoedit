@@ -25,7 +25,6 @@ from webapp.state import (
     USER_DATA_DIR,
     SCRIPT_DIR,
     JOBS_DIR,
-    BROWSE_ROOT,
     in_browse_root,
     jobs,
     shorts_semaphore,
@@ -382,10 +381,13 @@ def _resolve_params(d: dict, work_dir: Path) -> dict:
 
 
 def _validate_cameras(cameras, work_dir: Path) -> None:
+    _root = work_dir.resolve()
     for cam in (cameras or []):
         if cam:
             resolved = (work_dir / cam).resolve()
-            if not str(resolved).startswith(str(work_dir.resolve())):
+            # Path ancestry, not string prefix: "/tmp/project-sibling"
+            # passed a startswith() check against "/tmp/project" (audit #10).
+            if resolved != _root and _root not in resolved.parents:
                 raise HTTPException(400, f"Invalid camera path: {cam}")
 
 
@@ -513,7 +515,6 @@ async def _acr_preselect(job: Job) -> Optional[str]:
 # ── Shorts helpers ────────────────────────────────────────────────────────────
 
 async def _run_one_short(job: Job, idx: int, total: int, version: str = "") -> bool:
-    import pipeline as _pipeline
     prefix = f"[{idx}/{total}] " if total > 1 else ""
     try:
         cmd = [sys.executable, str(SCRIPT_DIR / "make_shorts.py"), job.params["work_dir"]]
@@ -573,7 +574,6 @@ async def _run_shorts(job: Job, count: int = 1, parallel: bool = False):
     parallel=False: standalone — own job.status/phase lifecycle.
     Per-job _shorts_lock serialises back-to-back calls (queue instead of reject).
     """
-    import pipeline as _pipeline
     async with job._shorts_lock:
         _shorts_cancelled = False
         job.shorts_running = True
@@ -843,6 +843,12 @@ async def rerun_job(job_id: str, params: JobParams):
         raise HTTPException(400, f"Directory not found: {work_dir}")
     _validate_cameras(params.cameras, work_dir)
     _validate_cameras([params.cam_a, params.cam_b], work_dir)
+    # Same overlap guard as create_job (audit #8): analyze deletes/rebuilds
+    # the files an in-flight 360 scan is writing.
+    for _j in jobs.values():
+        if (_j.params.get("work_dir") == str(work_dir)
+                and getattr(_j, "_i360_running", False)):
+            raise HTTPException(409, "360 scan is running for this project — wait for it to finish")
 
     d = _resolve_params(params.model_dump(), work_dir)
     d["work_dir"] = str(work_dir)
@@ -882,13 +888,13 @@ async def rerun_job(job_id: str, params: JobParams):
 
 @router.post("/api/jobs/{job_id}/estimate")
 async def estimate_job(job_id: str, body: dict = Body({})):
-    import pipeline as _pipeline
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
     if job.status in ("running", "queued"):
         raise HTTPException(409, "Job is running")
     merged = {**job.params, **body}
+    import pipeline as _pipeline
     result = await _pipeline.estimate(merged, job.work_dir())
     if not result:
         raise HTTPException(400, "No scores CSV — run analysis first")
@@ -1304,7 +1310,6 @@ async def _preview_sequence_inner(job_id: str):
     data = json.loads(seq_path.read_text())
 
     # Attach frame URLs (relative paths → web paths)
-    work_dir_str = str(job.params.get("work_dir", ""))
     for slot in data.get("sequence", []):
         fp = slot.get("frame_path")
         if fp:
@@ -1344,8 +1349,12 @@ async def insta360_scan(job_id: str):
         raise HTTPException(409, "Job is running — wait for it to finish")
     if insta360_sdk_path() is None:
         raise HTTPException(400, "Insta360 MediaSDK not configured (config.ini [paths] insta360_mediasdk)")
-    if getattr(job, "_i360_running", False):
-        raise HTTPException(409, "360 scan already running for this job")
+    # Per WORK DIR, not per job — two job entries can point at one project
+    # and the scan writes into the shared _autoframe (audit #8).
+    for _j in jobs.values():
+        if (_j.params.get("work_dir") == job.params.get("work_dir")
+                and getattr(_j, "_i360_running", False)):
+            raise HTTPException(409, "360 scan already running for this project")
     wd = Path(job.params["work_dir"])
     if not (wd / "360").is_dir():
         raise HTTPException(400, "No 360/ directory in this project")
@@ -1366,7 +1375,9 @@ async def insta360_scan(job_id: str):
             )
             async for raw in proc.stdout:
                 line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
+                _low = line.lower()
+                if line and not any(_t in _low for _t in
+                                    ("huggingface", "hf hub", "hf_token")):
                     job.log.append(line)
                     await job.broadcast({"type": "log", "line": line})
             await proc.wait()
@@ -1506,7 +1517,6 @@ async def timeline_critic(job_id: str, mode: str = "quick"):
 @router.post("/api/jobs/{job_id}/preview-render")
 async def preview_render(job_id: str):
     """Render a low-quality preview from preview_sequence.json (NVENC 1080p + music)."""
-    import tempfile
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404)
@@ -1523,60 +1533,60 @@ async def preview_render(job_id: str):
     if not sequence:
         raise HTTPException(400, "Empty sequence")
 
-    # Music: prefer job param, fall back to sequence metadata
-    music_path_str = (
-        job.params.get("selected_track") or
-        job.params.get("music_file") or
-        data.get("music", "")
-    )
-    music_ss = float(data.get("music_ss") or sequence[0].get("music_start", 0.0))
-
     output = auto_dir / "preview_draft.mp4"
-    concat_path = auto_dir / "preview_concat.txt"
-
-    # Build ffconcat file — inpoint + outpoint per slot
-    lines = ["ffconcat version 1.0"]
-    for slot in sequence:
-        cp = slot.get("clip_path", "")
-        if not cp or not Path(cp).exists():
-            continue
-        ss   = float(slot.get("clip_ss", 0))
-        dur  = float(slot.get("duration", 0))
-        lines.append(f"file '{cp}'")
-        lines.append(f"inpoint {ss:.4f}")
-        lines.append(f"outpoint {ss + dur:.4f}")
-    concat_path.write_text("\n".join(lines))
-
-    # FFMPEG: concat → scale 1080p → NVENC; add music if available
-    _vf = ("scale=1920:1080:force_original_aspect_ratio=decrease,"
-           "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", str(concat_path),
-    ]
-    has_music = bool(music_path_str and Path(music_path_str).exists())
-    if has_music:
-        cmd += ["-ss", f"{music_ss:.4f}", "-i", music_path_str]
-
-    cmd += ["-vf", _vf, "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "28"]
-    if has_music:
-        cmd += ["-c:a", "aac", "-b:a", "160k", "-shortest"]
+    # Shared builder (audit #22): the old private ffconcat path silently
+    # dropped photo slots (they carry `path`, not `clip_path`) and applied
+    # neither camera crop nor grading — the deep critic then reviewed a
+    # different edit than the one that ships.
+    p = _build_preview_inputs(job)
+    cmd = [p["ffmpeg_bin"], "-y", "-hide_banner", "-loglevel", "error"]
+    cmd += p["inputs"]
+    if p["has_music"]:
+        cmd += ["-ss", f"{p['music_ss']:.4f}", "-i", p["music_path_str"]]
+    cmd += ["-filter_complex", ";".join(p["filter_parts"]), "-map", "[out]"]
+    cmd += p["vcodec"]
+    if p["has_music"]:
+        cmd += ["-map", f"{p['n']}:a:0", "-c:a", "aac", "-b:a", "160k", "-shortest"]
     else:
         cmd += ["-an"]
     cmd.append(str(output))
 
+    # One draft writer at a time: a concurrent /preview-render (or the deep
+    # critic's internal call) would interleave writes into the same file.
+    if getattr(job, "_draft_running", False):
+        raise HTTPException(409, "Preview render already in progress")
+    job._draft_running = True
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
         if proc.returncode != 0:
             raise HTTPException(500,
                 f"Preview render failed:\n{stdout.decode(errors='replace')[-2000:]}")
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError) as _pe:
+        # ffmpeg kept writing the shared draft after we gave up (audit #23)
+        if proc is not None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:
+                pass
+        if isinstance(_pe, asyncio.CancelledError):
+            raise
         raise HTTPException(504, "Preview render timed out (>180s)")
+    finally:
+        job._draft_running = False
 
     return {"url": str(output)}
 
@@ -1648,8 +1658,23 @@ def _build_preview_inputs(job, max_clips: int = 0) -> dict:
 
     import re as _re_cam
     _single_cam_crop = len(cam_crop) == 1 and next(iter(cam_crop.values()), False)
+    # source stem → camera name (audit #27): cam_crop is keyed by CAMERA
+    # names, while the stripped clip stem is the recording's filename —
+    # "VID_…" matched no key and the configured crop was silently lost.
+    _src2cam: dict[str, str] = {}
+    _cs_csv = Path(job.params.get("work_dir", "")) / "_autoframe" / "camera_sources.csv"
+    if _cs_csv.exists():
+        try:
+            for _ln in _cs_csv.read_text().splitlines()[1:]:
+                _s, _, _c = _ln.partition(",")
+                if _s and _c:
+                    _src2cam[_s.strip()] = _c.strip()
+        except OSError:
+            pass
+
     def _per_cam_filter(clip_path: str) -> str:
-        cam = _re_cam.sub(r'-(scene|clip)-\d+$', '', Path(clip_path).stem)
+        src = _re_cam.sub(r'-(scene|clip)-\d+$', '', Path(clip_path).stem)
+        cam = _src2cam.get(src, src)
         use_crop = cam_crop.get(cam) if cam in cam_crop else (_single_cam_crop if cam_crop else False)
         base = _norm_crop if use_crop else _norm_pad
         return (base + "," + cc_chain) if cc_chain else base
@@ -2570,7 +2595,7 @@ async def detect_cam_offsets(job_id: str, data: dict = Body(default={})):
             ct_str = info.get("format", {}).get("tags", {}).get("creation_time", "")
             if not ct_str:
                 return None
-            from datetime import datetime, timezone
+            from datetime import datetime
             ct = datetime.fromisoformat(ct_str.replace("Z", "+00:00"))
             return ct.timestamp()
         except Exception:
@@ -2806,7 +2831,6 @@ async def job_frames(job_id: str):
             if _epoch is not None:
                 file_starts[_scene] = round(_epoch + float(_offset), 1)
 
-    scored_scenes = set(df["scene"].tolist())
 
     # frames_cc holds corrected copies of frames that existed at Picture Save
     # time — scenes added later (e.g. a 360 scan) only have plain frames/
@@ -2846,7 +2870,6 @@ async def job_frames(job_id: str):
 
 @router.get("/api/jobs/{job_id}/result")
 async def job_result(job_id: str):
-    import pipeline as _pipeline
     from webapp.routers.youtube import _read_yt_urls
     from webapp.routers.instagram import _read_ig_urls
 

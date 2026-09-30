@@ -312,17 +312,6 @@ def build_gps_index(
     return index
 
 
-def load_gps_index(auto_dir: Path) -> dict[str, list[dict]]:
-    """Load cached GPS index. Returns {} if not found."""
-    cache_path = auto_dir / "gps_index.json"
-    if not cache_path.exists():
-        return {}
-    try:
-        return json.loads(cache_path.read_text())
-    except Exception:
-        return {}
-
-
 # ── Clip time helpers ─────────────────────────────────────────────────────────
 
 def _clip_start_ts(clip_path: Path, ffprobe: str = "ffprobe") -> float | None:

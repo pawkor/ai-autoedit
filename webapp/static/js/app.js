@@ -207,6 +207,7 @@ const TRANS = {
       'm.tip_score_all':'Run CLIP scoring on all cameras. Required for music-driven multicam. Auto-enabled with CLIP-first.',
       'm.tip_cam_pattern':'Camera cut pattern. ab = strict alternation, aabaab = 2:1 rhythm, aabb = pairs. Empty = auto group-2.',
       'm.tip_beats_shot':'Beats per shot per energy level. Rock/metal → lower (2/3/4). Pop/RnB → default (3/4/6). Ignored when auto is on.',
+      'm.tip_beats_method':'segments: cut speed follows the SONG STRUCTURE — verse/chorus/bridge from structural analysis blended with onset events (35% segment + 15% loudness + 50% percussive/vocal attacks), so the chorus cuts fast even at similar loudness. section energy: loudness only — smoothed RMS tiers decide beats/shot; also the automatic fallback when structure analysis finds nothing.',
       'm.tip_beats_auto':'Auto mode: shot duration driven by music energy. Quiet intro → long shots, loud chorus → fast cuts.',
       'm.lbl_description':'Description',
       'm.ph_description':'Describe the footage (location, activity, mood)…',
@@ -257,6 +258,7 @@ const TRANS = {
       'm.help.beats_shot':
         'How many music beats each shot lasts. Auto mode adapts dynamically — quiet intro gets long shots, loud chorus gets fast cuts. ' +
         'Manual: set a fixed number of beats per shot for each energy level (fast/mid/slow). ' +
+        'Method — segments: the song structure drives the cut speed (verse/chorus plus percussive/vocal attacks, so the chorus cuts fast even when loudness barely changes); section energy: loudness (RMS) tiers only, simpler and used as the fallback. ' +
         'Adj. gap: minimum capture-time jump (seconds) between consecutive shots, so neighbouring cuts never come from the same moment of the ride; 0 disables it.',
       'm.help.description':
         'Describe the footage — location, route, road conditions, mood. Used by Claude AI to generate CLIP prompts automatically when you click ✦ Generate prompts.',
@@ -529,6 +531,7 @@ const TRANS = {
       'm.tip_score_all':'Ocenia CLIP-em wszystkie kamery. Wymagane dla music-driven multicam. Włącza się automatycznie z CLIP-first.',
       'm.tip_cam_pattern':'Wzorzec cięcia kamer. ab = ścisłe przeplatanie, aabaab = rytm 2:1, aabb = pary. Puste = auto grupa-2.',
       'm.tip_beats_shot':'Beaty na ujęcie wg poziomu energii. Rock/metal → mniej (2/3/4). Pop/RnB → domyślne (3/4/6). Ignorowane w trybie auto.',
+      'm.tip_beats_method':'segments: tempo cięć podąża za STRUKTURĄ UTWORU — zwrotka/refren/bridge z analizy strukturalnej zmieszane z akcentami (35% segment + 15% głośność + 50% ataki perkusyjne/wokalne), więc refren tnie szybko nawet przy podobnej głośności. section energy: tylko głośność — wygładzone progi RMS decydują o beats/shot; to też automatyczny fallback, gdy analiza struktury nic nie znajdzie.',
       'm.tip_beats_auto':'Tryb auto: czas ujęcia dopasowany do energii muzyki. Ciche intro → długie ujęcia, głośny refren → szybkie cięcia.',
       'm.lbl_description':'Opis',
       'm.ph_description':'Opisz materiał (lokalizacja, aktywność, nastrój)…',

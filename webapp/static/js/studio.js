@@ -625,12 +625,6 @@ function _pinnedTrackObj() {
   try { return _allTracks?.find(t => t.file === _pinnedTrack) || null; } catch { return null; }
 }
 
-function _timelinePxPerSec(refDurSec) {
-  if (!refDurSec) return 18;
-  // sidebar 220 + right panel 180 + track label 44 + gap 8 + padding 24 + safety 24 = 500
-  const available = Math.max(200, window.innerWidth - 500);
-  return Math.max(4, Math.floor(available / refDurSec));
-}
 
 // drawTimeline — builds clip DOM elements in the timeline track
 function drawTimeline() {
@@ -1270,13 +1264,16 @@ function _appendLog(line) {
   _updateLogBadge();
 }
 
-function clearLog() {
+function clearLog(alsoServer = false) {
+  // Local-only by default: openProject calls this while switching, and the
+  // server DELETE was erasing the SELECTED project's persisted log history
+  // (audit High #1). The server wipe is reserved for the explicit UI action.
   _logLines = [];
   const el = document.getElementById('m-log-lines');
   if (el) el.innerHTML = '';
   const meta = document.getElementById('m-log-meta');
   if (meta) meta.textContent = '';
-  if (_jobId) {
+  if (alsoServer && _jobId) {
     fetch(`/api/jobs/${_jobId}/log`, { method: 'DELETE' }).catch(() => {});
   }
 }

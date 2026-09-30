@@ -15,7 +15,6 @@ from webapp.state import (
     jobs,
     _get_session_user,
     ENABLE_AUTH,
-    _NO_CACHE_EXTS,
     STATIC_DIR,
     wcfg,
     _stats_subscribers,

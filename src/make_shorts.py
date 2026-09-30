@@ -17,7 +17,6 @@ Usage:
 import argparse
 import csv
 import fcntl
-import io
 import json
 import math
 import os
@@ -445,42 +444,6 @@ def pick_music(music_dirs: list[Path]) -> Path | None:
             fcntl.flock(_lf, fcntl.LOCK_UN)
 
     return chosen
-
-
-def read_project_title(work_dir: Path) -> list[str]:
-    """
-    Read [job] title from work_dir/config.ini and split into intro words.
-
-    "2025 Bałkany / The Balkans" → ["2025", "Bałkany", "The Balkans"]
-    Splits on '/' first (phrase boundary), then each phrase is kept whole
-    unless it's a single token — giving one word/phrase per shot.
-    """
-    try:
-        import configparser
-        cp = configparser.ConfigParser()
-        cp.read(str(work_dir / "config.ini"))
-        raw = cp.get("job", "title", fallback="").replace("\\n", "\n").strip()
-        if not raw:
-            return []
-        # Use only the first line (skip subtitles on line 2+)
-        first_line = raw.splitlines()[0].strip()
-        # Rule: text before first '/' is split word-by-word (year, place name…)
-        #       text after '/' stays as one phrase (translation, subtitle)
-        # e.g. "2025 Bałkany / The Balkans" → ["2025", "BAŁKANY", "THE BALKANS"]
-        parts = first_line.split("/", 1)
-        words: list[str] = []
-        # Part before '/': split by spaces
-        for token in parts[0].split():
-            if token:
-                words.append(token.upper())
-        # Part after '/' (if present): one phrase
-        if len(parts) > 1:
-            phrase = parts[1].strip()
-            if phrase:
-                words.append(phrase.upper())
-        return words
-    except Exception:
-        return []
 
 
 def _next_version(work_dir: Path) -> str:

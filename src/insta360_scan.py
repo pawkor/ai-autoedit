@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,6 +56,13 @@ EXTRA_NEG = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_FORCE_CPU_ACCEL = threading.Event()   # set after the first auto→cpu fallback
+
+# Hub policy (src/hf_policy.py) is applied in main(), NOT at import time:
+# pipeline.py imports this module merely for the ownership manifest, and an
+# import-time apply() consumed the online window / pinned offline env in the
+# long-lived webapp process (audit finding).
+import hf_policy
 
 
 def log(msg: str) -> None:
@@ -152,6 +160,7 @@ def scan_lrv(lrv: Path, cache: Path, interval: float, yaws: list[int],
                 return [tuple(r) for r in d["rows"]]
         except Exception:
             pass
+    log(f"    extracting {len(yaws)} yaw views every {interval:g}s …")
     with tempfile.TemporaryDirectory(prefix="i360scan_") as _td:
         td = Path(_td)
         parts = [f"[0:v]fps=1/{interval},"
@@ -188,8 +197,13 @@ def make_scorer(pos: list[str], neg: list[str], neg_w: float):
     import open_clip
     from PIL import Image
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        MODEL, pretrained=PRETRAINED)
+    try:
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            MODEL, pretrained=PRETRAINED)
+    except Exception as _e:
+        raise SystemExit(
+            f"model load failed ({_e}) — if the HF cache is incomplete, "
+            f"run once with HF_ONLINE=1 to download") from _e
     model = model.to(dev).eval()
     tok = open_clip.get_tokenizer(MODEL)
     import torch as _t
@@ -200,6 +214,8 @@ def make_scorer(pos: list[str], neg: list[str], neg_w: float):
     def scorer(items):
         rows = []
         for i in range(0, len(items), BATCH):
+            if i and (i // BATCH) % 20 == 0:
+                log(f"    scored {i}/{len(items)} views")
             chunk = items[i:i + BATCH]
             imgs = _t.stack([preprocess(Image.open(p).convert("RGB"))
                              for p, _, _ in chunk]).to(dev)
@@ -239,7 +255,9 @@ def select_windows(rows, dur_limit: float, clip_dur: float,
 # ── phase C: stitch ──────────────────────────────────────────────────────────
 
 def stitch_windows(sdk: Path, pair: dict, windows: list[dict], fps: float,
-                   clip_dur: float, out_dir: Path) -> dict | None:
+                   clip_dur: float, out_dir: Path,
+                   stitch_size: str = STITCH_SIZE,
+                   stitch_type: str = "optflow") -> dict | None:
     """One MediaSDKTest run for all windows → jpgs in out_dir.
     Returns {window_idx: [frame indices]} or None on failure."""
     frames_per = max(1, round(clip_dur * fps))
@@ -252,18 +270,20 @@ def stitch_windows(sdk: Path, pair: dict, windows: list[dict], fps: float,
         all_idx += idxs
     out_dir.mkdir(parents=True, exist_ok=True)
     _budget = int(120 * len(windows) + 600)
-    _logf = out_dir.parent / f"{pair['stem']}.sdk.log"
-    # Rendering accel: try auto first; a Vulkan-less environment (e.g. the
-    # container without a GPU ICD) segfaults there — the SDK's documented
-    # remedy is -image_processing_accel cpu, so retry with it.
-    for _accel in ("auto", "cpu"):
+    _logf = out_dir / "sdk.log"   # inside the per-invocation dir
+    # Rendering accel: try auto first; broken GPU paths either segfault or
+    # render black frames — the SDK's documented remedy is
+    # -image_processing_accel cpu. Once one file needed the cpu retry, the
+    # rest of the run skips the doomed auto attempt (same environment).
+    _accels = ("cpu",) if _FORCE_CPU_ACCEL.is_set() else ("auto", "cpu")
+    for _accel in _accels:
         cmd = [str(sdk),
                "-inputs", str(pair["vid00"]), str(pair["vid10"]),
                "-image_sequence_dir", str(out_dir),
                "-image_type", "jpg",
                "-export_frame_index", "-".join(map(str, all_idx)),
-               "-stitch_type", "optflow",
-               "-output_size", STITCH_SIZE,
+               "-stitch_type", stitch_type,
+               "-output_size", stitch_size,
                # FlowState only, NO DirectionLock: direction lock keeps the
                # file's INITIAL heading, while the LRV scan picks yaw
                # relative to the camera's current heading — after a turn the
@@ -292,11 +312,36 @@ def stitch_windows(sdk: Path, pair: dict, windows: list[dict], fps: float,
             out = ""
         # Argument errors DO return non-zero; runtime errors print to stdout
         # and still exit 0 — validate artifacts + feature status instead.
-        produced = len(list(out_dir.glob("*.jpg")))
-        if (r.returncode == 0 and produced >= len(all_idx) * 0.9
-                and "error:" not in out.lower()):
+        produced_files = sorted(out_dir.glob("*.jpg"))
+        produced = len(produced_files)
+        # The SDK's error callback prints lines starting with "error:"; a
+        # plain substring match also caught benign "glGetError:" GL spam.
+        _err_line = any(l.strip().lower().startswith("error:")
+                        for l in out.splitlines())
+        # Headless-GL trap: a broken GPU path renders BLACK frames while
+        # reporting success — sample a few frames and reject an all-black
+        # export so the cpu retry kicks in.
+        _black = False
+        if produced:
+            try:
+                from PIL import Image
+                import numpy as _np
+                _samples = [produced_files[0],
+                            produced_files[produced // 2],
+                            produced_files[-1]]
+                _black = all(
+                    _np.asarray(Image.open(p).convert("L")).mean() < 2.0
+                    for p in _samples)
+            except Exception:
+                _black = False
+        if _black:
+            log(f"  ! stitch of {pair['stem']} produced black frames "
+                f"(accel={_accel}) — broken GPU render path")
+        if (r.returncode == 0 and produced >= len(all_idx) * 0.98
+                and not _err_line and not _black):
             if _accel == "cpu":
-                log("    (image processing on CPU — no usable Vulkan here)")
+                log("    (image processing on CPU — no usable GPU render here)")
+                _FORCE_CPU_ACCEL.set()
             if "flowstate: ON" not in out:
                 log(f"  ! warning: FlowState not confirmed for {pair['stem']} "
                     f"(gyro missing?) — horizon may roll")
@@ -415,6 +460,12 @@ def track_window(jpg_dir: Path, idxs: list, fps: float, yaw0: float):
     if (fwd_ok + bwd_ok - 2) / max(1, len(idxs)) < TRACK_OK_RATIO:
         return None
     traj = list(reversed(bwd))[:-1] + fwd
+    # Runaway guard: a tracker sliding off the subject reports "ok" while
+    # panning 100°+ across a 6s window (seen in production logs). A genuine
+    # landmark pass stays well under this; reject and fall back to fixed yaw.
+    _yaws_all = [t[0] for t in traj]
+    if max(_yaws_all) - min(_yaws_all) > 90.0:
+        return None
 
     def _smooth(vals, w=7):
         return [sum(vals[max(0, i - w // 2):i + w // 2 + 1])
@@ -537,7 +588,13 @@ def save_manifest(auto_dir: Path, rows: list[dict], cam_sources: list[str],
             old = json.loads(p.read_text())
         except Exception:
             old = {}
-    by_scene = {r["scene"]: r for r in old.get("rows", [])}
+    # Sources covered by THIS run replace their scene set wholesale —
+    # unioning kept clips 005-008 alive forever after --per-file shrank
+    # (audit #12).
+    _run_stems = set(cam_sources)
+    by_scene = {r["scene"]: r for r in old.get("rows", [])
+                if not any(r["scene"].startswith(f"{s}-clip-")
+                           for s in _run_stems)}
     for r in rows:
         by_scene[r["scene"]] = r
     p.write_text(json.dumps({
@@ -585,8 +642,12 @@ def merge_outputs(auto_dir: Path, new_rows: list[dict],
     csv_path = auto_dir / "scene_scores_allcam.csv"
     existing: list[dict] = []
     cols = list(CSV_COLS)
-    if csv_path.exists():
-        with open(csv_path) as fh:
+    _seed = csv_path if csv_path.exists() else auto_dir / "scene_scores.csv"
+    # Seeding from the main CSV matters: creating allcam from ONLY the 360
+    # rows made every allcam-preferring consumer lose the normal footage
+    # (audit #17).
+    if _seed.exists():
+        with open(_seed) as fh:
             rd = csv.DictReader(fh)
             cols = rd.fieldnames or cols
             new_scenes = {r["scene"] for r in new_rows}
@@ -641,7 +702,20 @@ def main() -> int:
     ap.add_argument("--no-track", dest="track", action="store_false",
                     default=True,
                     help="disable object-lock tracking (fixed yaw per clip)")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="parallel MediaSDK stitch jobs across files "
+                         "(measure RAM/VRAM before going above 1)")
+    ap.add_argument("--stitch-size", default=STITCH_SIZE,
+                    help="equirect stitch resolution WxH (3840x1920 default; "
+                         "4800x2400 / 5760x2880 for sharper reframes)")
+    ap.add_argument("--stitch-type", default="optflow",
+                    choices=["optflow", "dynamicstitch"],
+                    help="SDK stitch algorithm (dynamicstitch = faster)")
     a = ap.parse_args()
+    if not re.fullmatch(r"\d{3,5}x\d{3,5}", a.stitch_size):
+        sys.exit(f"bad --stitch-size: {a.stitch_size}")
+    a.jobs = max(1, min(8, a.jobs))
+    hf_policy.apply()   # before the lazy torch/open_clip imports
 
     work_dir = Path(a.work_dir).resolve()
     dir360 = work_dir / a.dir360
@@ -670,13 +744,11 @@ def main() -> int:
     autocut = auto_dir / "autocut"
     autocut.mkdir(parents=True, exist_ok=True)
 
-    scorer = None
     yaws = [round(i * 360 / a.yaws) for i in range(a.yaws)]
-    new_rows: list[dict] = []
-    cam_sources: list[str] = []
-    durations: dict = {}
-    n_clips = 0
 
+    # ── Pass 1: scan + select every pair (holds the CUDA model) ─────────────
+    scorer = None
+    plans: list[dict] = []
     for pi, pair in enumerate(pairs):
         stem = pair["stem"]
         log(f"[{pi + 1:2d}/{len(pairs)}] {stem}")
@@ -714,65 +786,51 @@ def main() -> int:
             continue
         log(f"  windows: {len(wins)}  "
             + " ".join(f"{w['ts']:.0f}s/y{w['yaw']}" for w in wins))
-
-        # done-marker: skip already-assembled window sets
         wsig = hashlib.sha256(json.dumps(
-            [wins, a.clip_dur, a.out_size, a.track], sort_keys=True).encode()
+            [wins, a.clip_dur, a.out_size, a.track,
+             a.stitch_size, a.stitch_type], sort_keys=True).encode()
         ).hexdigest()[:16]
-        marker = i360_dir / "done" / f"{stem}.{wsig}"
-        if marker.exists():
-            log("  · cached (clips already assembled)")
-            for wi, w in enumerate(wins):
-                scene = f"{stem}-clip-{wi + 1:03d}"
-                if (autocut / f"{scene}.mp4").exists():
-                    new_rows.append(_row(scene, w))
-                    durations[scene] = a.clip_dur
-            cam_sources.append(stem)
-            continue
+        plans.append({"pair": pair, "wins": wins, "fps": fps, "ct": ct,
+                      "wsig": wsig})
 
-        # C: stitch
-        stitch_dir = i360_dir / "tmp" / stem
-        if stitch_dir.exists():
-            shutil.rmtree(stitch_dir)
-        log(f"  stitching {len(wins)} window(s) via MediaSDK …")
-        idx_map = stitch_windows(sdk, pair, wins, fps, a.clip_dur, stitch_dir)
-        if idx_map is None:
-            shutil.rmtree(stitch_dir, ignore_errors=True)
-            continue
+    # Free the SigLIP model BEFORE stitching — it would otherwise hold VRAM
+    # while the SDK (Vulkan) and NVENC need the same GPU.
+    if scorer is not None:
+        scorer = None
+        try:
+            import gc
+            import torch
+            gc.collect()
+            torch.cuda.empty_cache()
+            log("Scan model released")
+        except Exception:
+            pass
 
-        # D: assemble (D2: object-lock trajectory when it tracks reliably)
-        ok = 0
-        for wi, w in enumerate(wins):
-            scene = f"{stem}-clip-{wi + 1:03d}"
-            clip = autocut / f"{scene}.mp4"
-            made = False
-            if a.track:
-                traj = track_window(stitch_dir, idx_map[wi], fps,
-                                    float(w["yaw"]))
-                if traj is not None:
-                    made = assemble_tracked(
-                        ffmpeg, stitch_dir, idx_map[wi], fps, traj, clip,
-                        pair["vid00"], w["ts"], a.clip_dur, ct, out_w, out_h)
-                    if made:
-                        log(f"    clip {wi + 1}: tracked "
-                            f"(yaw {traj[0][0]:.0f}→{traj[-1][0]:.0f}°, "
-                            f"pitch {traj[0][1]:+.0f}→{traj[-1][1]:+.0f}°)")
-            if not made:
-                made = assemble_clip(ffmpeg, stitch_dir, idx_map[wi], fps,
-                                     w["yaw"], clip, pair["vid00"], w["ts"],
-                                     a.clip_dur, ct, out_w, out_h)
-            if made:
-                extract_pool_frame(ffmpeg, clip, auto_dir / "frames", scene)
-                new_rows.append(_row(scene, w))
-                durations[scene] = a.clip_dur
-                ok += 1
-        shutil.rmtree(stitch_dir, ignore_errors=True)
-        if ok:
-            cam_sources.append(stem)
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.touch()
-            n_clips += ok
-        log(f"  clips: {ok}/{len(wins)}")
+    # ── Pass 2: stitch + assemble (optionally N pairs in parallel) ──────────
+    # NVENC sessions are the scarce resource (consumer GPUs allow ~5):
+    # bound them separately from SDK job count.
+    enc_sem = threading.Semaphore(2)
+    ctx = {"a": a, "ffmpeg": ffmpeg, "sdk": sdk, "auto_dir": auto_dir,
+           "autocut": autocut, "i360_dir": i360_dir, "enc_sem": enc_sem,
+           "out_w": out_w, "out_h": out_h}
+    if a.jobs > 1 and len(plans) > 1:
+        log(f"Stitching {len(plans)} file(s) with {a.jobs} parallel job(s)")
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=a.jobs) as ex:
+            results = list(ex.map(lambda p: _process_pair(p, ctx), plans))
+    else:
+        results = [_process_pair(p, ctx) for p in plans]
+
+    new_rows: list[dict] = []
+    cam_sources: list[str] = []
+    durations: dict = {}
+    n_clips = 0
+    for rows_r, stem_r, durs_r, n_r in results:
+        new_rows += rows_r
+        durations.update(durs_r)
+        n_clips += n_r
+        if stem_r:
+            cam_sources.append(stem_r)
 
     if new_rows:
         merge_outputs(auto_dir, new_rows, cam_sources, durations)
@@ -782,6 +840,98 @@ def main() -> int:
     else:
         log("Done: nothing new")
     return 0
+
+
+def _process_pair(plan: dict, ctx: dict):
+    """Phases C+D for one pair (thread-safe: writes only its own stitch dir,
+    marker and clip files; shared CSV/manifest merging stays in main).
+    Returns (rows, source_stem_or_None, durations, n_new_clips).
+    Never raises: one worker's crash must not abort the whole ex.map — the
+    other workers' clips would then miss the manifest and later be deleted
+    by pipeline cleanup (audit TS#1)."""
+    try:
+        return _process_pair_inner(plan, ctx)
+    except Exception as _e:
+        log(f"[{plan['pair']['stem']}] worker failed: {_e}")
+        return [], None, {}, 0
+
+
+def _process_pair_inner(plan: dict, ctx: dict):
+    a, ffmpeg, sdk = ctx["a"], ctx["ffmpeg"], ctx["sdk"]
+    auto_dir, autocut, i360_dir = ctx["auto_dir"], ctx["autocut"], ctx["i360_dir"]
+    enc_sem, out_w, out_h = ctx["enc_sem"], ctx["out_w"], ctx["out_h"]
+    pair, wins, fps, ct = plan["pair"], plan["wins"], plan["fps"], plan["ct"]
+    stem = pair["stem"]
+    marker = i360_dir / "done" / f"{stem}.{plan['wsig']}"
+
+    rows: list[dict] = []
+    durs: dict = {}
+    # Marker hit counts only when EVERY clip of the set exists — a partial
+    # set (corrupt-clip pruning, manual deletion) must regenerate, not be
+    # silently accepted with holes (audit #4).
+    if marker.exists():
+        if all((autocut / f"{stem}-clip-{wi + 1:03d}.mp4").exists()
+               for wi in range(len(wins))):
+            log(f"[{stem}] cached (clips already assembled)")
+            for wi, w in enumerate(wins):
+                scene = f"{stem}-clip-{wi + 1:03d}"
+                rows.append(_row(scene, w))
+                durs[scene] = a.clip_dur
+            return rows, stem, durs, 0
+        log(f"[{stem}] cache marker present but clips missing — regenerating")
+        marker.unlink(missing_ok=True)
+
+    # Unique per invocation: overlapping scans of one project must not
+    # delete each other's frames or interleave SDK logs (audit TS#2).
+    stitch_dir = i360_dir / "tmp" / f"{stem}.{os.getpid()}"
+    if stitch_dir.exists():
+        shutil.rmtree(stitch_dir)
+    log(f"[{stem}] stitching {len(wins)} window(s) via MediaSDK …")
+    idx_map = stitch_windows(sdk, pair, wins, fps, a.clip_dur, stitch_dir,
+                             a.stitch_size, a.stitch_type)
+    if idx_map is None:
+        shutil.rmtree(stitch_dir, ignore_errors=True)
+        return [], None, {}, 0
+
+    ok = 0
+    for wi, w in enumerate(wins):
+        scene = f"{stem}-clip-{wi + 1:03d}"
+        clip = autocut / f"{scene}.mp4"
+        made = False
+        if a.track:
+            traj = track_window(stitch_dir, idx_map[wi], fps, float(w["yaw"]))
+            if traj is not None:
+                with enc_sem:
+                    made = assemble_tracked(
+                        ffmpeg, stitch_dir, idx_map[wi], fps, traj, clip,
+                        pair["vid00"], w["ts"], a.clip_dur, ct, out_w, out_h)
+                if made:
+                    log(f"[{stem}] clip {wi + 1}: tracked "
+                        f"(yaw {traj[0][0]:.0f}→{traj[-1][0]:.0f}°, "
+                        f"pitch {traj[0][1]:+.0f}→{traj[-1][1]:+.0f}°)")
+        if not made:
+            with enc_sem:
+                made = assemble_clip(ffmpeg, stitch_dir, idx_map[wi], fps,
+                                     w["yaw"], clip, pair["vid00"], w["ts"],
+                                     a.clip_dur, ct, out_w, out_h)
+        if made:
+            extract_pool_frame(ffmpeg, clip, auto_dir / "frames", scene)
+            rows.append(_row(scene, w))
+            durs[scene] = a.clip_dur
+            ok += 1
+    shutil.rmtree(stitch_dir, ignore_errors=True)
+    # All-or-nothing: a partial window set must NOT be marked done, or the
+    # cache would forever hide the failed clips.
+    if ok == len(wins):
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        # Drop every older marker of this stem first: run A→B→A left A's
+        # stale marker describing B's overwritten clips (audit #3).
+        for _old in marker.parent.glob(f"{stem}.*"):
+            if _old != marker:
+                _old.unlink(missing_ok=True)
+        marker.touch()
+    log(f"[{stem}] clips: {ok}/{len(wins)}")
+    return rows, (stem if ok else None), durs, ok
 
 
 def _row(scene: str, w: dict) -> dict:

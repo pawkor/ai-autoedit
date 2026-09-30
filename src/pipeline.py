@@ -18,7 +18,6 @@ import random
 import re
 import signal
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, Optional
@@ -45,25 +44,6 @@ def _i(cp, sec, key, fb=0):      return cp.getint(sec, key, fallback=fb)
 
 
 # ── Subprocess helpers ────────────────────────────────────────────────────────
-
-async def _probe_fps(path: Path, ffprobe: str) -> float | None:
-    """Return avg_frame_rate as float, falling back to r_frame_rate."""
-    proc = await asyncio.create_subprocess_exec(
-        ffprobe, "-v", "quiet", "-select_streams", "v:0",
-        "-show_entries", "stream=avg_frame_rate,r_frame_rate",
-        "-of", "csv=p=0", str(path),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-    )
-    out, _ = await proc.communicate()
-    for token in out.decode().split():
-        try:
-            parts = token.strip().split("/")
-            val = float(parts[0]) / float(parts[1]) if len(parts) == 2 else float(parts[0])
-            if 1.0 < val < 300.0:
-                return round(val, 3)
-        except Exception:
-            continue
-    return None
 
 
 async def _probe_duration(path: Path, ffprobe: str) -> float | None:
@@ -766,7 +746,6 @@ async def run(params: dict, work_dir: Path,
     Async generator yielding log lines.
     Raises RuntimeError on unrecoverable errors.
     """
-    t_start = time.time()
     cp      = _load_cfg(work_dir)
 
     # ── Parameters ────────────────────────────────────────────────────────────
@@ -1046,7 +1025,10 @@ async def run(params: dict, work_dir: Path,
         elif _h_params_cur != _h_params_prev and _peaks_cover:
             _scan_phase = "reextract"
         elif (_h_params_cur == _h_params_prev and _clips_exist and _frames_exist
-              and (auto_dir / "scene_scores.csv").exists()):
+              and (auto_dir / "scene_scores.csv").exists()
+              # Newly added recordings must trigger a scan — without the
+              # coverage check they stayed unscanned forever (audit #6).
+              and _raw_cover):
             _scan_phase = None   # fully cached
         else:
             _scan_phase = "all"  # fallback
@@ -1126,6 +1108,12 @@ async def run(params: dict, work_dir: Path,
             else:
                 yield f"  All cameras are no-trim — skipping CLIP scan"
             scores_csv = auto_dir / "scene_scores.csv"
+            # A surviving old CSV must not bless a failed child (audit #5):
+            # the exit code decides, not mere file existence.
+            if _scan_enabled and scan_proc.returncode != 0:
+                raise RuntimeError(
+                    f"CLIP scan failed (exit {scan_proc.returncode}) — "
+                    f"hashes NOT updated, scores may be stale.")
             if _scan_enabled and _scan_phase != "reextract" and not scores_csv.exists():
                 raise RuntimeError("CLIP scan failed — no scene_scores.csv produced.")
             scene_files = sorted((auto_dir / "autocut").glob("*.mp4"))
@@ -2064,6 +2052,58 @@ async def run(params: dict, work_dir: Path,
     except Exception as _ar_err:
         yield f"  [warn] analyze_result.json not written: {_ar_err}"
 
+    # Auto 360 scan: a 360/ dir with stitchable .insv pairs and a configured
+    # MediaSDK runs insta360_scan.py as part of analyze, so the 360 clips
+    # land in the pool without a separate click ([insta360] auto_scan =
+    # false disables; the run is incremental thanks to the module's caches).
+    try:
+        _d360 = work_dir / "360"
+        if (cp.get("insta360", "auto_scan", fallback="true").lower() != "false"
+                and _d360.is_dir()):
+            import insta360_scan as _i360a
+            _sdk360 = _i360a.sdk_binary(cp)
+            _pairs360 = _i360a.discover(_d360) if _sdk360 else []
+            if not _sdk360:
+                yield "  [360] skipped — MediaSDK not configured (docs/insta360.md)"
+            elif _pairs360:
+                yield f"[360] Auto-scanning {len(_pairs360)} Insta360 pair(s)…"
+                _p360 = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    str(Path(__file__).resolve().parent / "insta360_scan.py"),
+                    str(work_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                try:
+                    async for _raw360 in _p360.stdout:
+                        _l360 = _raw360.decode("utf-8", errors="replace").rstrip()
+                        _low360 = _l360.lower()
+                        # hub chatter: "HF Hub" warning has no "huggingface"
+                        if _l360 and not any(_t in _low360 for _t in
+                                             ("huggingface", "hf hub", "hf_token")):
+                            yield f"[360] {_l360}"
+                    await _p360.wait()
+                except asyncio.CancelledError:
+                    # SIGTERM → grace → SIGKILL, same contract as _reap
+                    try:
+                        os.killpg(os.getpgid(_p360.pid), signal.SIGTERM)
+                    except Exception:
+                        pass
+                    try:
+                        await asyncio.wait_for(_p360.wait(), timeout=5)
+                    except Exception:
+                        try:
+                            os.killpg(os.getpgid(_p360.pid), signal.SIGKILL)
+                        except Exception:
+                            pass
+                    raise
+                yield f"[360] scan finished (exit {_p360.returncode})"
+    except asyncio.CancelledError:
+        raise
+    except Exception as _e360a:
+        yield f"  [warn] insta360 auto-scan failed: {_e360a}"
+
     # Re-merge Insta360 rows: the steps above rebuild the shared CSVs and
     # caches from normal sources only, dropping foreign (camera=360) entries.
     try:
@@ -2477,10 +2517,6 @@ async def run(params: dict, work_dir: Path,
         yield "  ⚠ No output file found"
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    elapsed    = time.time() - t_start
-    scene_count = sum(1 for _ in open(selected_txt))
-    hl_min, hl_sec = int(hl_dur // 60), int(hl_dur % 60)
-    el_min, el_sec = int(elapsed // 60), int(elapsed % 60)
 
     yield ""
     yield "✓ DONE"

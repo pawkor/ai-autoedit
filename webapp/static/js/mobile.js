@@ -15,8 +15,6 @@ document.addEventListener('click', function(e) {
 });
 
 // ── Mobile tab switching ───────────────────────────────────────────────────────
-let _mobileCurrentTab = 'pool';
-
 function mobileTab(tab) {
   const pool  = document.getElementById('m-pool');
   const tl    = document.getElementById('m-timeline-wrap');
@@ -34,7 +32,6 @@ function mobileTab(tab) {
 
   // Close controls sheet when switching to another tab
   panel.classList.remove('mobile-open');
-  _mobileCurrentTab = tab;
 
   if (tab === 'pool') {
     if (pool) pool.classList.remove('mobile-hidden');

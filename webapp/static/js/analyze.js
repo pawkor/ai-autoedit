@@ -66,6 +66,10 @@ async function openProjectModal(mode = 'edit') {
   if (_hb) _hb.classList.toggle('active', _helpOn);
   document.getElementById('m-analyze-status').textContent = '';
   document.getElementById('m-analyze-btn').disabled = false;
+  // The 360 section only refreshed on dir-input blur — in edit mode the
+  // dir is prefilled and never blurred, so the button stayed hidden.
+  if (_projectModalMode === 'edit' && typeof _workDir !== 'undefined' && _workDir)
+    _refresh360Section(_workDir);
   const _saveBtn0 = document.getElementById('m-analyze-save-btn');
   if (_saveBtn0) _saveBtn0.disabled = false;
   _analyzeSubdirs = [];

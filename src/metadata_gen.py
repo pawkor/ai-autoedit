@@ -18,9 +18,7 @@ import csv
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
-from typing import Optional
 
 # ── Zero-shot label vocabulary ────────────────────────────────────────────────
 
@@ -170,6 +168,8 @@ def _run_zero_shot(
     Returns list of ints (label indices), same length as frame_paths.
     Skips missing frames (returns -1).
     """
+    import hf_policy
+    hf_policy.apply()   # before torch/open_clip import — hub reads env then
     import torch
     import open_clip
     from PIL import Image
@@ -188,7 +188,6 @@ def _run_zero_shot(
         label_feats = model.encode_text(label_tokens)
         label_feats /= label_feats.norm(dim=-1, keepdim=True)
 
-    results: list[int] = []
     batch_size = 32
 
     valid_paths = [(i, p) for i, p in enumerate(frame_paths) if p.exists()]

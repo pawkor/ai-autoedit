@@ -6,7 +6,6 @@
   <title>AI-autoedit Studio</title>
   <link rel="stylesheet" href="/css/studio.css">
   <link rel="stylesheet" href="/css/studio-alternative.css">
-  <link rel="stylesheet" href="/css/music_modal.css">
 </head>
 <body data-theme="dark">
 
@@ -217,7 +216,7 @@
         <span class="m-modal-title" data-i18n="m.log">LOG</span>
         <span id="m-log-meta" class="m-section-meta"></span>
         <button class="m-btn m-btn-ghost m-btn-sm" style="margin-left:auto"
-                onclick="clearLog()"
+                onclick="clearLog(true)"
                 data-i18n-title="m.title_log_clear" title="Clear log">✕ Clear</button>
         <button class="m-btn m-btn-ghost m-btn-sm" onclick="closeLogModal()"
                 data-i18n-title="m.title_close" title="Close">×</button>
@@ -521,7 +520,8 @@
                 data-i18n-tip="m.tip_beats_shot"
                 data-tip="Beats per shot per energy level. Rock/metal → lower (2/3/4). Pop/RnB → default (3/4/6).">Beats/shot</span>
           <select id="m-settings-beats-method" class="m-input" style="width:auto;margin-right:8px"
-                  data-tip="segments: verse/chorus-aware cuts via structural analysis. section: 4s RMS energy tiers.">
+                  data-i18n-tip="m.tip_beats_method"
+                  data-tip="segments: cuts follow the song structure (verse/chorus + onset events). section energy: loudness (RMS) only.">
             <option value="segments">segments</option>
             <option value="section">section energy</option>
           </select>

@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import re
-import secrets
 import subprocess
 import sys
 import time
@@ -30,7 +29,7 @@ except ImportError:
     _boto3_ok = False
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import Counter, Gauge, Histogram
     _prom_ok = True
 except ImportError:
     _prom_ok = False

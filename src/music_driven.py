@@ -24,7 +24,6 @@ import csv
 from datetime import datetime
 import json as _json
 import os
-import random
 import shutil
 import subprocess
 import tempfile
@@ -363,7 +362,7 @@ def analyze_music(music_path: Path) -> dict:
         for _si, _seg in enumerate(_segs):
             _seg["energy"] = float(_rms_v[_si])
         segments = _segs
-    except Exception as _seg_err:
+    except Exception:
         segments = []
 
     # Boost segment energy at chorus regions detected via WhisperX repeated lyrics.
@@ -579,7 +578,6 @@ def build_schedule(
     Auto mode: peak-based cutting from percussive HPSS envelope (onset_env_perc).
     Manual mode: per-beat PLP energy thresholds → fixed beats/shot counts.
     """
-    import math as _m
 
     # Auto mode → peak-based cutting (ignores beat grid)
     if auto and onset_env_perc:
@@ -587,7 +585,6 @@ def build_schedule(
                                      min_shot_sec, max_shot_sec, sr, hop)
 
     _sec_e   = section_energy or beat_energy
-    _onset_e = onset_energy   or beat_energy
 
     # Percentile-based thresholds so energy tiers distribute across the actual
     # dynamic range of the track (flat-energy rock gets variety too).
@@ -930,6 +927,7 @@ def match_clips(schedule: list[dict], clips: list[dict],
     import collections
     used: set[str] = set()
     reuse_used: set[str] = set()   # rotates through clips when pool exhausted
+    _reuse_warned = [False]        # one-shot log flag for the reuse fallback
     edit: list[dict] = []
 
     num_sources  = len({_clip_source(c["scene"]) for c in clips})
@@ -1092,26 +1090,17 @@ def match_clips(schedule: list[dict], clips: list[dict],
         if not pool: pool = _pool(relax_dur=True, camera_filter=False, temporal_filter=False, adjacent_filter=False)
         if not pool:
             pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in used]
-        # Pool exhausted — allow reuse rather than leaving slots empty,
-        # but rotate through clips so the same clip isn't repeated consecutively.
-        # IMPORTANT: only clear reuse_used when clips that MEET the duration
-        # requirement have all been used.  When NO clip meets the duration
-        # (e.g. CLIP_DUR_SEC shorter than the music slot), do NOT clear here —
-        # fall through to the duration-relaxed second block which tracks its own
-        # rotation via the same reuse_used set.
+        # HARD no-reuse (restored per CLAUDE.md / audit #14): before touching
+        # a used clip, take an UNUSED one that is merely shorter than the
+        # slot — the slot duration gets trimmed to the clip at assignment.
+        # An audit-reproduced case (two 4s slots, clips of 8s and 1s) must
+        # pick 8s then 1s, never 8s twice.
         _reusing = False
         if not pool:
-            reuse_pool = [c for c in clips if c["duration"] >= dur and c["scene"] not in reuse_used]
-            if not reuse_pool:
-                _dur_eligible = [c for c in clips if c["duration"] >= dur]
-                if _dur_eligible:
-                    # There are clips with enough duration — rotation completed, reset.
-                    reuse_used.clear()
-                    reuse_pool = _dur_eligible
-                # else: no clip meets duration constraint — leave reuse_used intact,
-                # fall through to the relaxed-duration block below.
-            pool = reuse_pool
-            _reusing = bool(pool)
+            pool = [c for c in clips if c["scene"] not in used]
+        # Absolute last resort: MORE slots than clips — reuse is then
+        # mathematically unavoidable; rotate so nothing repeats twice in a
+        # row and say so in the log.
         if not pool:
             reuse_pool = [c for c in clips if c["scene"] not in reuse_used]
             if not reuse_pool:
@@ -1119,6 +1108,10 @@ def match_clips(schedule: list[dict], clips: list[dict],
                 reuse_pool = list(clips)
             pool = reuse_pool
             _reusing = bool(pool)
+            if _reusing and not _reuse_warned[0]:
+                print("  ! pool smaller than slot count — reusing clips "
+                      "(rotation, unavoidable)")
+                _reuse_warned[0] = True
         if not pool:
             continue
 
@@ -1175,6 +1168,10 @@ def match_clips(schedule: list[dict], clips: list[dict],
         # Motion anchor: place peak_motion at ~30% into the slot so the
         # "climax" of the action lands just after the beat hit
         anchor = dur * 0.3
+        # An undersized source must trim the slot, not claim footage it
+        # doesn't have (audit #14) — the beat grid tolerates a short slot
+        # better than a stretched/looped clip.
+        dur = min(dur, best["duration"])
         ideal_ss = best["motion_peak"] - anchor
         ss = max(0.0, min(ideal_ss, best["duration"] - dur))
 
@@ -1253,8 +1250,8 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
             return color_correct, ["-vf", color_correct]
         return "", []
 
-    # Default (no camera info) — used for photos and privacy filtergraph prefix
-    _vf, vf_args = _build_vf("")
+    # Default (no camera info) — used for photo slots
+    _vf, _ = _build_vf("")
 
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
@@ -1323,7 +1320,7 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                     return (i, None, 0.0)
                 return (i, out, dur)
 
-            _entry_vf, _entry_vf_args = _build_vf(entry.get("camera", ""))
+            _, _entry_vf_args = _build_vf(entry.get("camera", ""))
             vf_final = _entry_vf_args
 
             cmd = [
@@ -1592,9 +1589,14 @@ def assemble(
                     break
                 _capped.append(slot)
                 _accum += d
-            if len(_capped) < len(edit):
+            # Slot-count comparison missed the case where only the LAST slot
+            # was shortened ([6s,6s] with a 10s cap stayed [6s,6s] — audit
+            # #13); compare total duration instead.
+            _cap_total = sum(float(s.get("duration", 0)) for s in _capped)
+            _orig_total = sum(float(s.get("duration", 0)) for s in edit)
+            if _cap_total < _orig_total - 1e-6:
                 print(f"  Capped sequence {len(edit)} → {len(_capped)} slots "
-                      f"({_accum:.1f}s clips + {_card_dur_cfg*2:.0f}s cards "
+                      f"({_cap_total:.1f}s clips + {_card_dur_cfg*2:.0f}s cards "
                       f"of {_music_dur:.1f}s music)", flush=True)
                 edit = _capped
 
@@ -2284,6 +2286,7 @@ def assemble(
     # 4. Match clips to schedule
     _chron_weight = (_cpfloat("music_driven", "chron_weight", "0.20")
                      if stem_to_time else 0.0)
+    _chron_cfg_weight = _cpfloat("music_driven", "chron_weight", "0.20")
     # Attach absolute capture timestamps AFTER every pool addition (incl.
     # camera-pattern rescue) — a clip without source_start would silently
     # bypass temporal diversity and reset the adjacency anchor.
@@ -2303,6 +2306,13 @@ def assemble(
             _st = c.get("source_start")
             if _st is not None:
                 c["clip_time_norm"] = (_st - _t_lo) / _t_span
+        # A single long recording has no file-level epochs (stem_to_time
+        # empty → weight zeroed above), yet per-clip times DO give a valid
+        # arc — re-enable the configured weight (audit #15).
+        if _chron_weight == 0.0 and _chron_cfg_weight > 0.0:
+            _chron_weight = _chron_cfg_weight
+            print(f"  Chronology: per-clip capture times available — "
+                  f"weight restored to {_chron_weight:.2f}")
 
     _temporal_exclusion = _cpfloat("music_driven", "temporal_exclusion_sec", "15")
     _repeat_penalty = _cpfloat("music_driven", "repeat_penalty", "0.08")

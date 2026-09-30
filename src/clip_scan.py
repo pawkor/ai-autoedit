@@ -38,7 +38,6 @@ import csv
 import json as _json
 import logging
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -48,6 +47,10 @@ from pathlib import Path
 
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 os.environ.setdefault("HUGGINGFACE_HUB_VERBOSITY", "error")
+# Hub policy: one online check every few days, offline in between
+# (src/hf_policy.py; HF_ONLINE=1 forces online, HF_CHECK_DAYS tunes it).
+import hf_policy
+hf_policy.apply()
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message="QuickGELU mismatch")
@@ -174,7 +177,15 @@ class _FrameDS(Dataset):
     def __getitem__(self, idx):
         p = self.paths[idx]
         try:   img = self.transform(Image.open(p).convert('RGB')); ok = True
-        except: img = torch.zeros(3, 224, 224); ok = False
+        except Exception:
+            # Placeholder must match the ACTIVE preprocess size — a fixed
+            # 224 tensor cannot be stacked with SigLIP2's 384 batch and one
+            # missing file crashed the whole batch (audit #20).
+            try:
+                _sz = self.transform(Image.new('RGB', (64, 64))).shape
+            except Exception:
+                _sz = (3, 224, 224)
+            img = torch.zeros(*_sz); ok = False
         return img, str(p), ok
 
 
@@ -394,6 +405,28 @@ if CLIP_SCAN_PHASE == "reextract":
 
     _dur_cache = {f"{c['scene']}.mp4": CLIP_DUR_SEC for c in all_clips}
     (AUTO_DIR / "duration_cache.json").write_text(_json.dumps(_dur_cache))
+    # clip_start moved with the new duration — refresh offset_sec in both
+    # score CSVs or downstream sync (sync-bans, gallery timestamps) keeps
+    # using the OLD starts (audit #7).
+    _off_map = {c["scene"]: f"{c['offset_sec']:.1f}" for c in all_clips}
+    for _csvp in (OUTPUT_CSV, OUTPUT_CSV_ALLCAM):
+        _csvp = Path(_csvp)
+        if not _csvp.exists():
+            continue
+        with open(_csvp) as _fh:
+            _rd = csv.DictReader(_fh)
+            _cols = _rd.fieldnames or []
+            _rows = list(_rd)
+        if "offset_sec" not in _cols:
+            continue
+        for _r in _rows:
+            if _r.get("scene") in _off_map:
+                _r["offset_sec"] = _off_map[_r["scene"]]
+        with open(_csvp, "w", newline="") as _fh:
+            _w = csv.DictWriter(_fh, fieldnames=_cols)
+            _w.writeheader()
+            _w.writerows(_rows)
+    print("  offset_sec refreshed in score CSVs")
     print(f"\nRe-extracted: {len(all_clips)} clips with dur={CLIP_DUR_SEC}s")
     sys.exit(0)
 
@@ -475,8 +508,12 @@ if CLIP_SCAN_PHASE == "all":
                 if (_cp.get("min_gap") == MIN_GAP_SEC and _cp.get("clip_dur") == CLIP_DUR_SEC
                         and _cp.get("interval") == INTERVAL_SEC):
                     _pk = _cp.get("peaks", [])
-                    _frames_ok = _pk and any(
+                    # ALL clips + ALL thumbnails, not "any" — a single
+                    # survivor was blessing an incomplete set and later
+                    # crashing scoring on the missing files (audit #21).
+                    _frames_ok = _pk and all(
                         (AUTO_DIR / "frames" / (_p["clip_name"] + "_f0.jpg")).exists()
+                        and (AUTO_DIR / "autocut" / (_p["clip_name"] + ".mp4")).exists()
                         for _p in _pk
                     )
                     if _frames_ok:
@@ -723,6 +760,16 @@ if all_clips:
         sc = path_to_scores.get(str(fp))
         if sc:
             clip["score"], clip["pos_score"], clip["neg_score"] = sc
+
+    # Peak re-scoring was the LAST use of the scan model — free it BEFORE
+    # the aesthetic pass. On an 8 GB card the resident SO400M (+ allocator
+    # cache) left no room: V2.5 OOMed and even the ViT-L fallback died.
+    if DEVICE == "cuda":
+        _model = _preprocess = _tokenizer = _pos_feat = _neg_feat = None
+        import gc as _gc
+        _gc.collect()
+        torch.cuda.empty_cache()
+        print("  Scan model released before aesthetic pass")
 
     # The LAION predictor is trained specifically on ViT-L/14 768-dim
     # embeddings.  CLIP-first normally uses SigLIP2, so encode only the

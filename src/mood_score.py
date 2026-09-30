@@ -8,6 +8,12 @@ Writes action_score / scenic_score columns to the existing scene_scores.csv.
 Called by pipeline.py when CLIP scores are cached but mood columns are missing.
 """
 import os, sys, configparser
+
+# Hub policy: one online check every few days, offline in between
+# (src/hf_policy.py; HF_ONLINE=1 forces online, HF_CHECK_DAYS tunes it).
+import hf_policy
+hf_policy.apply()
+
 import numpy as np
 import torch
 import open_clip

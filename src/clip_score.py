@@ -9,6 +9,9 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 os.environ.setdefault("HUGGINGFACE_HUB_VERBOSITY", "error")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
+# Hub policy: one online check every few days (src/hf_policy.py)
+import hf_policy
+hf_policy.apply()
 
 import numpy as np
 import torch
@@ -18,7 +21,6 @@ warnings.filterwarnings("ignore", message="QuickGELU mismatch", category=UserWar
 import pandas as pd
 from PIL import Image
 from pathlib import Path
-from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
 _cfg = configparser.ConfigParser()
