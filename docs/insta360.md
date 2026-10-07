@@ -80,6 +80,45 @@ python3 src/insta360_scan.py <work_dir> \
 Re-runs are incremental: scan results and assembled window sets are cached;
 changing prompts or parameters invalidates exactly the affected phase.
 
+## Forward exclusion & mount calibration
+
+The 360 camera's value is the angles the helmet/handlebar cams can't cover,
+so window selection **hard-excludes a 180° wedge centered on "forward"**
+(right/left/back only — see `FORWARD_EXCLUDE_HALF_DEG` in
+`src/insta360_scan.py`). Raw yaw=0 is the camera **body's** own reference
+axis (the dual-fisheye seam), not the direction of travel — it only lines up
+with "forward" if the camera happens to be mounted with that seam pointed
+along the bike's heading. A different mount angle needs a one-time
+calibration offset: `[insta360] forward_yaw_deg` in `config.ini` (global or
+per-project override, same as `auto_scan`).
+
+**To find the right value for a given mount:** dump one labeled frame per
+yaw direction from a representative LRV file and eyeball which one shows the
+road/handlebars ahead (same view the helmet cam already has):
+
+```bash
+ffmpeg -hide_banner -loglevel error -y -ss 30 -i path/to/clip.lrv \
+  -filter_complex "
+    [0:v]v360=input=dfisheye:output=e:ih_fov=190:iv_fov=190:roll=90,split=8[e0][e1][e2][e3][e4][e5][e6][e7];
+    [e0]v360=e:flat:h_fov=100:v_fov=62:yaw=0:w=960:h=540[v0];
+    [e1]v360=e:flat:h_fov=100:v_fov=62:yaw=45:w=960:h=540[v1];
+    [e2]v360=e:flat:h_fov=100:v_fov=62:yaw=90:w=960:h=540[v2];
+    [e3]v360=e:flat:h_fov=100:v_fov=62:yaw=135:w=960:h=540[v3];
+    [e4]v360=e:flat:h_fov=100:v_fov=62:yaw=180:w=960:h=540[v4];
+    [e5]v360=e:flat:h_fov=100:v_fov=62:yaw=-135:w=960:h=540[v5];
+    [e6]v360=e:flat:h_fov=100:v_fov=62:yaw=-90:w=960:h=540[v6];
+    [e7]v360=e:flat:h_fov=100:v_fov=62:yaw=-45:w=960:h=540[v7]" \
+  -map "[v0]" y000.jpg -map "[v1]" y045.jpg -map "[v2]" y090.jpg \
+  -map "[v3]" y135.jpg -map "[v4]" y180.jpg -map "[v5]" y225.jpg \
+  -map "[v6]" y270.jpg -map "[v7]" y315.jpg
+```
+
+Whichever `yNNN.jpg` shows dead-ahead is your `forward_yaw_deg` (the `roll=90`
+matches `LRV_ROLL` — only change it if your rig isn't the usual sideways bike
+mount). This is a **one-time calibration per physical mount** — it only
+needs redoing if the camera is remounted at a different rotation, not per
+ride.
+
 ## Licensing note
 
 The MediaSDK EULA allows using the SDK only to build software for Insta360

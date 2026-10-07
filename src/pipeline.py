@@ -134,6 +134,17 @@ async def _run(cmd: list, cwd=None, env=None) -> tuple[int, str]:
     return proc.returncode, out.decode("utf-8", errors="replace")
 
 
+def _check_ffmpeg_stage(ret: int, out: str, name: str, produced: Path) -> None:
+    """Raise unless a ffmpeg stage actually produced usable output — used by
+    the intro/outro/fade/concat postprocess chains (both music-driven and
+    classic) before they delete the original `highlight` (2026-10-06 audit:
+    a failed merge used to still delete it, with no fallback left)."""
+    if ret != 0 or not produced.exists() or produced.stat().st_size == 0:
+        raise RuntimeError(
+            f"postprocess stage '{name}' failed (code {ret}) — "
+            f"original highlight kept untouched: {out.strip()[-300:]}")
+
+
 # ── Output naming ─────────────────────────────────────────────────────────────
 
 def _output_name(work_dir: Path) -> str:
@@ -198,21 +209,18 @@ async def apply_postprocess(
     fsize_sub   = _s(cp, "intro_outro", "font_size_subtitle","96")
     fsize_outro = _s(cp, "intro_outro", "font_size_outro",   "60")
 
-    # Detect NVENC
-    enc_proc = await asyncio.create_subprocess_exec(
-        ffmpeg, "-encoders",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        enc_out, _ = await enc_proc.communicate()
-    except BaseException:
-        await _reap(enc_proc)
-        raise
-    if b"h264_nvenc" in enc_out:
+    # Detect NVENC — a real encode, not just `-encoders` listing the codec
+    # name (2026-10-06: a broken driver left it listed while every actual
+    # encode failed with cuInit CUDA_ERROR_UNKNOWN).
+    from media_probe import probe_nvenc
+    nvenc_ok, nvenc_err = await asyncio.to_thread(probe_nvenc, ffmpeg)
+    if nvenc_ok:
         vid_codec   = "h264_nvenc"
         vid_quality = ["-rc", "vbr", "-cq", nvenc_cq, "-b:v", "0", "-preset", nvenc_preset]
         hwaccel     = ["-hwaccel", "cuda"]
     else:
+        if nvenc_err:
+            print(f"[apply_postprocess] NVENC probe failed, using libx264: {nvenc_err}", flush=True)
         vid_codec   = "libx264"
         vid_quality = ["-crf", x264_crf, "-preset", x264_preset]
         hwaccel     = []
@@ -318,7 +326,7 @@ async def apply_postprocess(
                 f"shadowcolor=black:shadowx=4:shadowy=4,"
                 f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st:.3f}:d={fade_dur}"
             )
-            await _run([
+            _ret, _out = await _run([
                 ffmpeg, "-loop", "1", "-i", str(best_frame),
                 "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
                 "-t", intro_dur, "-vf", vf_intro,
@@ -328,10 +336,11 @@ async def apply_postprocess(
                 "-c:a", "aac", "-ar", "48000", "-ac", "2", "-map_metadata", "-1",
                 str(intro_mp4), "-y", "-loglevel", "quiet",
             ])
+            _check_ffmpeg_stage(_ret, _out, "intro", intro_mp4)
 
             yield "  intro/outro [2/3] fading highlight..."
             fade_out_hl = hl_dur - fade_dur
-            await _run([
+            _ret, _out = await _run([
                 ffmpeg, *hwaccel, "-i", str(highlight),
                 "-vf", f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_hl:.3f}:d={fade_dur}",
                 "-avoid_negative_ts", "make_zero",
@@ -339,6 +348,7 @@ async def apply_postprocess(
                 "-c:a", "aac", "-ar", "48000", "-b:a", "192k", "-map_metadata", "-1",
                 str(hl_faded), "-y", "-loglevel", "quiet",
             ])
+            _check_ffmpeg_stage(_ret, _out, "fade-highlight", hl_faded)
 
             yield "  intro/outro [3/3] outro + merge..."
             vf_outro = (
@@ -347,7 +357,7 @@ async def apply_postprocess(
                 f"shadowcolor=gray:shadowx=2:shadowy=2,"
                 f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st:.3f}:d={fade_dur}"
             )
-            await _run([
+            _ret, _out = await _run([
                 ffmpeg, "-f", "lavfi",
                 "-i", f"color=c=black:s={w}x{h}:d={intro_dur}:r={framerate}",
                 "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
@@ -358,16 +368,20 @@ async def apply_postprocess(
                 "-map_metadata", "-1",
                 str(outro_mp4), "-y", "-loglevel", "quiet",
             ])
+            _check_ffmpeg_stage(_ret, _out, "outro", outro_mp4)
 
             concat_list = auto_dir / "final_concat.txt"
             concat_list.write_text(
                 f"file '{intro_mp4}'\nfile '{hl_faded}'\nfile '{outro_mp4}'\n"
             )
-            await _run([
+            _ret, _out = await _run([
                 ffmpeg, "-f", "concat", "-safe", "0", "-i", str(concat_list),
                 "-c", "copy", "-movflags", "+faststart",
                 str(final), "-y", "-loglevel", "quiet",
             ])
+            _check_ffmpeg_stage(_ret, _out, "final-concat", final)
+
+            # Only delete the original once `final` is confirmed good.
             highlight.unlink(missing_ok=True)
             hl_faded.unlink(missing_ok=True)
             intro_mp4.unlink(missing_ok=True)
@@ -496,11 +510,17 @@ async def apply_postprocess(
                     "-c:a", "copy", "-movflags", "+faststart",
                     str(_yt_out), "-y",
                 ]
-            _ret, _ = await _run(_up_cmd)
-            if _yt_out.exists():
+            _ret, _out = await _run(_up_cmd)
+            if _ret == 0 and _yt_out.exists() and _yt_out.stat().st_size > 0:
                 yield f"  ✓ {_yt_out.name}"
             else:
-                yield f"  ⚠ 4K upscale failed (code {_ret})"
+                # Existence alone doesn't mean success — ffmpeg with -y
+                # creates/truncates the file immediately and writes
+                # progressively, so a failed encode can still leave a
+                # partial file behind that looks "done" to a size-blind
+                # exists() check (2026-10-06 audit).
+                _yt_out.unlink(missing_ok=True)
+                yield f"  ⚠ 4K upscale failed (code {_ret}): {_out.strip()[-300:]}"
 
         # Preview: only needed for 4K output (1080p is already web-playable)
         if _out_h >= 2160:
@@ -523,11 +543,12 @@ async def apply_postprocess(
                     "-c:a", "aac", "-b:a", "192k",
                     "-movflags", "+faststart", str(_prev_out), "-y",
                 ]
-            _ret, _ = await _run(_prev_cmd)
-            if _prev_out.exists():
+            _ret, _out = await _run(_prev_cmd)
+            if _ret == 0 and _prev_out.exists() and _prev_out.stat().st_size > 0:
                 yield f"  ✓ {_prev_out.name}"
             else:
-                yield f"  ⚠ Preview failed (code {_ret})"
+                _prev_out.unlink(missing_ok=True)
+                yield f"  ⚠ Preview failed (code {_ret}): {_out.strip()[-300:]}"
     else:
         yield "  ⚠ No output file to rename"
 
@@ -831,16 +852,12 @@ async def run(params: dict, work_dir: Path,
         (auto_dir / d).mkdir(parents=True, exist_ok=True)
 
     # ── Detect encoder ────────────────────────────────────────────────────────
-    enc_proc = await asyncio.create_subprocess_exec(
-        ffmpeg, "-encoders",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        enc_out, _ = await enc_proc.communicate()
-    except BaseException:
-        await _reap(enc_proc)
-        raise
-    if b"h264_nvenc" in enc_out:
+    # Real encode, not just `-encoders` listing the codec name (2026-10-06:
+    # a broken driver left it listed while every actual encode failed with
+    # cuInit CUDA_ERROR_UNKNOWN).
+    from media_probe import probe_nvenc
+    nvenc_ok, nvenc_err = await asyncio.to_thread(probe_nvenc, ffmpeg)
+    if nvenc_ok:
         vid_codec   = "h264_nvenc"
         vid_quality = ["-rc", "vbr", "-cq", nvenc_cq, "-b:v", "0", "-preset", nvenc_preset]
         hwaccel     = ["-hwaccel", "cuda"]
@@ -849,6 +866,8 @@ async def run(params: dict, work_dir: Path,
         vid_codec   = "libx264"
         vid_quality = ["-crf", x264_crf, "-preset", x264_preset]
         hwaccel     = []
+        if nvenc_err:
+            yield f"[DBG] NVENC probe failed, using libx264: {nvenc_err}"
         yield f"[DBG] encoder: libx264  hwaccel: none  crf: {x264_crf}  preset: {x264_preset}"
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -1262,6 +1281,7 @@ async def run(params: dict, work_dir: Path,
         completed = asyncio.Queue()
 
         async def _detect_one(sf):
+          try:
             async with sem:
                 proc = await asyncio.create_subprocess_exec(
                     "scenedetect", "-i", str(sf),
@@ -1281,6 +1301,13 @@ async def run(params: dict, work_dir: Path,
             count = max(0, sum(1 for _ in open(csv)) - 2) if csv.exists() else 0
             status = "✓" if csv.exists() else "✗"
             await completed.put(f"  {status} {sf.name}: {count} scenes")
+          except asyncio.CancelledError:
+            await completed.put(f"  ✗ {sf.name}: cancelled")
+            raise
+          except Exception as _we:
+            # The consumer awaits exactly one message per worker — a crash
+            # BEFORE put() hung the whole detect step (audit #30).
+            await completed.put(f"  ✗ {sf.name}: {_we}")
 
         tasks = [asyncio.create_task(_detect_one(sf)) for sf in to_detect]
         try:
@@ -1343,36 +1370,46 @@ async def run(params: dict, work_dir: Path,
     split_finished  = 0
 
     async def _split_one(sf: Path):
-        nonlocal split_finished
-        csv_f    = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
-        expected = _count_csv_scenes(csv_f) if csv_f.exists() else 0
-        existing = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
-        if not csv_f.exists():
-            split_finished += 1
-            await split_queue.put({"file": sf.name, "done": False, "msg": f"✗ {sf.name}: no CSV, skipping"})
-            return
-        if existing >= expected > 0:
-            split_finished += 1
-            await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({existing} scenes, cached)"})
-            return
-        async with split_sem:
-            proc = await asyncio.create_subprocess_exec(
-                "scenedetect", "-i", str(sf),
-                "load-scenes", "-i", str(csv_f),
-                "split-video", "-o", str(auto_dir / "autocut"),
-                "--filename", f"{sf.stem}-scene-$SCENE_NUMBER",
-                "--copy",
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            try:
-                await proc.wait()
-            except BaseException:
-                await _reap(proc)
-                raise
-        done = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
+      try:
+          nonlocal split_finished
+          csv_f    = auto_dir / "csv" / f"{sf.stem}-Scenes.csv"
+          expected = _count_csv_scenes(csv_f) if csv_f.exists() else 0
+          existing = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
+          if not csv_f.exists():
+              split_finished += 1
+              await split_queue.put({"file": sf.name, "done": False, "msg": f"✗ {sf.name}: no CSV, skipping"})
+              return
+          if existing >= expected > 0:
+              split_finished += 1
+              await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({existing} scenes, cached)"})
+              return
+          async with split_sem:
+              proc = await asyncio.create_subprocess_exec(
+                  "scenedetect", "-i", str(sf),
+                  "load-scenes", "-i", str(csv_f),
+                  "split-video", "-o", str(auto_dir / "autocut"),
+                  "--filename", f"{sf.stem}-scene-$SCENE_NUMBER",
+                  "--copy",
+                  stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                  start_new_session=True,
+              )
+              try:
+                  await proc.wait()
+              except BaseException:
+                  await _reap(proc)
+                  raise
+          done = len(list((auto_dir / "autocut").glob(f"{sf.stem}-scene-*.mp4")))
+          split_finished += 1
+          await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({done} scenes)"})
+      except asyncio.CancelledError:
+        await split_queue.put({"file": sf.name, "done": False, "msg": f"✗ {sf.name}: cancelled"})
+        raise
+      except Exception as _we:
+        # consumer awaits one message per file — a crash before put()
+        # hung the split step (audit #30); the counter must still advance
+        # or [finished/total] undercounts forever (re-audit Low #6)
         split_finished += 1
-        await split_queue.put({"file": sf.name, "done": False, "msg": f"✓ {sf.name} ({done} scenes)"})
+        await split_queue.put({"file": sf.name, "done": False, "msg": f"✗ {sf.name}: {_we}"})
 
     if not clip_first:
         split_tasks = [asyncio.create_task(_split_one(sf)) for sf in source_files]
@@ -1515,7 +1552,7 @@ async def run(params: dict, work_dir: Path,
     _back_srcs_fe = _back_cam_sources(_cam_src_csv, cam_a) if not clip_first else set()
     if _back_srcs_fe:
         scene_files_main = [sf for sf in scene_files
-                            if re.sub(r'-(?:scene|clip)-\d+$', '',sf.stem) not in _back_srcs_fe]
+                            if __import__('scene_id').source_of(sf.stem) not in _back_srcs_fe]
         if len(scene_files_main) < len(scene_files):
             yield f"  Skipping {len(scene_files) - len(scene_files_main)} back-cam scenes"
     else:
@@ -1556,14 +1593,18 @@ async def run(params: dict, work_dir: Path,
             proc = await asyncio.create_subprocess_exec(
                 ffmpeg, *hwaccel, "-ss", f"{dur * frac:.3f}", "-i", str(sf),
                 "-vframes", "1", "-vf", "scale=640:-2,crop=iw:ih*0.65:0:0", "-q:v", "4", "-update", "1",
-                str(out_jpg), "-y", "-loglevel", "quiet",
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                str(out_jpg), "-y", "-loglevel", "error",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
             )
             try:
-                await proc.wait()
+                _, _err = await proc.communicate()
             except BaseException:
                 await _reap(proc)
                 raise
+            if proc.returncode != 0 or not out_jpg.exists():
+                out_jpg.unlink(missing_ok=True)
+                print(f"  ! keyframe extraction failed for {sf.name} @{frac}: "
+                      f"{_err.decode(errors='replace').strip()[-200:]}", flush=True)
 
     if not clip_first:
         batch_size = os.cpu_count() or 4
@@ -1662,7 +1703,7 @@ async def run(params: dict, work_dir: Path,
             if _back_srcs:
                 _frame_count = len({
                     re.sub(r'_f\d+$', '', f.stem) for f in _all_frames
-                    if re.sub(r'-(?:scene|clip)-\d+$', '',re.sub(r'_f\d+$', '', f.stem)) not in _back_srcs
+                    if __import__('scene_id').source_of(re.sub(r'_f\d+$', '', f.stem)) not in _back_srcs
                 })
             else:
                 _frame_count = len({re.sub(r'_f\d+$', '', f.stem) for f in _all_frames})
@@ -2199,6 +2240,24 @@ async def run(params: dict, work_dir: Path,
         cwd=str(work_dir),
     )
     total_s = concat_dur or 1.0
+
+    # stderr must be drained CONCURRENTLY with stdout, not read after stdout
+    # hits EOF (2026-10-06 audit: enough stderr output — e.g. a real codec
+    # error — can fill the OS pipe buffer and deadlock ffmpeg against a
+    # stdout reader that never gets there because it's also stuck).
+    async def _drain_enc_stderr():
+        buf = bytearray()
+        try:
+            while True:
+                chunk = await enc_proc2.stderr.read(4096)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+        except Exception:
+            pass
+        return bytes(buf)
+
+    _enc_stderr_task = asyncio.create_task(_drain_enc_stderr())
     async for raw in _stream(enc_proc2):
         k, _, v = raw.decode("utf-8", errors="replace").strip().partition("=")
         if k == "out_time_ms":
@@ -2210,8 +2269,7 @@ async def run(params: dict, work_dir: Path,
                 yield f"\r  [{bar}] {pct:3d}%  {cur:.1f}/{total_s:.1f}s"
             except Exception:
                 pass
-    enc_stderr = await enc_proc2.stderr.read()
-    await enc_proc2.wait()
+    enc_stderr = await _enc_stderr_task
     yield ""
 
     if not highlight.exists():
@@ -2288,7 +2346,7 @@ async def run(params: dict, work_dir: Path,
             f"shadowcolor=black:shadowx=4:shadowy=4,"
             f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st:.3f}:d={fade_dur}"
         )
-        await _run([
+        _ret, _out = await _run([
             ffmpeg, "-loop", "1", "-i", str(best_frame),
             "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
             "-t", intro_dur, "-vf", vf_intro,
@@ -2297,17 +2355,19 @@ async def run(params: dict, work_dir: Path,
             "-c:a", "aac", "-ar", "48000", "-ac", "2",
             str(intro_mp4), "-y", "-loglevel", "quiet",
         ])
+        _check_ffmpeg_stage(_ret, _out, "intro", intro_mp4)
 
         yield "  intro/outro [2/3] fading highlight..."
         # Faded highlight
         fade_out_hl = hl_dur - fade_dur
-        await _run([
+        _ret, _out = await _run([
             ffmpeg, *hwaccel, "-i", str(highlight),
             "-vf", f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_hl:.3f}:d={fade_dur}",
             "-c:v", vid_codec, *vid_quality, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", "48000", "-b:a", "192k",
             str(hl_faded), "-y", "-loglevel", "quiet",
         ])
+        _check_ffmpeg_stage(_ret, _out, "fade-highlight", hl_faded)
 
         yield "  intro/outro [3/3] outro + merge..."
         # Outro card
@@ -2317,7 +2377,7 @@ async def run(params: dict, work_dir: Path,
             f"shadowcolor=gray:shadowx=2:shadowy=2,"
             f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st:.3f}:d={fade_dur}"
         )
-        await _run([
+        _ret, _out = await _run([
             ffmpeg, "-f", "lavfi",
             "-i", f"color=c=black:s={width}x{height}:d={intro_dur}:r={framerate}",
             "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
@@ -2326,17 +2386,21 @@ async def run(params: dict, work_dir: Path,
             "-c:a", "aac", "-ar", "48000", "-ac", "2", "-t", intro_dur,
             str(outro_mp4), "-y", "-loglevel", "quiet",
         ])
+        _check_ffmpeg_stage(_ret, _out, "outro", outro_mp4)
 
         # Final concat
         concat_list = auto_dir / "final_concat.txt"
         concat_list.write_text(
             f"file '{intro_mp4}'\nfile '{hl_faded}'\nfile '{outro_mp4}'\n"
         )
-        await _run([
+        _ret, _out = await _run([
             ffmpeg, "-f", "concat", "-safe", "0", "-i", str(concat_list),
             "-c", "copy", "-movflags", "+faststart",
             str(final), "-y", "-loglevel", "quiet",
         ])
+        _check_ffmpeg_stage(_ret, _out, "final-concat", final)
+
+        # Only delete the original once `final` is confirmed good.
         highlight.unlink(missing_ok=True)
         hl_faded.unlink(missing_ok=True)
         intro_mp4.unlink(missing_ok=True)
@@ -2361,7 +2425,7 @@ async def run(params: dict, work_dir: Path,
                 yield f"[DBG] music: {_st_path}  fade: {music_fade}s  vol: orig={orig_vol} music={music_vol}"
                 output_music = _next_version(work_dir / "highlight.mp4")
                 fade_start = vid_dur - music_fade
-                await _run([
+                _ret, _out = await _run([
                     ffmpeg,
                     "-i", str(video_to_mix),
                     "-i", str(_st_path),
@@ -2374,6 +2438,7 @@ async def run(params: dict, work_dir: Path,
                     "-movflags", "+faststart",
                     str(output_music), "-y", "-loglevel", "quiet",
                 ])
+                _check_ffmpeg_stage(_ret, _out, "music-mix (pinned)", output_music)
                 _om_dur = await _probe_duration(output_music, ffprobe) or 0
                 yield f"  → {output_music.name}  {int(_om_dur//60)}:{int(_om_dur%60):02d}"
             else:
@@ -2457,7 +2522,7 @@ async def run(params: dict, work_dir: Path,
                         yield f"  Track: {Path(best_track['file']).stem}"
                         output_music = _next_version(work_dir / "highlight.mp4")
                         fade_start = vid_dur - music_fade
-                        await _run([
+                        _ret, _out = await _run([
                             ffmpeg,
                             "-i", str(video_to_mix),
                             "-i", best_track["file"],
@@ -2470,6 +2535,7 @@ async def run(params: dict, work_dir: Path,
                             "-movflags", "+faststart",
                             str(output_music), "-y", "-loglevel", "quiet",
                         ])
+                        _check_ffmpeg_stage(_ret, _out, "music-mix (auto)", output_music)
                         _om_dur = await _probe_duration(output_music, ffprobe) or 0
                         yield f"  → {output_music.name}  {int(_om_dur//60)}:{int(_om_dur%60):02d}"
 
@@ -2508,11 +2574,15 @@ async def run(params: dict, work_dir: Path,
                     "-movflags", "+faststart",
                     str(_prev_out), "-y",
                 ]
-            _prev_ret, _ = await _run(_prev_cmd)
-            if _prev_out.exists():
+            _prev_ret, _prev_cmd_out = await _run(_prev_cmd)
+            if _prev_ret == 0 and _prev_out.exists() and _prev_out.stat().st_size > 0:
                 yield f"  ✓ {_prev_out.name}"
             else:
-                yield f"  ⚠ Preview failed (code {_prev_ret})"
+                # Must remove a partial file on failure — the "(cached)"
+                # branch above only checks exists(), so a leftover broken
+                # file from a failed attempt would be served as valid forever.
+                _prev_out.unlink(missing_ok=True)
+                yield f"  ⚠ Preview failed (code {_prev_ret}): {_prev_cmd_out.strip()[-300:]}"
     else:
         yield "  ⚠ No output file found"
 

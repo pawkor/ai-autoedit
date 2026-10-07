@@ -572,7 +572,8 @@ def main():
         # Group scenes by camera
         by_cam: dict[str, list[int]] = {}
         for i, (_, scene) in enumerate(raw):
-            src = re.sub(r"-(?:scene|clip)-\d+$", "",scene)
+            from scene_id import source_of
+            src = source_of(scene)
             cam = cam_map.get(src, "default")
             by_cam.setdefault(cam, []).append(i)
 
@@ -817,7 +818,8 @@ def main():
             word      = word_pool[i]
             angle     = random.choice(angles)
             direction = random.choice(directions)
-            src_base  = re.sub(r"-(?:scene|clip)-\d+$", "",scene)
+            from scene_id import source_of
+            src_base  = source_of(scene)
             cam_name  = cam_map.get(src_base, "") if cam_csv.exists() else ""
             x_shift   = _crop_x_offsets.get(cam_name, 0)
 

@@ -52,7 +52,18 @@ BATCH = 64
 EXTRA_NEG = [
     "close-up of a motorcycle helmet blocking most of the view",
     "back of a motorcyclist filling the frame, scenery obscured",
-    "camera pointing at the rider, road barely visible",
+    # User (2026-10-01): dropped "camera pointing at the rider, road barely
+    # visible" — unlike the two above, it didn't require blocking/obscuring,
+    # just the rider being IN frame + road not visible, which also penalized
+    # good "rider + scenery" shots with no road in view (e.g. a side/rear
+    # angle showing mountains, not the road). Merely being visible is fine;
+    # only blocking/filling-the-frame framing should be penalized.
+    #
+    # A rock wall/cliff filling the frame is worse than the helmet-blocking
+    # case above, not just an equal nuisance — "extreme close-up ... filling
+    # the entire frame" on purpose, so this doesn't penalize a genuinely
+    # scenic rock/mountain shot with sky in frame.
+    "extreme close-up of a rock wall or cliff face filling the entire frame, no sky or horizon visible",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -196,16 +207,20 @@ def make_scorer(pos: list[str], neg: list[str], neg_w: float):
     import torch
     import open_clip
     from PIL import Image
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    from device_policy import select_torch_device
+    dev = select_torch_device("insta360_scan")
     try:
         model, _, preprocess = open_clip.create_model_and_transforms(
             MODEL, pretrained=PRETRAINED)
+        tok = open_clip.get_tokenizer(MODEL)
     except Exception as _e:
+        # Re-audit #2: the tokenizer call was OUTSIDE this try — weights
+        # cached but tokenizer files missing crashed the scanner with no
+        # retry, same class of gap as yesterday's mood_score crash.
+        hf_policy.retry_online_or_return(f"{MODEL}/{PRETRAINED}: {_e}")
         raise SystemExit(
-            f"model load failed ({_e}) — if the HF cache is incomplete, "
-            f"run once with HF_ONLINE=1 to download") from _e
+            f"model load failed while online ({_e})") from _e
     model = model.to(dev).eval()
-    tok = open_clip.get_tokenizer(MODEL)
     import torch as _t
     with _t.no_grad():
         pf = model.encode_text(tok(pos).to(dev)); pf /= pf.norm(dim=-1, keepdim=True)
@@ -233,11 +248,49 @@ def make_scorer(pos: list[str], neg: list[str], neg_w: float):
 
 # ── phase B: select ──────────────────────────────────────────────────────────
 
+# 360's value over the helmet/handlebar cams is precisely the angles they
+# CAN'T cover. User policy (2026-10-01): don't just discount forward
+# (direction of travel) — ignore it exactly like the helmet cam already
+# does. Hard-exclude the whole front hemisphere, keep only right/left/back.
+# Replaces an earlier soft multiplicative tie-break (FORWARD_BIAS) that
+# could still let a high-scoring forward shot win; that tie-break is moot
+# now anyway since every surviving yaw after this filter is already ≥90°
+# from forward.
+#
+# Raw yaw=0 is the camera BODY's own reference axis (the dual-fisheye
+# seam), fixed by the hardware — it only happens to equal "forward" if the
+# camera was physically mounted with that axis pointed along the direction
+# of travel. A different mount angle needs a calibration offset, same idea
+# as the existing LRV_ROLL constant for a sideways-mounted roll — except
+# yaw varies per rig/trip, so it's a config value, not a constant:
+# [insta360] forward_yaw_deg in config.ini (see load_cfg/main — read once
+# per run, same layered global→project override as auto_scan). One-time
+# calibration per physical mount, not per file/clip.
+FORWARD_EXCLUDE_HALF_DEG = 90.0
+
+
+def _is_forward(yaw: float, forward_yaw: float = 0.0) -> bool:
+    """True if yaw is within FORWARD_EXCLUDE_HALF_DEG of the forward
+    reference (forward_yaw — the raw yaw value that is dead-ahead for
+    THIS camera's physical mount, default 0°)."""
+    d = abs(((float(yaw) - forward_yaw + 180) % 360) - 180)  # signed distance, in [0,180]
+    return d < FORWARD_EXCLUDE_HALF_DEG
+
+
 def select_windows(rows, dur_limit: float, clip_dur: float,
-                   min_gap: float, per_file: int) -> list[dict]:
-    """Greedy peaks: [{ts, yaw, score}], ts = window START, clamped to file."""
+                   min_gap: float, per_file: int,
+                   forward_yaw: float = 0.0) -> list[dict]:
+    """Greedy peaks: [{ts, yaw, score}], ts = window START, clamped to file.
+    Forward-hemisphere candidates are dropped before ranking (see
+    FORWARD_EXCLUDE_HALF_DEG / forward_yaw) — right/left/back only, same
+    coverage the helmet cam doesn't already give us."""
     if dur_limit < clip_dur:
         return []
+    total = len(rows)
+    rows = [r for r in rows if not _is_forward(r[1], forward_yaw)]
+    dropped = total - len(rows)
+    if dropped:
+        log(f"    {dropped}/{total} candidate view(s) excluded (forward hemisphere)")
     picked: list[dict] = []
     for ts, yaw, sc in sorted(rows, key=lambda r: -r[2]):
         if any(abs(ts - p["_center"]) < min_gap for p in picked):
@@ -495,9 +548,12 @@ def assemble_tracked(ffmpeg: str, jpg_dir: Path, idxs: list, fps: float,
            "-c:v", "h264_nvenc", "-preset", "p5", "-b:v", "16M",
            "-c:a", "aac", "-b:a", "128k", "-shortest",
            *meta, str(out)]
+    # stderr to a FILE: an undrained pipe can fill while we write stdin and
+    # deadlock both processes — with the NVENC semaphore held (audit TS#4).
+    _errf = out.with_suffix(".enc.log")
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
                             stdout=subprocess.DEVNULL,
-                            stderr=subprocess.PIPE)
+                            stderr=open(_errf, "w"))
     try:
         for i, (yw, pt) in zip(idxs, traj):
             img = cv2.imread(str(jpg_dir / f"{i}.jpg"))
@@ -514,14 +570,14 @@ def assemble_tracked(ffmpeg: str, jpg_dir: Path, idxs: list, fps: float,
             pass
         return False
     if proc.returncode != 0 or not out.exists():
-        err = b""
+        err = ""
         try:
-            err = proc.stderr.read()
-        except Exception:
+            err = _errf.read_text(errors="replace")[-200:]
+        except OSError:
             pass
-        log(f"  ! tracked assemble failed for {out.name}: "
-            f"{err.decode(errors='replace')[-200:]}")
+        log(f"  ! tracked assemble failed for {out.name}: {err}")
         return False
+    _errf.unlink(missing_ok=True)
     return True
 
 
@@ -555,13 +611,32 @@ def assemble_clip(ffmpeg: str, jpg_dir: Path, idxs: list, fps: float,
 
 
 def extract_pool_frame(ffmpeg: str, clip: Path, frames_dir: Path,
-                       scene: str) -> None:
+                       scene: str) -> bool:
+    """Single-frame pool thumbnail. Production (2026-10-01): 32/120 clips
+    silently had no thumbnail (grey square in the gallery) after a run under
+    heavy GPU/CPU contention (concurrent Vulkan-fallback stitching) — this
+    had no returncode check, no retry, no log line, so the failure was
+    invisible. Now retried once and reported; still non-fatal (the clip
+    itself is fine, only its pool preview is missing)."""
     frames_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                    "-ss", "0.5", "-i", str(clip), "-frames:v", "1",
-                    "-vf", "scale=640:-2", "-q:v", "4",
-                    str(frames_dir / f"{scene}.jpg")],
-                   capture_output=True, timeout=30)
+    out = frames_dir / f"{scene}.jpg"
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+           "-ss", "0.5", "-i", str(clip), "-frames:v", "1",
+           "-vf", "scale=640:-2", "-q:v", "4", str(out)]
+    for _attempt in range(2):
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=30)
+        except Exception:
+            # Re-audit #1(b): only TimeoutExpired was caught — a missing
+            # ffmpeg binary or any OSError escaped uncaught, past this
+            # function's "never fatal" contract, up into _process_pair's
+            # blanket except — dropping the WHOLE pair's 8 good clips over
+            # one thumbnail. Must never raise.
+            continue
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            return True
+    log(f"  ! pool thumbnail failed for {scene} (clip itself is fine)")
+    return False
 
 
 # ── phase E: merge ───────────────────────────────────────────────────────────
@@ -744,7 +819,32 @@ def main() -> int:
     autocut = auto_dir / "autocut"
     autocut.mkdir(parents=True, exist_ok=True)
 
+    _lock = acquire_lock(auto_dir)
+    if _lock is None:
+        sys.exit("Another 360 scan is already running for this project")
+    try:
+        return _main_locked(a, work_dir, dir360, out_w, out_h, cp, sdk,
+                            ffmpeg, ffprobe, pos, neg, neg_w, phash,
+                            pairs, auto_dir, i360_dir, autocut)
+    finally:
+        release_lock(_lock)
+
+
+def _main_locked(a, work_dir, dir360, out_w, out_h, cp, sdk, ffmpeg, ffprobe,
+                 pos, neg, neg_w, phash, pairs, auto_dir, i360_dir, autocut) -> int:
+    # Reclaim tmp dirs from crashed prior runs (re-audit Medium #4): only
+    # safe now that the lock proves no OTHER process is mid-run.
+    _tmp_root = i360_dir / "tmp"
+    if _tmp_root.is_dir():
+        for _leftover in _tmp_root.iterdir():
+            if _leftover.is_dir():
+                shutil.rmtree(_leftover, ignore_errors=True)
+
     yaws = [round(i * 360 / a.yaws) for i in range(a.yaws)]
+    forward_yaw = cp.getfloat("insta360", "forward_yaw_deg", fallback=0.0) % 360
+    if forward_yaw:
+        log(f"  forward reference: raw yaw {forward_yaw:g}° "
+            f"([insta360] forward_yaw_deg)")
 
     # ── Pass 1: scan + select every pair (holds the CUDA model) ─────────────
     scorer = None
@@ -780,7 +880,8 @@ def main() -> int:
             continue
 
         # B: select
-        wins = select_windows(rows, dur, a.clip_dur, a.min_gap, a.per_file)
+        wins = select_windows(rows, dur, a.clip_dur, a.min_gap, a.per_file,
+                              forward_yaw)
         if not wins:
             log("  · no windows selected")
             continue
@@ -856,6 +957,18 @@ def _process_pair(plan: dict, ctx: dict):
         return [], None, {}, 0
 
 
+def _drop_stale_markers(marker_dir: Path, stem: str, keep: Path) -> None:
+    """Remove every done-marker for `stem` other than `keep`. Must run as
+    soon as we're committed to overwriting this stem's clip files — not
+    only after the new attempt fully succeeds — or a stale marker can go on
+    validating files a failed newer attempt partially overwrote
+    (2026-10-06 audit)."""
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    for _old in marker_dir.glob(f"{stem}.*"):
+        if _old != keep:
+            _old.unlink(missing_ok=True)
+
+
 def _process_pair_inner(plan: dict, ctx: dict):
     a, ffmpeg, sdk = ctx["a"], ctx["ffmpeg"], ctx["sdk"]
     auto_dir, autocut, i360_dir = ctx["auto_dir"], ctx["autocut"], ctx["i360_dir"]
@@ -873,10 +986,23 @@ def _process_pair_inner(plan: dict, ctx: dict):
         if all((autocut / f"{stem}-clip-{wi + 1:03d}.mp4").exists()
                for wi in range(len(wins))):
             log(f"[{stem}] cached (clips already assembled)")
+            _repaired = 0
             for wi, w in enumerate(wins):
                 scene = f"{stem}-clip-{wi + 1:03d}"
+                # Re-audit #2: a thumbnail-extraction failure was discarded
+                # on the FRESH-stitch path too, but there it could at least
+                # self-heal on the next analyze — the cached-hit path only
+                # ever checked clip existence, so a missing preview (seen
+                # in production: 32/120) stayed a permanent grey square
+                # until someone noticed and repaired it by hand. Repair here.
+                if not (auto_dir / "frames" / f"{scene}.jpg").exists():
+                    if extract_pool_frame(ffmpeg, autocut / f"{scene}.mp4",
+                                          auto_dir / "frames", scene):
+                        _repaired += 1
                 rows.append(_row(scene, w))
                 durs[scene] = a.clip_dur
+            if _repaired:
+                log(f"[{stem}]   repaired {_repaired} missing thumbnail(s)")
             return rows, stem, durs, 0
         log(f"[{stem}] cache marker present but clips missing — regenerating")
         marker.unlink(missing_ok=True)
@@ -890,8 +1016,14 @@ def _process_pair_inner(plan: dict, ctx: dict):
     idx_map = stitch_windows(sdk, pair, wins, fps, a.clip_dur, stitch_dir,
                              a.stitch_size, a.stitch_type)
     if idx_map is None:
+        # Nothing on disk was touched — an old marker, if any, is still
+        # accurate. Invalidating it here (rather than only below) would
+        # punish a transient stitch failure for no reason.
         shutil.rmtree(stitch_dir, ignore_errors=True)
         return [], None, {}, 0
+
+    # From here on we're about to overwrite autocut/{stem}-clip-NNN.mp4.
+    _drop_stale_markers(marker.parent, stem, marker)
 
     ok = 0
     for wi, w in enumerate(wins):
@@ -921,17 +1053,72 @@ def _process_pair_inner(plan: dict, ctx: dict):
             ok += 1
     shutil.rmtree(stitch_dir, ignore_errors=True)
     # All-or-nothing: a partial window set must NOT be marked done, or the
-    # cache would forever hide the failed clips.
+    # cache would forever hide the failed clips. Older markers for this stem
+    # were already dropped upfront, before any clip file was touched (see
+    # above) — nothing more to clean up here, just record this attempt.
     if ok == len(wins):
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        # Drop every older marker of this stem first: run A→B→A left A's
-        # stale marker describing B's overwritten clips (audit #3).
-        for _old in marker.parent.glob(f"{stem}.*"):
-            if _old != marker:
-                _old.unlink(missing_ok=True)
         marker.touch()
     log(f"[{stem}] clips: {ok}/{len(wins)}")
     return rows, (stem if ok else None), durs, ok
+
+
+def acquire_lock(auto_dir: Path):
+    """Cross-process lock keyed by the resolved project dir (re-audit High
+    #2): the manual endpoint's job-based guard never saw the automatic
+    analyze-time scan, since that one runs in-process from pipeline.py with
+    no Job object. A lock file works for both entry points and the CLI.
+    Returns the lock Path on success, None if another live process holds it.
+
+    PID-reuse note: execve (used by hf_policy.retry_online_or_return for an
+    offline-cache-miss retry) replaces the program image but KEEPS the PID —
+    main() runs from scratch and calls this again. Without recognizing our
+    own PID as already-held, the re-exec'd process would read its own lock
+    file and refuse to proceed, permanently defeating the retry (re-audit
+    High #1, reproduced in production). Self-PID is therefore always a hit.
+    """
+    lock = auto_dir / "insta360" / ".scan.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    for _attempt in range(2):
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return lock
+        except FileExistsError:
+            try:
+                _pid = int(lock.read_text().strip())
+            except (ValueError, OSError):
+                return None   # unreadable — can't tell, don't guess
+            if _pid == os.getpid():
+                return lock   # our own lock, surviving an execve re-exec
+            try:
+                os.kill(_pid, 0)
+                return None   # a live process holds it
+            except ProcessLookupError:
+                pass   # looks dead — fall through to a verified reclaim
+            except (PermissionError, OSError):
+                return None   # can't tell — treat as held, don't guess
+            # TOCTOU guard (re-audit Medium #3): re-read right before
+            # unlinking. If the PID changed since the check above, another
+            # process already reclaimed or renewed it — don't blindly
+            # unlink what might now be someone else's live lock. This
+            # narrows, but does not fully eliminate, the race; a kernel
+            # advisory lock (fcntl.flock) would close it completely and is
+            # a reasonable future upgrade if this ever bites in practice.
+            try:
+                _pid2 = int(lock.read_text().strip())
+            except (ValueError, OSError):
+                return None
+            if _pid2 != _pid:
+                return None
+            lock.unlink(missing_ok=True)
+            continue
+    return None
+
+
+def release_lock(lock: Path | None) -> None:
+    if lock is not None:
+        lock.unlink(missing_ok=True)
 
 
 def _row(scene: str, w: dict) -> dict:

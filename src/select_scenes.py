@@ -85,7 +85,8 @@ if force_include or force_exclude:
 os.makedirs(TRIMMED_DIR, exist_ok=True)
 
 df = pd.read_csv(SCORES_CSV)
-df['source'] = df['scene'].str.replace(r'-(scene|clip)-\d+$', '', regex=True)
+from scene_id import SCENE_SUFFIX_RE as _SCID
+df['source'] = df['scene'].str.replace(_SCID, '', regex=True)
 cam_map = {}
 if CAM_SOURCES and os.path.exists(CAM_SOURCES):
     cdf = pd.read_csv(CAM_SOURCES)
@@ -193,7 +194,10 @@ if 'avg_brightness' not in df.columns:
         print(f"Brightness: computed {len(_bvals)} scenes → CSV updated")
 
 if 'avg_brightness' in df.columns:
-    _dark = df[pd.to_numeric(df['avg_brightness'], errors='coerce').fillna(0) < BRIGHTNESS_BAN]['scene']
+    _bvals = pd.to_numeric(df['avg_brightness'], errors='coerce')
+    # Unknown brightness (e.g. 360 clips) is not darkness — only ban
+    # MEASURED dark scenes (audit #28).
+    _dark = df[_bvals.notna() & (_bvals < BRIGHTNESS_BAN)]['scene']
     if not _dark.empty:
         print(f"Brightness filter: excluding {len(_dark)} dark scenes (avg_brightness < {BRIGHTNESS_BAN})")
         force_exclude = force_exclude | set(_dark)
@@ -315,31 +319,25 @@ if CSV_DIR and os.path.isdir(CSV_DIR):
     _ffprobe  = _cfg.get("paths", "ffprobe", fallback="ffprobe")
 
     def _get_file_start(stem: str) -> float | None:
+        from media_probe import creation_epoch, VIDEO_EXTS
         cam = cam_map.get(stem)
         dirs_to_try = [_work_dir / cam] if cam else []
         dirs_to_try.append(_work_dir)
         for d in dirs_to_try:
-            for ext in (".mp4", ".MP4", ".mov", ".MOV"):
+            for ext in sorted(VIDEO_EXTS) + [e.upper() for e in VIDEO_EXTS]:
                 p = d / (stem + ext)
                 if p.exists():
-                    try:
-                        out = subprocess.check_output(
-                            [_ffprobe, "-v", "quiet", "-print_format", "json",
-                             "-show_format", str(p)],
-                            stderr=subprocess.DEVNULL, timeout=10,
-                        )
-                        tags = _json.loads(out)["format"].get("tags", {})
-                        ct = tags.get("creation_time", "")
-                        if ct:
-                            from datetime import datetime
-                            dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
-                            return dt.timestamp()
-                    except Exception:
-                        pass
-                    # Fallback: use file mtime when creation_time is absent
+                    ep = creation_epoch(p, _ffprobe)
+                    if ep is not None:
+                        return ep
+                    # mtime is NOT capture time (it can reflect copying) —
+                    # CLAUDE.md names creation_time as the only source.
+                    # Kept as a last resort, but warned loudly so a silent
+                    # multicam desync is traceable.
                     try:
                         mtime = p.stat().st_mtime
-                        print(f"  [mtime fallback] {p.name}: {mtime:.0f}")
+                        print(f"  ! WARNING: {p.name} has no creation_time — "
+                              f"using file mtime (multicam sync unreliable)")
                         return mtime
                     except Exception:
                         pass
@@ -364,7 +362,7 @@ if CSV_DIR and os.path.isdir(CSV_DIR):
 
     if _CAM_OFFSETS and ts_map:
         for _key in ts_map:
-            _src = _re.sub(r'-(?:scene|clip)-\d+$', '',_key)
+            _src = _SCID.sub('', _key)
             _cam = cam_map.get(_src, 'default')
             if _cam in _CAM_OFFSETS:
                 ts_map[_key] += _CAM_OFFSETS[_cam]
@@ -429,7 +427,7 @@ if dual_cam:
     back_rows = []
     for sc_file in sorted(Path(SCENES_DIR).glob("*.mp4")):
         stem = sc_file.stem
-        src  = _re.sub(r'-(?:scene|clip)-\d+$', '',stem)
+        src  = _SCID.sub('', stem)
         if src in back_sources:
             back_rows.append({'scene': stem, 'source': src,
                               'camera': cam_map[src], 'score': 0.0})
@@ -554,7 +552,7 @@ if dual_cam:
     _back_src_idx: dict[str, list[int]] = defaultdict(list)
     for _i, (_ms, _bs) in enumerate(paired):
         if _bs is not None:
-            _src = _re.sub(r'-(?:scene|clip)-\d+$', '',_bs[0])
+            _src = _SCID.sub('', _bs[0])
             _back_src_idx[_src].append(_i)
     for _src, _idxs in _back_src_idx.items():
         if len(_idxs) < 2:

@@ -95,16 +95,26 @@ if emb_dim not in _DIM_TO_MODEL and not (_saved_model and _saved_pretrained):
     raise RuntimeError(f"Mood scoring: unsupported embedding dimension {emb_dim}; "
                        "the saved embeddings need a matching CLIP backbone")
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+from device_policy import select_torch_device
+device = select_torch_device("mood_score")
 print(f"Mood scoring: {len(_action_prompts)} action + {len(_scenic_prompts)} scenic prompts  [{CLIP_MODEL}]")
 
 import warnings; warnings.filterwarnings("ignore", message="QuickGELU mismatch", category=UserWarning)
-if CLIP_PRETRAINED.startswith("hf-hub:"):
-    model, _ = open_clip.create_model_from_pretrained(CLIP_PRETRAINED)
-    tokenizer = open_clip.get_tokenizer(CLIP_PRETRAINED)
-else:
-    model, _, _ = open_clip.create_model_and_transforms(CLIP_MODEL, pretrained=CLIP_PRETRAINED)
-    tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
+try:
+    if CLIP_PRETRAINED.startswith("hf-hub:"):
+        model, _ = open_clip.create_model_from_pretrained(CLIP_PRETRAINED)
+        tokenizer = open_clip.get_tokenizer(CLIP_PRETRAINED)
+    else:
+        model, _, _ = open_clip.create_model_and_transforms(CLIP_MODEL, pretrained=CLIP_PRETRAINED)
+        tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
+except Exception as _e:
+    # Offline cache miss must retry online, same as every other loader —
+    # this one was missing it and crashed the whole mood pass in production
+    # (2026-10-01: clip_scan's retry succeeded moments earlier in a SEPARATE
+    # subprocess, but didn't refresh the shared marker, so this process still
+    # decided offline against a cache that may genuinely lack this file).
+    hf_policy.retry_online_or_return(f"{CLIP_MODEL}/{CLIP_PRETRAINED}: {_e}")
+    raise
 model = model.to(device).eval()
 
 with torch.no_grad():

@@ -176,11 +176,17 @@ def _run_zero_shot(
 
     print(f"  Zero-shot: {len(frame_paths)} frames × {len(LABELS)} labels …", flush=True)
 
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        "ViT-L-14", pretrained="openai"
-    )
+    try:
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            "ViT-L-14", pretrained="openai"
+        )
+        tokenizer = open_clip.get_tokenizer("ViT-L-14")
+    except Exception as _e:
+        # Offline cache miss → retry online instead of crashing (same gap
+        # that silently dropped mood scoring in production 2026-10-01).
+        hf_policy.retry_online_or_return(f"ViT-L-14/openai: {_e}")
+        raise
     model = model.to(device).eval()
-    tokenizer = open_clip.get_tokenizer("ViT-L-14")
 
     # Encode labels once (batch)
     with torch.no_grad():
@@ -288,8 +294,8 @@ def generate(
     print(f"  Total duration: {_fmt_timestamp(sum(scene_durs))}")
 
     # 4. CLIP zero-shot classification
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    from device_policy import select_torch_device
+    device = select_torch_device("metadata_gen")
     label_indices = _run_zero_shot(frame_paths, device=device)
 
     # 5. Build per-scene records

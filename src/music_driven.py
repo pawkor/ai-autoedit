@@ -87,7 +87,8 @@ def _get_vocals_demucs(music_path: Path, sr: int) -> "np.ndarray | None":
         # [batch=1, channels, samples]
         wav_t = torch.tensor(wav_np.T, dtype=torch.float32).unsqueeze(0)
 
-        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        from device_policy import select_torch_device
+        _device = select_torch_device("Demucs")
         model = _get_model("htdemucs")
         model.to(_device).eval()
 
@@ -136,7 +137,11 @@ def _get_chorus_whisperx(music_path: Path) -> list[tuple[float, float]]:
         return []
 
     try:
-        _device = "cuda"
+        from device_policy import select_torch_device
+        # float16 compute_type — CPU isn't a sane fallback here, so require
+        # CUDA; the enclosing except already logs this as "skipped" (an
+        # intentional, pre-existing degrade-gracefully path, not a new one).
+        _device = select_torch_device("WhisperX", require_cuda=True)
         _model = _wx.load_model("large-v3", _device, compute_type="float16")
         _audio = _wx.load_audio(str(music_path))
         _res   = _model.transcribe(_audio, batch_size=16)
@@ -213,6 +218,7 @@ def analyze_music(music_path: Path) -> dict:
     _tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     _tmp.close()
     _beatthis_beats: list[float] | None = None
+    _beatthis_downbeats: list[float] | None = None
     _beatnet_beats: list[float] | None = None
     try:
         subprocess.run(
@@ -228,10 +234,18 @@ def analyze_music(music_path: Path) -> dict:
         try:
             import torch as _torch
             from beat_this.inference import File2Beats as _File2Beats
-            _bt_device = "cuda" if _torch.cuda.is_available() else "cpu"
+            from device_policy import select_torch_device
+            _bt_device = select_torch_device("Beat This!")
             _bt = _File2Beats(checkpoint_path="final0", device=_bt_device, dbn=False)
             _bt_out = _bt(_tmp.name)
-            _bt_raw = _bt_out[0] if isinstance(_bt_out, tuple) else _bt_out
+            # File2Beats always returns (beats, downbeats) — Postprocessor.__call__
+            # (beat_this/inference.py) documents this tuple unconditionally,
+            # regardless of dbn=True/False. Only `[0]` (beats) was used before
+            # (2026-10-06: downbeats now extracted too, for section-cut snapping).
+            if isinstance(_bt_out, tuple):
+                _bt_raw, _bt_db_raw = _bt_out[0], _bt_out[1]
+            else:
+                _bt_raw, _bt_db_raw = _bt_out, None
             if hasattr(_bt_raw, "detach"):
                 _bt_raw = _bt_raw.detach().cpu().numpy()
             _bt_arr = np.asarray(_bt_raw, dtype=float)
@@ -239,11 +253,20 @@ def analyze_music(music_path: Path) -> dict:
                 _bt_arr = _bt_arr[:, 0]
             _beatthis_beats = sorted({float(t) for t in _bt_arr.ravel()
                                       if np.isfinite(t) and 0.0 <= t < len(y) / sr})
+            if _bt_db_raw is not None:
+                if hasattr(_bt_db_raw, "detach"):
+                    _bt_db_raw = _bt_db_raw.detach().cpu().numpy()
+                _bt_db_arr = np.asarray(_bt_db_raw, dtype=float)
+                if _bt_db_arr.ndim > 1:
+                    _bt_db_arr = _bt_db_arr[:, 0]
+                _beatthis_downbeats = sorted({float(t) for t in _bt_db_arr.ravel()
+                                              if np.isfinite(t) and 0.0 <= t < len(y) / sr})
             del _bt
             if _bt_device == "cuda":
                 _torch.cuda.empty_cache()
             if len(_beatthis_beats) < 4:
                 _beatthis_beats = None
+                _beatthis_downbeats = None
         except Exception as _bt_err:
             print(f"  [Beat This!] unavailable — falling back ({_bt_err})")
         try:
@@ -269,8 +292,13 @@ def analyze_music(music_path: Path) -> dict:
     tempo = float(np.squeeze(tempo))  # librosa ≥0.10 returns 0-dim array
     beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=hop).tolist()
 
+    # Downbeats (bar-start beats) — only Beat This! provides them; BeatNet and
+    # the librosa fallback have no downbeat concept, so they get none.
+    downbeat_times: list[float] = []
+
     if _beatthis_beats:
         beat_times = _beatthis_beats
+        downbeat_times = _beatthis_downbeats or []
         _ivals = np.diff(beat_times)
         tempo = 60.0 / float(np.median(_ivals)) if len(_ivals) > 0 else tempo
         print(f"  [Beat This!] {len(beat_times)} beats  {tempo:.0f} BPM")
@@ -381,12 +409,14 @@ def analyze_music(music_path: Path) -> dict:
             print(f"  [WhisperX] boosted {_boosted}/{len(segments)} segments")
 
     print(f" {duration:.1f}s  {tempo:.0f} BPM  {len(beat_times)} beats  "
+          f"{len(downbeat_times)} downbeats  "
           f"section_e=[{section_energy.min():.2f}..{section_energy.max():.2f}]"
           f"  segs={len(segments)}")
     return {
         "duration":         duration,
         "tempo":            tempo,
         "beat_times":       beat_times,
+        "downbeat_times":   downbeat_times,
         "beat_energy":      beat_energy.tolist(),
         "onset_energy":     onset_at_beats.tolist(),
         "harm_energy":      harm_at_beats.tolist(),
@@ -482,12 +512,18 @@ def _build_schedule_segments(
     section_energy: list[float] | None = None,
     perc_energy: list[float] | None = None,
     harm_energy: list[float] | None = None,
+    downbeat_times: list[float] | None = None,
 ) -> list[dict]:
     """
     Segment-aware beat-grid schedule.
     Blend: 35% segment context (verse/chorus) + 15% section RMS + 50% event energy.
     Event energy = max(percussive onset, harmonic onset) — catches both kick drums
     and vocal attacks (e.g. "the best") so cuts land on musically meaningful moments.
+
+    When `downbeat_times` is given, the cut at a SEGMENT boundary (verse→chorus
+    etc.) snaps to the nearest downbeat — a bar-start lands harder than an
+    arbitrary beat — while cuts within a segment stay on the plain beat grid
+    (2026-10-06: user-requested, "major cuts" = segment transitions only).
     """
     import numpy as _np
 
@@ -496,6 +532,25 @@ def _build_schedule_segments(
             if seg["start"] <= t < seg["end"]:
                 return seg["energy"]
         return segments[-1]["energy"] if segments else 0.5
+
+    def _seg_index(t: float) -> int:
+        for idx, seg in enumerate(segments):
+            if seg["start"] <= t < seg["end"]:
+                return idx
+        return len(segments) - 1 if segments else -1
+
+    _median_beat_gap = (float(_np.median(_np.diff(beat_times)))
+                        if len(beat_times) > 1 else 0.5)
+
+    def _nearest_downbeat(t: float) -> float:
+        # Only snap within ~2 beats — a downbeat farther than that isn't
+        # "this cut, slightly adjusted", it's a different musical moment.
+        if not downbeat_times:
+            return t
+        arr = _np.asarray(downbeat_times)
+        idx = int(_np.argmin(_np.abs(arr - t)))
+        cand = float(arr[idx])
+        return cand if abs(cand - t) <= 2 * _median_beat_gap else t
 
     n = len(beat_times)
     seg_e_arr = _np.array([_seg_energy(beat_times[i]) for i in range(n)])
@@ -522,6 +577,8 @@ def _build_schedule_segments(
 
     schedule: list[dict] = []
     i = 0
+    _prev_seg_idx: int | None = None
+    _snapped_cuts = 0
     while i < n - 1:
         energy = float(blended[i])
         if energy > _p_ultra:
@@ -533,16 +590,41 @@ def _build_schedule_segments(
         else:
             n_beats = beats_mid
         end_i = min(i + n_beats, n - 1)
-        dur   = beat_times[end_i] - beat_times[i]
+        start = beat_times[i]
+        cur_seg_idx = _seg_index(start)
+        if downbeat_times and _prev_seg_idx is not None and cur_seg_idx != _prev_seg_idx:
+            snapped = _nearest_downbeat(start)
+            # The nearest downbeat can land BEFORE the previous slot's own
+            # start (short previous slot) or AT/AFTER this slot's own end
+            # (short current slot) — either way the snap would produce a
+            # zero/negative-duration slot. Guard both directions; keep the
+            # unsnapped boundary if the snap doesn't leave >= 0.4s on each
+            # side (2026-10-06, caught by re-audit before I'd tested a short
+            # adjacent slot myself).
+            _prev_ok = not schedule or (snapped - schedule[-1]["start"]) >= 0.4
+            _cur_ok = (beat_times[end_i] - snapped) >= 0.4
+            if snapped != start and _prev_ok and _cur_ok:
+                start = snapped
+                if schedule:
+                    # Keep slots contiguous — the previous slot's end moves
+                    # with this one's (now snapped) start.
+                    schedule[-1]["end"] = start
+                    schedule[-1]["duration"] = start - schedule[-1]["start"]
+                _snapped_cuts += 1
+        dur = beat_times[end_i] - start
         if dur >= 0.4:
             schedule.append({
-                "start":    beat_times[i],
+                "start":    start,
                 "end":      beat_times[end_i],
                 "duration": dur,
                 "energy":   energy,
                 "n_beats":  n_beats,
             })
+            _prev_seg_idx = cur_seg_idx
         i = end_i
+
+    if _snapped_cuts:
+        print(f"  Segment cuts snapped to downbeat: {_snapped_cuts}")
 
     if schedule:
         durs = [s["duration"] for s in schedule]
@@ -872,8 +954,8 @@ def analyse_clips(autocut_dir: Path, scene_scores: dict,
 import re as _re
 
 def _clip_source(scene: str) -> str:
-    """Base source file stem: strip trailing -(clip|scene)-NNN."""
-    return _re.sub(r'-(clip|scene)-\d+$', '', scene)
+    from scene_id import source_of
+    return source_of(scene)
 
 
 def _parse_cam_pattern(pattern: str, cameras: list[str]) -> list[str] | None:
@@ -1190,6 +1272,18 @@ def match_clips(schedule: list[dict], clips: list[dict],
             "clip_time_norm": best.get("clip_time_norm"),
         })
 
+    # render() concatenates clips sequentially and overlays music continuously
+    # from music_ss — it does not re-seek per slot. A trimmed slot (audit
+    # #14 undersized-source case) therefore left every LATER cut's recorded
+    # music_start pointing at its old, now-wrong beat position (re-audit
+    # High #1). Recompute cumulatively from the actual assigned durations —
+    # identical to the existing saved-sequence recompute below, and a no-op
+    # when nothing was trimmed (schedule starts are already cumulative).
+    _t_run = 0.0
+    for _e in edit:
+        _e["music_start"] = round(_t_run, 3)
+        _t_run += float(_e["duration"])
+
     covered = sum(e["duration"] for e in edit)
     unique  = len({e["scene"] for e in edit})
     # Camera distribution summary
@@ -1341,8 +1435,20 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                 cmd_p = cmd[:-1] + ["-progress", "pipe:1", "-loglevel", "error", cmd[-1]]
                 proc = subprocess.Popen(cmd_p, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, text=True)
+                # Drain stderr concurrently in a background thread — reading
+                # stdout to EOF before touching stderr (the old code) risks a
+                # real deadlock if ffmpeg fills the stderr OS pipe buffer
+                # while blocked on a full stdout buffer too (2026-10-06 audit).
+                _stderr_lines: list[str] = []
+                def _drain_stderr(_p=proc, _buf=_stderr_lines):
+                    try:
+                        for _line in _p.stderr:
+                            _buf.append(_line)
+                    except Exception:
+                        pass
+                _stderr_thread = _thr.Thread(target=_drain_stderr, daemon=True)
+                _stderr_thread.start()
                 last_pct = -1
-                _stderr = ""
                 try:
                     for _pl in proc.stdout:
                         _pl = _pl.strip()
@@ -1357,9 +1463,9 @@ def render(edit: list[dict], music_path: Path, music_ss: float,
                             except ValueError:
                                 pass
                     proc.wait()
-                    _stderr = proc.stderr.read()
                 finally:
-                    pass
+                    _stderr_thread.join(timeout=5)
+                _stderr = "".join(_stderr_lines)
                 print(f"WORKER_DONE {slot}", flush=True)
                 if proc.returncode != 0 or not out.exists():
                     print(f"  WARN: trim failed for {entry['scene']}\n{_stderr}", flush=True)
@@ -1655,20 +1761,13 @@ def assemble(
     # .insv restricted to the front-lens VID_*_00_* file — it carries the
     # recording's identity; LRV previews and _10_ companions would pollute
     # the cadence/normalisation statistics with duplicate epochs.
-    _vext3 = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".insv"}
+    from media_probe import is_time_source, creation_epoch
     for _svf in sorted(work_dir.rglob("*")):
-        if _svf.suffix.lower() not in _vext3: continue
-        if _svf.suffix.lower() == ".insv" and "_00_" not in _svf.name: continue
+        if not is_time_source(_svf): continue
         if "_autoframe" in _svf.parts: continue
         try:
-            _r3 = subprocess.run(
-                [ffprobe, "-v", "quiet", "-show_entries", "format_tags=creation_time",
-                 "-of", "csv=p=0", str(_svf)],
-                capture_output=True, text=True, timeout=5)
-            _ts3 = _r3.stdout.strip()
-            if not _ts3: continue
-            from datetime import datetime as _dtcls
-            _ep3 = _dtcls.fromisoformat(_ts3.replace("Z", "+00:00")).timestamp()
+            _ep3 = creation_epoch(_svf, ffprobe)
+            if _ep3 is None: continue
             _cam3 = _src_cam_map.get(_svf.stem, "")
             _src_epoch[_svf.stem] = _ep3 + _src_cam_off.get(_cam3, 0.0)
         except Exception:
@@ -1801,6 +1900,7 @@ def assemble(
     music_info = analyze_music(music_path)
     beat_times = music_info["beat_times"]
     beat_energy = music_info["beat_energy"]
+    downbeat_times = music_info.get("downbeat_times", [])
 
     # Full highlight always starts from 0 — find_best_offset is for shorts only
     music_ss = 0.0
@@ -1851,7 +1951,7 @@ def assemble(
     _music_sr        = music_info.get("sr", 22050)
     _music_hop       = music_info.get("hop", 512)
 
-    def _make_schedule(bt, be):
+    def _make_schedule(bt, be, dbt=None):
         if _beats_auto and _onset_env_perc:
             # Legacy onset-peak mode (dense music → fixed min_shot_sec gap)
             return build_schedule(bt, be,
@@ -1868,6 +1968,7 @@ def assemble(
                                              _beats_mid, _beats_slow,
                                              section_energy=_section_energy,
                                              perc_energy=_onset_energy,
+                                             downbeat_times=dbt,
                                              harm_energy=_harm_energy)
             if sched:
                 return sched
@@ -1882,7 +1983,7 @@ def assemble(
                               onset_env_perc=_onset_env_perc,
                               sr=_music_sr, hop=_music_hop)
 
-    schedule = _make_schedule(beat_times, beat_energy)
+    schedule = _make_schedule(beat_times, beat_energy, downbeat_times)
     if not schedule:
         raise RuntimeError("Could not build cut schedule from music")
 
@@ -1906,8 +2007,9 @@ def assemble(
         music_ss = max(0.0, _sync_beat - _card_dur)
         _bt_sync = beat_times[_sync_idx:]
         _be_sync = list(beat_energy)[_sync_idx:]
+        _dbt_sync = [d for d in downbeat_times if d >= _sync_beat]
         if len(_bt_sync) > 1:
-            schedule = _make_schedule(_bt_sync, _be_sync)
+            schedule = _make_schedule(_bt_sync, _be_sync, _dbt_sync)
             print(f"  Intro sync: music_ss={music_ss:.3f}s  "
                   f"first_cut_beat={_sync_beat:.3f}s  "
                   f"card={_card_dur:.1f}s  drift={abs(_sync_beat-_target)*1000:.0f}ms")
@@ -1977,7 +2079,7 @@ def assemble(
     # Build stem → normalised creation_time [0, 1] for chronological arc
     # 0 = first recording of the day, 1 = last recording of the day
     stem_to_time: dict[str, float] = {}
-    _video_ext2 = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".insv"}
+    from media_probe import is_time_source as _is_ts2, creation_epoch as _cep2
     # Read cam_offsets from config (same keys as [cam_offsets] in config.ini)
     _cam_offsets: dict[str, float] = {}
     if _cp.has_section("cam_offsets"):
@@ -1987,26 +2089,14 @@ def assemble(
             except ValueError:
                 pass
     for _vf in sorted(work_dir.rglob("*")):
-        if _vf.suffix.lower() not in _video_ext2:
-            continue
-        # .insv: only the canonical front-lens file (see _vext3 note above)
-        if _vf.suffix.lower() == ".insv" and "_00_" not in _vf.name:
+        if not _is_ts2(_vf):
             continue
         if "_autoframe" in _vf.parts:
             continue
         try:
-            _r2 = subprocess.run(
-                [ffprobe, "-v", "quiet",
-                 "-show_entries", "format_tags=creation_time",
-                 "-of", "csv=p=0", str(_vf)],
-                capture_output=True, text=True, timeout=5,
-            )
-            _ts = _r2.stdout.strip()
-            if not _ts:
+            _epoch = _cep2(_vf, ffprobe)
+            if _epoch is None:
                 continue
-            from datetime import datetime
-            _dt = datetime.fromisoformat(_ts.replace("Z", "+00:00"))
-            _epoch = _dt.timestamp()
             _cam = stem_to_camera.get(_vf.stem, "")
             _epoch += _cam_offsets.get(_cam, 0.0)
             stem_to_time[_vf.stem] = _epoch
@@ -2467,14 +2557,13 @@ if __name__ == "__main__":
         if not _music:
             _sys.exit("ERROR: no music file — use --music or --music-dir")
 
-    # Detect NVENC
-    _nvenc = False
-    try:
-        r = subprocess.run([_ffmpeg, "-hide_banner", "-encoders"],
-                           capture_output=True, text=True, timeout=5)
-        _nvenc = "h264_nvenc" in r.stdout
-    except Exception:
-        pass
+    # Detect NVENC — a real encode, not just `-encoders` listing the codec
+    # name (2026-10-06: a broken driver left it listed while every actual
+    # encode failed with cuInit CUDA_ERROR_UNKNOWN).
+    from media_probe import probe_nvenc
+    _nvenc, _nvenc_err = probe_nvenc(_ffmpeg)
+    if not _nvenc and _nvenc_err:
+        print(f"NVENC probe failed, using libx264: {_nvenc_err}", flush=True)
 
     out = assemble(
         Path(args.work_dir),

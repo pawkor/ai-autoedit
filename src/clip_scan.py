@@ -119,9 +119,8 @@ VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts", ".ts"}
 
 
 # ── CLIP model (lazy — skipped for reextract) ─────────────────────────────────
-if torch.cuda.is_available():    DEVICE = "cuda"
-elif torch.backends.mps.is_available(): DEVICE = "mps"
-else:                            DEVICE = "cpu"
+from device_policy import select_torch_device
+DEVICE = select_torch_device("clip_scan", allow_mps=True)
 
 print(f"Device: {DEVICE}")
 if DEVICE == "cuda":
@@ -148,6 +147,10 @@ def _ensure_model():
             _model, _, _preprocess = open_clip.create_model_and_transforms(_model_name, pretrained=_model_pt)
             _tokenizer = open_clip.get_tokenizer(_model_name)
     except Exception as _e:
+        # Offline cache miss must NOT silently switch backbones — retry the
+        # SAME model online via re-exec (hf_policy). Only a genuine online
+        # failure falls through to the ViT-H fallback below.
+        hf_policy.retry_online_or_return(f"{_model_name}/{_model_pt}: {_e}")
         _fallback_name, _fallback_pt = "ViT-H-14", "dfn5b"
         print(f"  WARNING: failed to load {_model_name}/{_model_pt} ({_e})")
         print(f"  Falling back to {_fallback_name}/{_fallback_pt}")
@@ -251,20 +254,9 @@ def _probe_duration(path: Path) -> float:
 
 
 def _clip_start_ts_from_source(path: Path) -> float | None:
-    """Return source video creation_time as unix timestamp (for GPS alignment)."""
-    from datetime import datetime, timezone
-    r = subprocess.run(
-        [FFPROBE, "-v", "quiet", "-show_entries", "format_tags=creation_time",
-         "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True, timeout=10,
-    )
-    ts_str = r.stdout.strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y:%m:%d %H:%M:%SZ"):
-        try:
-            return datetime.strptime(ts_str, fmt).replace(tzinfo=timezone.utc).timestamp()
-        except ValueError:
-            pass
-    return None
+    """Source creation_time as unix timestamp (shared media_probe helper)."""
+    from media_probe import creation_epoch
+    return creation_epoch(path, FFPROBE)
 
 
 _codec_cache: dict[Path, str] = {}
@@ -287,34 +279,56 @@ def _hw(src: Path) -> list[str]:
 
 
 def _extract_frames_to_dir(src: Path, out_dir: Path, interval: float) -> list[Path]:
-    """Extract 1 frame per interval sec → out_dir/000001.jpg, 000002.jpg, …"""
+    """Extract 1 frame per interval sec → out_dir/000001.jpg, 000002.jpg, …
+    Returns whatever frames actually landed — a nonzero ffmpeg exit still
+    returns the (possibly partial) list rather than raising, so callers must
+    decide for themselves whether a short list means "short video" or
+    "extraction failed partway"; this logs which it was."""
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         FFMPEG, "-y", *_hw(src), "-i", str(src),
         "-vf", f"fps=1/{interval},scale=trunc(iw/4)*2:trunc(ih/4)*2",
         "-q:v", "5", str(out_dir / "%06d.jpg"),
     ]
-    subprocess.run(cmd, capture_output=True)
-    return sorted(out_dir.glob("*.jpg"))
+    r = subprocess.run(cmd, capture_output=True)
+    frames = sorted(out_dir.glob("*.jpg"))
+    if r.returncode != 0:
+        print(f"  ! frame extraction failed for {src.name} (rc={r.returncode}, "
+              f"{len(frames)} frame(s) landed before failure): "
+              f"{r.stderr.decode(errors='replace').strip()[-300:]}", flush=True)
+    return frames
 
 
-def _extract_single_frame(src: Path, ts: float, out: Path):
-    """Extract one frame at timestamp ts from src."""
+def _extract_single_frame(src: Path, ts: float, out: Path) -> bool:
+    """Extract one frame at timestamp ts from src. Returns True only if
+    ffmpeg exited 0 AND the output file actually exists with content —
+    callers must check this before treating `out` as valid."""
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         FFMPEG, "-y", *_hw(src),
         "-ss", f"{ts:.3f}", "-i", str(src),
         "-vframes", "1", "-q:v", "5", str(out), "-loglevel", "error",
     ]
-    subprocess.run(cmd, capture_output=True)
+    r = subprocess.run(cmd, capture_output=True)
+    ok = r.returncode == 0 and out.exists() and out.stat().st_size > 0
+    if not ok:
+        out.unlink(missing_ok=True)
+        print(f"  ! frame extraction failed for {out.name} (rc={r.returncode}): "
+              f"{r.stderr.decode(errors='replace').strip()[-300:]}", flush=True)
+    return ok
 
 
 _NVENC_CQ     = str(_cfg.getint("video", "x264_crf", fallback=15))
 _NVENC_PRESET = "p4"
 
 
-def _extract_clip(src: Path, start: float, duration: float, out: Path):
-    """Extract clip from source, re-encode to H264 (NVENC) for uniform codec in concat."""
+def _extract_clip(src: Path, start: float, duration: float, out: Path) -> bool:
+    """Extract clip from source, re-encode to H264 (NVENC) for uniform codec
+    in concat. Returns True only if ffmpeg exited 0 AND the output file
+    actually exists with content — callers must check this before recording
+    `out` as a usable scene (2026-10-06 audit: callers previously recorded
+    every attempted clip regardless of outcome, including failed NVENC
+    encodes that left a missing or truncated file on disk)."""
     start = max(0.0, start)
     cmd = [
         FFMPEG, "-y",
@@ -327,7 +341,13 @@ def _extract_clip(src: Path, start: float, duration: float, out: Path):
         "-avoid_negative_ts", "make_zero",
         str(out), "-loglevel", "error",
     ]
-    subprocess.run(cmd, capture_output=True)
+    r = subprocess.run(cmd, capture_output=True)
+    ok = r.returncode == 0 and out.exists() and out.stat().st_size > 0
+    if not ok:
+        out.unlink(missing_ok=True)
+        print(f"  ! clip extraction failed for {out.name} (rc={r.returncode}): "
+              f"{r.stderr.decode(errors='replace').strip()[-300:]}", flush=True)
+    return ok
 
 
 # ── Source files ──────────────────────────────────────────────────────────────
@@ -384,10 +404,13 @@ if CLIP_SCAN_PHASE == "reextract":
         for old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
             old.unlink()
         frames_missing = 0
+        clips_failed = 0
         for i, peak in enumerate(pd["peaks"], 1):
             clip_start = max(0.0, peak["ts"] - CLIP_DUR_SEC / 2)
             scene_name = f"{sf.stem}-clip-{i:03d}"
-            _extract_clip(sf, clip_start, CLIP_DUR_SEC, autocut_dir / f"{scene_name}.mp4")
+            if not _extract_clip(sf, clip_start, CLIP_DUR_SEC, autocut_dir / f"{scene_name}.mp4"):
+                clips_failed += 1
+                continue
             frame_path = frames_dir / f"{scene_name}_f0.jpg"
             if not frame_path.exists():
                 _extract_single_frame(sf, peak["ts"], frame_path)
@@ -401,6 +424,8 @@ if CLIP_SCAN_PHASE == "reextract":
         pd.setdefault("interval", INTERVAL_SEC)
         (_peaks_dir / f"{sf.stem}.json").write_text(_json.dumps(pd))
         extra = f" +{frames_missing} frames" if frames_missing else ""
+        if clips_failed:
+            extra += f" ({clips_failed} failed, excluded)"
         print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: {len(pd['peaks'])} clips re-extracted{extra}")
 
     _dur_cache = {f"{c['scene']}.mp4": CLIP_DUR_SEC for c in all_clips}
@@ -475,11 +500,13 @@ if CLIP_SCAN_PHASE == "reselect":
             peak_ts    = timestamps[peak_i]
             clip_start = max(0.0, peak_ts - CLIP_DUR_SEC / 2)
             scene_name = f"{sf.stem}-clip-{i:03d}"
-            _extract_clip(sf, clip_start, CLIP_DUR_SEC, autocut_dir / f"{scene_name}.mp4")
-            _extract_single_frame(sf, peak_ts, frames_dir / f"{scene_name}_f0.jpg")
-            all_clips.append({"scene": scene_name, "score": raw_scores[peak_i],
-                               "pos_score": 0.0, "neg_score": 0.0,
-                               "is_main": is_main, "offset_sec": clip_start})
+            # Keep the peak in _peaks_list regardless (so a future reextract
+            # can retry it) but only publish a scene record on real success.
+            if _extract_clip(sf, clip_start, CLIP_DUR_SEC, autocut_dir / f"{scene_name}.mp4"):
+                _extract_single_frame(sf, peak_ts, frames_dir / f"{scene_name}_f0.jpg")
+                all_clips.append({"scene": scene_name, "score": raw_scores[peak_i],
+                                   "pos_score": 0.0, "neg_score": 0.0,
+                                   "is_main": is_main, "offset_sec": clip_start})
             _peaks_list.append({"ts": peak_ts, "score": smoothed[peak_i], "clip_name": scene_name})
         _peaks_dir.mkdir(parents=True, exist_ok=True)
         (_peaks_dir / f"{sf.stem}.json").write_text(
@@ -533,10 +560,13 @@ if CLIP_SCAN_PHASE == "all":
                         print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: re-extracting {len(_pk)} clips from cached peaks")
                         for _old in autocut_dir.glob(f"{sf.stem}-clip-*.mp4"):
                             _old.unlink()
+                        _n_failed = 0
                         for _p in _pk:
                             _clip_start = max(0.0, _p["ts"] - CLIP_DUR_SEC / 2)
                             _sname = _p["clip_name"]
-                            _extract_clip(sf, _clip_start, CLIP_DUR_SEC, autocut_dir / f"{_sname}.mp4")
+                            if not _extract_clip(sf, _clip_start, CLIP_DUR_SEC, autocut_dir / f"{_sname}.mp4"):
+                                _n_failed += 1
+                                continue
                             _extract_single_frame(sf, _p["ts"], frames_dir / f"{_sname}_f0.jpg")
                             all_clips.append({
                                 "scene":      _sname,
@@ -546,7 +576,8 @@ if CLIP_SCAN_PHASE == "all":
                                 "is_main":    is_main,
                                 "offset_sec": _clip_start,
                             })
-                        print(f"    → {len(_pk)} clips extracted")
+                        _ok_n = len(_pk) - _n_failed
+                        print(f"    → {_ok_n} clips extracted" + (f" ({_n_failed} failed)" if _n_failed else ""))
                         continue
                     else:
                         print(f"  [{sf_idx}/{len(source_files)}] {sf.name}: peaks empty — reprocessing")
@@ -596,11 +627,11 @@ if CLIP_SCAN_PHASE == "all":
                         _clip_start = max(0.0, _peak_ts - CLIP_DUR_SEC / 2)
                         cam_clip_n += 1
                         _sname = f"{sf.stem}-clip-{cam_clip_n:03d}"
-                        _extract_clip(sf, _clip_start, CLIP_DUR_SEC, autocut_dir / f"{_sname}.mp4")
-                        _extract_single_frame(sf, _peak_ts, frames_dir / f"{_sname}_f0.jpg")
-                        all_clips.append({"scene": _sname, "score": _rs[_pi],
-                                          "pos_score": 0.0, "neg_score": 0.0,
-                                          "is_main": is_main, "offset_sec": _clip_start})
+                        if _extract_clip(sf, _clip_start, CLIP_DUR_SEC, autocut_dir / f"{_sname}.mp4"):
+                            _extract_single_frame(sf, _peak_ts, frames_dir / f"{_sname}_f0.jpg")
+                            all_clips.append({"scene": _sname, "score": _rs[_pi],
+                                              "pos_score": 0.0, "neg_score": 0.0,
+                                              "is_main": is_main, "offset_sec": _clip_start})
                         _peaks_list.append({"ts": _peak_ts, "score": _smoothed[_pi], "clip_name": _sname})
                     (_peaks_dir / f"{sf.stem}.json").write_text(
                         _json.dumps({"min_gap": MIN_GAP_SEC, "clip_dur": CLIP_DUR_SEC,
@@ -694,8 +725,11 @@ if CLIP_SCAN_PHASE == "all":
 
                 clip_out = autocut_dir / f"{scene_name}.mp4"
                 clip_newly_created = not clip_out.exists()
-                if clip_newly_created:
-                    _extract_clip(sf, clip_start, CLIP_DUR_SEC, clip_out)
+                if clip_newly_created and not _extract_clip(sf, clip_start, CLIP_DUR_SEC, clip_out):
+                    # Keep the peak for a future reextract retry, but don't
+                    # publish a scene record for a clip that doesn't exist.
+                    _peaks_list.append({"ts": peak_ts, "score": smoothed[peak_i], "clip_name": scene_name})
+                    continue
 
                 peak_frame_src = frame_paths[peak_i]
                 peak_frame_dst = frames_dir / f"{scene_name}_f0.jpg"

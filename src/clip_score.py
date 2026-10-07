@@ -41,12 +41,8 @@ CLIP_MODEL      = _cfg.get("clip_scoring",      "model",         fallback="ViT-H
 CLIP_PRETRAINED = _cfg.get("clip_scoring",      "pretrained",    fallback="dfn5b")
 BATCH_SIZE  = int(os.environ.get("CLIP_BATCH_SIZE",  _cfg.get("clip_scoring", "batch_size",  fallback="64")))
 NUM_WORKERS = int(os.environ.get("CLIP_NUM_WORKERS", _cfg.get("clip_scoring", "num_workers", fallback=str(min(4, os.cpu_count() or 1)))))
-if torch.cuda.is_available():
-    DEVICE = "cuda"
-elif torch.backends.mps.is_available():
-    DEVICE = "mps"
-else:
-    DEVICE = "cpu"
+from device_policy import select_torch_device
+DEVICE = select_torch_device("clip_score", allow_mps=True)
 
 def _parse_prompts(raw: str) -> list:
     return [line.strip() for line in raw.strip().splitlines() if line.strip()]
@@ -73,12 +69,18 @@ elif DEVICE == "mps":
 print(f"Model: {CLIP_MODEL} / {CLIP_PRETRAINED}")
 print(f"Batch size: {BATCH_SIZE}")
 
-if CLIP_PRETRAINED.startswith("hf-hub:"):
-    model, preprocess = open_clip.create_model_from_pretrained(CLIP_PRETRAINED)
-    tokenizer = open_clip.get_tokenizer(CLIP_PRETRAINED)
-else:
-    model, _, preprocess = open_clip.create_model_and_transforms(CLIP_MODEL, pretrained=CLIP_PRETRAINED)
-    tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
+try:
+    if CLIP_PRETRAINED.startswith("hf-hub:"):
+        model, preprocess = open_clip.create_model_from_pretrained(CLIP_PRETRAINED)
+        tokenizer = open_clip.get_tokenizer(CLIP_PRETRAINED)
+    else:
+        model, _, preprocess = open_clip.create_model_and_transforms(CLIP_MODEL, pretrained=CLIP_PRETRAINED)
+        tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
+except Exception as _e:
+    # Offline cache miss → retry the SAME model online instead of crashing
+    # (2026-10-01 production: mood_score.py had no retry here and died).
+    hf_policy.retry_online_or_return(f"{CLIP_MODEL}/{CLIP_PRETRAINED}: {_e}")
+    raise
 model = model.to(DEVICE).eval()
 
 with torch.no_grad():
@@ -122,7 +124,8 @@ def _is_main_cam(path: Path) -> bool:
     if not _back_sources:
         return True
     stem = _re.sub(r'_f\d+$', '', path.stem)          # strip _f0/_f1/_f2
-    src  = _re.sub(r'-(?:scene|clip)-\d+$', '', stem)
+    from scene_id import source_of
+    src  = source_of(stem)
     return src not in _back_sources
 
 def _scene_stem(path: Path) -> str:

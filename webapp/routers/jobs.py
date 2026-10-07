@@ -1673,7 +1673,8 @@ def _build_preview_inputs(job, max_clips: int = 0) -> dict:
             pass
 
     def _per_cam_filter(clip_path: str) -> str:
-        src = _re_cam.sub(r'-(scene|clip)-\d+$', '', Path(clip_path).stem)
+        from scene_id import source_of
+        src = source_of(Path(clip_path).stem)
         cam = _src2cam.get(src, src)
         use_crop = cam_crop.get(cam) if cam in cam_crop else (_single_cam_crop if cam_crop else False)
         base = _norm_crop if use_crop else _norm_pad
@@ -1894,30 +1895,53 @@ async def preview_stream(job_id: str):
             stderr=asyncio.subprocess.DEVNULL,
         )
 
+        async def _drain_stderr(proc):
+            # Bounded tail-only drain — stderr switched from DEVNULL to PIPE
+            # so decoder failures are diagnosable (2026-10-06 audit), but an
+            # unread PIPE can deadlock the subprocess if it fills; this keeps
+            # only the last ~4KB and never blocks the main feed loop.
+            buf = bytearray()
+            try:
+                while True:
+                    chunk = await proc.stderr.read(4096)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    del buf[:-4096]
+            except Exception:
+                pass
+            proc._stderr_tail = bytes(buf)
+
         async def _start_dec(slot):
             dur = float(slot.get("duration", 3.0))
             if slot.get("type") == "photo":
                 photo_path = slot.get("frame_url", "")
-                return await asyncio.create_subprocess_exec(
+                proc = await asyncio.create_subprocess_exec(
                     ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
                     "-loop", "1", "-i", photo_path, "-t", f"{dur:.4f}",
                     "-vf", photo_vf,
                     "-pix_fmt", "yuv420p", "-r", "30",
                     "-f", "rawvideo", "pipe:1",
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                 )
-            cp  = slot["clip_path"]
-            ss  = float(slot.get("clip_ss", 0))
-            return await asyncio.create_subprocess_exec(
-                ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-                "-hwaccel", "cuda",
-                "-ss", f"{ss:.4f}", "-i", cp, "-t", f"{dur:.4f}",
-                "-vf", dec_vf, "-pix_fmt", "yuv420p", "-r", "30",
-                "-f", "rawvideo", "pipe:1",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
+            else:
+                cp  = slot["clip_path"]
+                ss  = float(slot.get("clip_ss", 0))
+                proc = await asyncio.create_subprocess_exec(
+                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                    "-hwaccel", "cuda",
+                    "-ss", f"{ss:.4f}", "-i", cp, "-t", f"{dur:.4f}",
+                    "-vf", dec_vf, "-pix_fmt", "yuv420p", "-r", "30",
+                    "-f", "rawvideo", "pipe:1",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            # Tracked on the proc itself (not fire-and-forget) so _feed can
+            # await it before reading _stderr_tail, and cleanup can cancel
+            # it instead of leaking it on early disconnect (2026-10-06 audit).
+            proc._drain_task = asyncio.create_task(_drain_stderr(proc))
+            return proc
 
         async def _feed():
             slots = [s for s in sequence
@@ -1942,12 +1966,30 @@ async def preview_stream(job_id: str):
                         enc.stdin.write(chunk)
                         await enc.stdin.drain()
                     await cur_dec.wait()
+                    _drain_task = getattr(cur_dec, "_drain_task", None)
+                    if _drain_task is not None:
+                        # Join before reading _stderr_tail — the drain task
+                        # only sets it on EOF, which can land slightly after
+                        # wait() resolves (separate pipe, separate task).
+                        try:
+                            await asyncio.wait_for(_drain_task, timeout=1.0)
+                        except Exception:
+                            pass
+                    if cur_dec.returncode != 0:
+                        _tail = getattr(cur_dec, "_stderr_tail", b"").decode(errors="replace").strip()
+                        _ident = slot.get("clip_path") or slot.get("frame_url") or "?"
+                        print(f"[preview-stream] decoder exited {cur_dec.returncode} for {_ident}: {_tail[-200:]}",
+                              flush=True)
                     cur_dec = nxt_dec
                     nxt_dec = None
             finally:
                 for p in (cur_dec, nxt_dec):
-                    if p is not None and p.returncode is None:
-                        p.kill()
+                    if p is not None:
+                        if p.returncode is None:
+                            p.kill()
+                        _dt = getattr(p, "_drain_task", None)
+                        if _dt is not None and not _dt.done():
+                            _dt.cancel()
                 enc.stdin.close()
 
         feed_task = asyncio.create_task(_feed())
@@ -1963,8 +2005,15 @@ async def preview_stream(job_id: str):
                 await feed_task
             except asyncio.CancelledError:
                 pass
-            if enc.returncode is None:
-                enc.kill()
+            except Exception as _feed_err:
+                # Any OTHER exception from _feed must not skip encoder
+                # cleanup below — the original bare `except CancelledError`
+                # let a real _feed failure leak the encoder process
+                # (2026-10-06 audit, reproduced with an injected feed error).
+                print(f"[preview-stream] feed task failed: {_feed_err}", flush=True)
+            finally:
+                if enc.returncode is None:
+                    enc.kill()
 
     return StreamingResponse(
         _stream(),
@@ -2207,21 +2256,50 @@ async def generate_metadata(job_id: str):
     if not work_dir:
         raise HTTPException(400, "No work_dir")
 
-    cfg = configparser.ConfigParser()
-    cfg.read(SCRIPT_DIR / ".." / "config.ini")
-    ffprobe = cfg.get("paths", "ffprobe", fallback="ffprobe")
-
+    # Subprocess, not run_in_executor: metadata_gen loads a CLIP model and
+    # applies hf_policy, which mutates os.environ. In-process that leaked
+    # process-wide offline flags into the long-lived webapp (re-audit
+    # Medium #5) — every other model-loading operation in this codebase is
+    # already a subprocess for exactly this reason.
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as _tf:
+        _out_path = Path(_tf.name)
+    proc = None
     try:
-        import sys as _sys
-        _sys.path.insert(0, str(SCRIPT_DIR))
-        from metadata_gen import generate as _gen_metadata
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: _gen_metadata(Path(work_dir), ffprobe=ffprobe),
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(SCRIPT_DIR / "metadata_gen.py"),
+            str(work_dir), "--out", str(_out_path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            cwd=str(SCRIPT_DIR), start_new_session=True,
         )
-        return result
+        _out_bytes, _ = await proc.communicate()
+        if proc.returncode != 0 or not _out_path.exists():
+            raise HTTPException(500,
+                f"metadata_gen failed:\n{_out_bytes.decode(errors='replace')[-2000:]}")
+        return json.loads(_out_path.read_text())
+    except HTTPException:
+        raise
+    except asyncio.CancelledError:
+        # Re-audit #4: cancellation during communicate() left the child
+        # running (holding the GPU) and it could recreate the file we were
+        # about to unlink. Kill it first, then clean up.
+        if proc is not None and proc.returncode is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:
+                pass
+        raise
     except Exception as exc:
         raise HTTPException(500, str(exc))
+    finally:
+        _out_path.unlink(missing_ok=True)
 
 
 @router.get("/api/queue")
@@ -2424,7 +2502,8 @@ async def picture_preview(
 
     import re as _re
     def _source_stem(scene: str) -> str:
-        return _re.sub(r'-(scene|clip)-\d+$', '', scene)
+        from scene_id import source_of
+        return source_of(scene)
 
     # One best non-banned scene per source file — gives colour diversity across shots.
     seen_sources: set[str] = set()
@@ -2674,7 +2753,12 @@ async def purge_camera_files(job_id: str, data: dict = Body(default={})):
     cam_sources = auto_dir / "camera_sources.csv"
     if cam_sources.exists():
         lines = cam_sources.read_text().splitlines()
-        kept = [l for l in lines if not any(f"/{camera}/" in l or l.split(",")[0].strip() == camera for _ in [1])]
+        # rows are "source,camera" (audit #29); header must always survive —
+        # a camera literally named "camera" made the filter drop it as data
+        # (re-audit Medium #3).
+        header, data = (lines[:1], lines[1:]) if lines else ([], [])
+        kept_data = [l for l in data if l.split(",")[-1].strip() != camera]
+        kept = header + kept_data
         if len(kept) < len(lines):
             cam_sources.write_text("\n".join(kept) + "\n")
 
@@ -2731,7 +2815,8 @@ async def job_frames(job_id: str):
     if cam_sources_csv.exists():
         cdf = pd.read_csv(cam_sources_csv)
         cam_map = dict(zip(cdf["source"], cdf["camera"]))
-        df["_source"] = df["scene"].str.replace(r"-(scene|clip)-\d+$", "", regex=True)
+        from scene_id import SCENE_SUFFIX_RE as _SCID
+        df["_source"] = df["scene"].str.replace(_SCID, "", regex=True)
         df["_camera"] = df["_source"].map(cam_map).fillna("default")
         if df["_camera"].nunique() > 1:
             for _, idx in df.groupby("_camera").groups.items():
@@ -2754,7 +2839,7 @@ async def job_frames(job_id: str):
             back_takes = [
                 min(dur, max_scene_val)
                 for name, dur in durations.items()
-                if re.sub(r"-(?:scene|clip)-\d+$", "", name) in back_sources
+                if __import__("scene_id").source_of(name) in back_sources
             ]
             if back_takes:
                 avg_back_cam_take_sec = round(sum(back_takes) / len(back_takes), 2)
@@ -2782,22 +2867,15 @@ async def job_frames(job_id: str):
         cam = _cm.get(stem)
         dirs = [_wd / cam] if cam else ([_wd / c for c in _cams_param] if _cams_param else [_wd])
         for d in dirs:
-            for ext in (".mp4", ".MP4", ".mov", ".MOV", ".insv", ".INSV"):
+            import media_probe as _mp
+            _exts = sorted(_mp.VIDEO_EXTS | {_mp.INSV_EXT})
+            for ext in _exts + [e.upper() for e in _exts]:
                 p = d / (stem + ext)
                 if p.exists():
-                    try:
-                        r = subprocess.run(
-                            ["ffprobe", "-v", "quiet", "-print_format", "json",
-                             "-show_format", str(p)],
-                            capture_output=True, text=True, timeout=10,
-                        )
-                        ct = json.loads(r.stdout)["format"].get("tags", {}).get("creation_time", "")
-                        if ct:
-                            dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
-                            _epoch_cache[stem] = dt.timestamp()
-                            return _epoch_cache[stem]
-                    except Exception:
-                        pass
+                    _ep = _mp.creation_epoch(p)
+                    if _ep is not None:
+                        _epoch_cache[stem] = _ep
+                        return _ep
         _epoch_cache[stem] = None
         return None
 
@@ -2845,6 +2923,16 @@ async def job_frames(job_id: str):
             for suf in order:
                 p = d / (scene + suf)
                 if p.exists():
+                    # A corrected thumb OLDER than the raw frame is stale —
+                    # the scene was re-scanned after Picture Save (audit #24).
+                    if d is not _frames_base:
+                        base = _frames_base / (scene + suf)
+                        try:
+                            if (base.exists()
+                                    and base.stat().st_mtime > p.stat().st_mtime + 1):
+                                return str(base)
+                        except OSError:
+                            pass
                     return str(p)
         return None
 
@@ -2956,14 +3044,12 @@ async def generate_preview(job_id: str, filename: str = Query(...)):
         if preview.exists():
             return {"preview_url": str(preview)}
 
-        # Detect NVENC availability
+        # Detect NVENC — a real encode, not just `-encoders` listing the
+        # codec name (2026-10-06: a broken driver left it listed while
+        # every actual encode failed with cuInit CUDA_ERROR_UNKNOWN).
         ffmpeg = "ffmpeg"
-        enc_proc = await asyncio.create_subprocess_exec(
-            ffmpeg, "-hide_banner", "-encoders",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        enc_out, _ = await enc_proc.communicate()
-        use_nvenc = b"h264_nvenc" in enc_out
+        from media_probe import probe_nvenc
+        use_nvenc, _nvenc_err = await asyncio.to_thread(probe_nvenc, ffmpeg)
 
         if use_nvenc:
             cmd = [
@@ -2997,6 +3083,10 @@ async def generate_preview(job_id: str, filename: str = Query(...)):
         )
         ret = await proc.wait()
         if ret != 0 or not preview.exists():
+            # A failed ffmpeg often still leaves a partial/empty file behind
+            # — without removing it, the next request's `preview.exists()`
+            # check above would treat that broken file as a finished preview.
+            preview.unlink(missing_ok=True)
             raise HTTPException(500, "Preview generation failed")
 
     return {"preview_url": str(preview)}

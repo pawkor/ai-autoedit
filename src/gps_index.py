@@ -74,12 +74,8 @@ _TS_FMTS = (
 )
 
 def _parse_ts(s: str) -> float | None:
-    for fmt in _TS_FMTS:
-        try:
-            return datetime.strptime(s.strip(), fmt).replace(tzinfo=timezone.utc).timestamp()
-        except ValueError:
-            pass
-    return None
+    from media_probe import parse_creation_time
+    return parse_creation_time(s)
 
 
 def extract_gps_track(mp4_path: Path, exiftool: str = "exiftool") -> list[dict]:
@@ -371,7 +367,7 @@ def _gps_metrics(track: list[dict], clip_start: float, clip_dur: float) -> dict:
 
 GPS_COLS = ["gps_speed_avg", "gps_speed_max", "gps_turn_max",
             "gps_altitude_avg", "gps_alt_change_max"]
-_STEM_RE = re.compile(r"-(scene|clip)-\d+$")
+from scene_id import SCENE_SUFFIX_RE as _STEM_RE
 
 def annotate_scores_csv(
     scores_csv: Path,
